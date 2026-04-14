@@ -16,6 +16,9 @@ iso-probe = { path = "../iso-probe" }
 kexec-loader = { path = "../kexec-loader" }
 thiserror.workspace = true
 tracing.workspace = true
+ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
+crossterm = "0.28"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt"] }
 
 [lints.rust]
 unsafe_code = "forbid"
