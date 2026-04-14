@@ -125,6 +125,11 @@ fn draw_confirm(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: u
             Span::styled("Checksum: ", Style::default().add_modifier(Modifier::BOLD)),
             checksum_span(&iso.hash_verification),
         ]),
+        Line::from(vec![
+            Span::styled("Signature:", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(" "),
+            signature_span(&iso.signature_verification),
+        ]),
         Line::from(""),
         Line::from("Enter: kexec · e: edit cmdline · Esc: cancel"),
     ];
@@ -204,6 +209,29 @@ fn checksum_span(verification: &iso_probe::HashVerification) -> Span<'_> {
     }
 }
 
+fn signature_span(verification: &iso_probe::SignatureVerification) -> Span<'_> {
+    use ratatui::style::Color;
+    match verification {
+        iso_probe::SignatureVerification::Verified { key_id, .. } => Span::styled(
+            format!("✓ verified (signer: {key_id})"),
+            Style::default().fg(Color::Green),
+        ),
+        iso_probe::SignatureVerification::KeyNotTrusted { key_id } => Span::styled(
+            format!("⚠ signer not trusted ({key_id})"),
+            Style::default().fg(Color::Yellow),
+        ),
+        iso_probe::SignatureVerification::Forged { .. } => Span::styled(
+            "✗ FORGED — bytes don't match sig",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ),
+        iso_probe::SignatureVerification::Error { .. } => Span::styled(
+            "? sig parse error",
+            Style::default().fg(Color::Yellow),
+        ),
+        iso_probe::SignatureVerification::NotPresent => Span::raw("(no .minisig sidecar)"),
+    }
+}
+
 fn draw_error(frame: &mut Frame<'_>, area: Rect, message: &str, remedy: Option<&str>) {
     let mut lines = vec![
         Line::from(vec![Span::styled(
@@ -265,6 +293,7 @@ mod tests {
             cmdline: Some("boot=casper".to_string()),
             quirks: vec![],
             hash_verification: iso_probe::HashVerification::NotPresent,
+            signature_verification: iso_probe::SignatureVerification::NotPresent,
         }
     }
 

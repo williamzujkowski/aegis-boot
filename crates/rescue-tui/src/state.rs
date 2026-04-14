@@ -315,6 +315,7 @@ mod tests {
             cmdline: Some("boot=casper".to_string()),
             quirks: vec![],
             hash_verification: iso_probe::HashVerification::NotPresent,
+            signature_verification: iso_probe::SignatureVerification::NotPresent,
         }
     }
 

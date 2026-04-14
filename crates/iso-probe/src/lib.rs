@@ -17,6 +17,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod minisign;
 pub mod signature;
 
 use std::path::{Path, PathBuf};
@@ -24,6 +25,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 pub use iso_parser::{BootEntry, Distribution, IsoError};
+pub use minisign::{SignatureVerification, verify_iso_signature};
 pub use signature::{HashVerification, verify_iso_hash};
 
 /// Metadata for a single discovered ISO. Paths are relative to the (now
@@ -46,6 +48,8 @@ pub struct DiscoveredIso {
     pub quirks: Vec<Quirk>,
     /// Hash verification status (from sibling checksum files, if any).
     pub hash_verification: HashVerification,
+    /// Minisign signature verification status (from sibling .minisig, if any).
+    pub signature_verification: SignatureVerification,
 }
 
 /// Compatibility quirks the TUI should surface to the user before invoking
@@ -147,6 +151,33 @@ fn boot_entry_to_discovered(entry: &BootEntry, search_root: &Path) -> Discovered
             "iso-probe: no sibling checksum file"
         ),
     }
+    let signature_verification = verify_iso_signature(&iso_path);
+    match &signature_verification {
+        SignatureVerification::Verified { key_id, .. } => tracing::info!(
+            iso = %iso_path.display(),
+            key_id = %key_id,
+            "iso-probe: signature verified against trusted key"
+        ),
+        SignatureVerification::KeyNotTrusted { key_id } => tracing::warn!(
+            iso = %iso_path.display(),
+            key_id = %key_id,
+            "iso-probe: signature key is not in AEGIS_TRUSTED_KEYS"
+        ),
+        SignatureVerification::Forged { sig_path } => tracing::warn!(
+            iso = %iso_path.display(),
+            sig = %sig_path.display(),
+            "iso-probe: SIGNATURE FORGED — bytes don't match sig"
+        ),
+        SignatureVerification::Error { reason } => tracing::warn!(
+            iso = %iso_path.display(),
+            error = %reason,
+            "iso-probe: signature verification errored"
+        ),
+        SignatureVerification::NotPresent => tracing::debug!(
+            iso = %iso_path.display(),
+            "iso-probe: no sibling .minisig"
+        ),
+    }
     DiscoveredIso {
         iso_path,
         label: entry.label.clone(),
@@ -156,6 +187,7 @@ fn boot_entry_to_discovered(entry: &BootEntry, search_root: &Path) -> Discovered
         cmdline: entry.kernel_args.clone(),
         quirks: lookup_quirks(entry.distribution),
         hash_verification,
+        signature_verification,
     }
 }
 
@@ -341,6 +373,7 @@ mod tests {
             cmdline: Some("quiet".to_string()),
             quirks: vec![],
             hash_verification: HashVerification::NotPresent,
+            signature_verification: SignatureVerification::NotPresent,
         };
         // Sanity-check the path-joining we'd perform on a real mount.
         let mount = PathBuf::from("/mnt/test");
