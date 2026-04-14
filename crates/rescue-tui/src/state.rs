@@ -184,6 +184,7 @@ mod tests {
             initrd: Some(PathBuf::from("casper/initrd")),
             cmdline: Some("boot=casper".to_string()),
             quirks: vec![],
+            hash_verification: iso_probe::HashVerification::NotPresent,
         }
     }
 

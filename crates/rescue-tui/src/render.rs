@@ -104,6 +104,10 @@ fn draw_confirm(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: u
                 quirks_summary(iso)
             }),
         ]),
+        Line::from(vec![
+            Span::styled("Checksum: ", Style::default().add_modifier(Modifier::BOLD)),
+            checksum_span(&iso.hash_verification),
+        ]),
         Line::from(""),
         Line::from("Press Enter to kexec into this ISO, Esc to cancel."),
     ];
@@ -115,6 +119,20 @@ fn draw_confirm(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: u
         )
         .wrap(Wrap { trim: false });
     frame.render_widget(para, area);
+}
+
+fn checksum_span(verification: &iso_probe::HashVerification) -> Span<'_> {
+    use ratatui::style::Color;
+    match verification {
+        iso_probe::HashVerification::Verified { .. } => {
+            Span::styled("✓ verified", Style::default().fg(Color::Green))
+        }
+        iso_probe::HashVerification::Mismatch { .. } => Span::styled(
+            "✗ MISMATCH — do NOT kexec",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ),
+        iso_probe::HashVerification::NotPresent => Span::raw("(no sibling checksum)"),
+    }
 }
 
 fn draw_error(frame: &mut Frame<'_>, area: Rect, message: &str, remedy: Option<&str>) {
@@ -177,6 +195,7 @@ mod tests {
             initrd: Some(PathBuf::from("casper/initrd")),
             cmdline: Some("boot=casper".to_string()),
             quirks: vec![],
+            hash_verification: iso_probe::HashVerification::NotPresent,
         }
     }
 

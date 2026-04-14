@@ -17,11 +17,14 @@
 
 #![forbid(unsafe_code)]
 
+pub mod signature;
+
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 pub use iso_parser::{BootEntry, Distribution, IsoError};
+pub use signature::{HashVerification, verify_iso_hash};
 
 /// Metadata for a single discovered ISO. Paths are relative to the (now
 /// unmounted) ISO root and become absolute once handed to [`prepare`].
@@ -41,6 +44,8 @@ pub struct DiscoveredIso {
     pub cmdline: Option<String>,
     /// Quirks the rescue TUI should warn about before kexec.
     pub quirks: Vec<Quirk>,
+    /// Hash verification status (from sibling checksum files, if any).
+    pub hash_verification: HashVerification,
 }
 
 /// Compatibility quirks the TUI should surface to the user before invoking
@@ -117,14 +122,40 @@ pub fn discover(roots: &[PathBuf]) -> Result<Vec<DiscoveredIso>, ProbeError> {
 }
 
 fn boot_entry_to_discovered(entry: &BootEntry, search_root: &Path) -> DiscoveredIso {
+    let iso_path = search_root.join(&entry.source_iso);
+    let hash_verification = verify_iso_hash(&iso_path).unwrap_or_else(|e| {
+        tracing::debug!(
+            iso = %iso_path.display(),
+            error = %e,
+            "iso-probe: hash verification skipped due to I/O error"
+        );
+        HashVerification::NotPresent
+    });
+    match &hash_verification {
+        HashVerification::Verified { source, .. } => tracing::info!(
+            iso = %iso_path.display(),
+            source = %source,
+            "iso-probe: hash verified"
+        ),
+        HashVerification::Mismatch { source, .. } => tracing::warn!(
+            iso = %iso_path.display(),
+            source = %source,
+            "iso-probe: HASH MISMATCH — checksum file disagrees with ISO bytes"
+        ),
+        HashVerification::NotPresent => tracing::debug!(
+            iso = %iso_path.display(),
+            "iso-probe: no sibling checksum file"
+        ),
+    }
     DiscoveredIso {
-        iso_path: search_root.join(&entry.source_iso),
+        iso_path,
         label: entry.label.clone(),
         distribution: entry.distribution,
         kernel: entry.kernel.clone(),
         initrd: entry.initrd.clone(),
         cmdline: entry.kernel_args.clone(),
         quirks: lookup_quirks(entry.distribution),
+        hash_verification,
     }
 }
 
@@ -309,6 +340,7 @@ mod tests {
             initrd: Some(PathBuf::from("boot/initrd")),
             cmdline: Some("quiet".to_string()),
             quirks: vec![],
+            hash_verification: HashVerification::NotPresent,
         };
         // Sanity-check the path-joining we'd perform on a real mount.
         let mount = PathBuf::from("/mnt/test");
