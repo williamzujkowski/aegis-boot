@@ -7,6 +7,7 @@
 
 #![forbid(unsafe_code)]
 
+mod persistence;
 mod render;
 mod state;
 
@@ -107,6 +108,7 @@ fn run(roots: &[PathBuf]) -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     let mut state = AppState::new(isos);
+    apply_persisted_choice(&mut state);
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -179,6 +181,50 @@ fn event_loop<B: ratatui::backend::Backend>(
     }
 }
 
+/// Apply any saved last-choice to the freshly-built [`AppState`]: pre-select
+/// the matching ISO in the List and seed its cmdline override if one was
+/// saved. Missing / corrupt / stale state is ignored.
+fn apply_persisted_choice(state: &mut AppState) {
+    let dir = persistence::default_state_dir();
+    let Some(choice) = persistence::load(&dir) else {
+        return;
+    };
+    let Some(idx) = state
+        .isos
+        .iter()
+        .position(|iso| iso.iso_path == choice.iso_path)
+    else {
+        tracing::debug!(
+            iso = %choice.iso_path.display(),
+            "rescue-tui: persisted last-choice ISO not present in current discovery"
+        );
+        return;
+    };
+    tracing::info!(
+        idx,
+        iso = %choice.iso_path.display(),
+        "rescue-tui: restored last choice"
+    );
+    state.screen = Screen::List { selected: idx };
+    if let Some(override_) = choice.cmdline_override {
+        state.cmdline_overrides.insert(idx, override_);
+    }
+}
+
+fn save_last_choice(state: &AppState, idx: usize) {
+    let Some(iso) = state.isos.get(idx) else {
+        return;
+    };
+    let choice = persistence::LastChoice {
+        iso_path: iso.iso_path.clone(),
+        cmdline_override: state.cmdline_overrides.get(&idx).cloned(),
+    };
+    let dir = persistence::default_state_dir();
+    if let Err(e) = persistence::save(&dir, &choice) {
+        tracing::debug!(error = %e, "rescue-tui: last-choice save failed (best-effort)");
+    }
+}
+
 fn attempt_kexec(state: &mut AppState, idx: usize) {
     let Some(iso) = state.isos.get(idx).cloned() else {
         tracing::warn!(idx, "attempt_kexec called with out-of-range index");
@@ -189,6 +235,7 @@ fn attempt_kexec(state: &mut AppState, idx: usize) {
         iso_path = %iso.iso_path.display(),
         "user confirmed kexec"
     );
+    save_last_choice(state, idx);
     let prepared = match iso_probe::prepare(&iso) {
         Ok(p) => {
             tracing::info!(
