@@ -1,0 +1,104 @@
+name: mkusb Image Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Build the mkusb image in CI and smoke-boot it under OVMF SecBoot. Proves:
+#   1. scripts/mkusb.sh runs cleanly with no root access required for the
+#      image construction itself (kernel read is the only sudo step).
+#   2. The output image boots under OVMF SecBoot enforcing.
+#   3. rescue-tui survives the whole chain and runs from the AEGIS_ISOS
+#      partition layout.
+
+jobs:
+  mkusb-build:
+    name: mkusb — build + boot smoke
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install signed boot chain + image tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 ovmf \
+            shim-signed grub-efi-amd64-signed linux-image-virtual \
+            mtools dosfstools gdisk \
+            busybox-static cpio
+          # Kernels mode 0600; we need them readable for mcopy.
+          # linux-image-virtual is a meta-package that pulls -generic on
+          # modern Ubuntu; chmod all vmlinuz+initrd files conservatively.
+          sudo chmod 0644 /boot/vmlinuz-* /boot/initrd.img-* 2>/dev/null || true
+          ls -l /boot/vmlinuz-* /boot/initrd.img-*
+
+      - name: Install Rust toolchain (pinned)
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain 1.85.0 --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Build rescue-tui
+        env:
+          SOURCE_DATE_EPOCH: "1700000000"
+        run: cargo build --release -p rescue-tui
+
+      - name: Build initramfs
+        env:
+          SOURCE_DATE_EPOCH: "1700000000"
+        run: ./scripts/build-initramfs.sh
+
+      - name: Run mkusb
+        run: |
+          DISK_SIZE_MB=1024 ./scripts/mkusb.sh
+          ls -lh out/aegis-boot.img out/aegis-boot.img.sha256
+          # Verify partition table came out as expected.
+          sgdisk -p out/aegis-boot.img
+
+      - name: Boot the image under OVMF SecBoot
+        env:
+          TIMEOUT_SECONDS: "90"
+        run: |
+          # Reuse the OVMF SB boot setup but point the disk at our mkusb
+          # output. Expect kernel+rescue-tui banner in serial.
+          cp /usr/share/OVMF/OVMF_VARS_4M.ms.fd /tmp/vars.fd
+          chmod 0644 /tmp/vars.fd
+          timeout "$TIMEOUT_SECONDS" qemu-system-x86_64 \
+            -nographic \
+            -no-reboot \
+            -machine q35,smm=on \
+            -global driver=cfi.pflash01,property=secure,value=on \
+            -m 1024M \
+            -drive if=pflash,format=raw,unit=0,file=/usr/share/OVMF/OVMF_CODE_4M.secboot.fd,readonly=on \
+            -drive if=pflash,format=raw,unit=1,file=/tmp/vars.fd \
+            -drive if=ide,format=raw,file=out/aegis-boot.img \
+            -boot order=c \
+            -serial mon:stdio </dev/null > /tmp/mkusb-boot.log 2>&1 || true
+          echo "--- mkusb QEMU serial output (last 60 lines) ---"
+          tail -60 /tmp/mkusb-boot.log
+          echo "--- end ---"
+          # Kernel + EFI stub log "Secure Boot is enabled" (note 'is');
+          # accept that phrasing plus the tighter variants.
+          if grep -qiE 'secure boot (is )?enabled|secureboot.*enabled' /tmp/mkusb-boot.log \
+             && grep -q 'aegis-boot rescue-tui starting' /tmp/mkusb-boot.log; then
+            echo "mkusb image boots cleanly under SB + rescue-tui runs: PASS"
+          else
+            echo "mkusb boot smoke FAILED"
+            exit 1
+          fi
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aegis-boot-img
+          path: |
+            out/aegis-boot.img
+            out/aegis-boot.img.sha256
+          retention-days: 14

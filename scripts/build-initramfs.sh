@@ -86,7 +86,8 @@ install -m 0755 "$BUSYBOX_PATH" "$STAGE_DIR/bin/busybox"
 # rescue-tui doesn't call these directly — they exist for the init script
 # below and for emergency shell fallback.
 for applet in sh mount umount mkdir ls cat dmesg switch_root losetup \
-              mdev blkid lsblk modprobe sleep echo; do
+              mdev blkid lsblk modprobe sleep echo ln readlink rmdir \
+              findfs; do
     ln -sf /bin/busybox "$STAGE_DIR/bin/$applet"
 done
 
@@ -133,17 +134,30 @@ set -e
 # Give the kernel a moment to enumerate USB/NVMe devices before we look.
 /bin/sleep 1
 
-# Auto-mount every block device that looks like it has a filesystem. The TUI
-# will walk /run/media/* looking for .iso files.
+# Prefer the stick's dedicated AEGIS_ISOS data partition if present.
+# findfs resolves LABEL=... to a block device path; mount at a stable
+# location so operators can reason about the layout.
+/bin/mkdir -p /run/media/aegis-isos
+if AEGIS_DEV=$(/bin/findfs LABEL=AEGIS_ISOS 2>/dev/null) && [ -n "$AEGIS_DEV" ]; then
+    if /bin/mount -o ro "$AEGIS_DEV" /run/media/aegis-isos 2>/dev/null; then
+        /bin/echo "init: mounted $AEGIS_DEV (LABEL=AEGIS_ISOS) -> /run/media/aegis-isos"
+    fi
+fi
+
+# Also auto-mount any other block device that looks like it has a
+# filesystem. Covers the case where the user attaches an ISO on a
+# secondary stick or USB drive alongside the boot media.
 for dev in /dev/sd* /dev/nvme*n*p* /dev/vd* /dev/mmcblk*p*; do
     [ -b "$dev" ] || continue
+    # Skip the AEGIS_ISOS partition we already mounted.
+    [ "$dev" = "${AEGIS_DEV:-}" ] && continue
     name=$(/usr/bin/basename "$dev" 2>/dev/null || echo "$dev" | /bin/sed 's|.*/||')
     mp="/run/media/$name"
     /bin/mkdir -p "$mp"
     /bin/mount -o ro "$dev" "$mp" 2>/dev/null || /bin/rmdir "$mp"
 done
 
-export AEGIS_ISO_ROOTS=/run/media
+export AEGIS_ISO_ROOTS=/run/media/aegis-isos:/run/media
 export PATH=/usr/bin:/usr/sbin:/bin:/sbin
 export TERM=linux
 
