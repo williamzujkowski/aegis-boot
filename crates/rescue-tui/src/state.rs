@@ -73,6 +73,16 @@ impl AppState {
             .unwrap_or_default()
     }
 
+    /// Whether the ISO at `idx` carries a quirk that blocks kexec entirely
+    /// (e.g. Windows installers — wrong boot protocol). The TUI uses this
+    /// to disable the Enter binding on the Confirm screen.
+    #[must_use]
+    pub fn is_kexec_blocked(&self, idx: usize) -> bool {
+        self.isos
+            .get(idx)
+            .is_some_and(|iso| iso.quirks.contains(&Quirk::NotKexecBootable))
+    }
+
     /// Transition confirm → edit-cmdline, seeding the buffer with whatever
     /// is currently effective for the selected ISO.
     pub fn enter_cmdline_editor(&mut self) {
@@ -395,6 +405,26 @@ mod tests {
         let mut s = AppState::new(vec![fake_iso("a")]);
         s.quit();
         assert_eq!(s.screen, Screen::Quitting);
+    }
+
+    #[test]
+    fn is_kexec_blocked_false_for_clean_iso() {
+        let s = AppState::new(vec![fake_iso("clean")]);
+        assert!(!s.is_kexec_blocked(0));
+    }
+
+    #[test]
+    fn is_kexec_blocked_true_when_quirk_present() {
+        let mut iso = fake_iso("windows");
+        iso.quirks = vec![Quirk::NotKexecBootable];
+        let s = AppState::new(vec![iso]);
+        assert!(s.is_kexec_blocked(0));
+    }
+
+    #[test]
+    fn is_kexec_blocked_false_for_unknown_index() {
+        let s = AppState::new(vec![fake_iso("a")]);
+        assert!(!s.is_kexec_blocked(99));
     }
 
     #[test]

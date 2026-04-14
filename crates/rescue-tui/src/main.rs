@@ -163,7 +163,15 @@ fn event_loop<B: ratatui::backend::Backend>(
             (Screen::Confirm { .. }, KeyCode::Char('e')) => state.enter_cmdline_editor(),
             (Screen::Confirm { selected }, KeyCode::Enter) => {
                 let idx = *selected;
-                attempt_kexec(state, idx);
+                if state.is_kexec_blocked(idx) {
+                    tracing::warn!(
+                        idx,
+                        "rescue-tui: refused kexec — ISO carries NotKexecBootable quirk"
+                    );
+                    state.record_kexec_error(&kexec_loader::KexecError::UnsupportedImage);
+                } else {
+                    attempt_kexec(state, idx);
+                }
             }
 
             (Screen::EditCmdline { .. }, KeyCode::Enter) => state.commit_cmdline_edit(),

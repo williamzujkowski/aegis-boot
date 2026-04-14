@@ -131,18 +131,21 @@ fn draw_confirm(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: u
             signature_span(&iso.signature_verification),
         ]),
         Line::from(""),
-        Line::from("Enter: kexec · e: edit cmdline · Esc: cancel"),
+        Line::from(if state.is_kexec_blocked(selected) {
+            "Enter: BLOCKED (not kexec-bootable) · e: edit cmdline · Esc: cancel"
+        } else {
+            "Enter: kexec · e: edit cmdline · Esc: cancel"
+        }),
     ];
+    let title = if state.is_kexec_blocked(selected) {
+        "Confirm kexec — BLOCKED"
+    } else if override_active {
+        "Confirm kexec (cmdline overridden)"
+    } else {
+        "Confirm kexec"
+    };
     let para = Paragraph::new(lines)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(if override_active {
-                    "Confirm kexec (cmdline overridden)"
-                } else {
-                    "Confirm kexec"
-                }),
-        )
+        .block(Block::default().borders(Borders::ALL).title(title))
         .wrap(Wrap { trim: false });
     frame.render_widget(para, area);
 }
