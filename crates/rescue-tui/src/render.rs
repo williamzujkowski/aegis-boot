@@ -270,6 +270,7 @@ impl DistributionLabel for iso_probe::DiscoveredIso {
             iso_probe::Distribution::RedHat => "RHEL/Rocky/Alma",
             iso_probe::Distribution::Alpine => "Alpine",
             iso_probe::Distribution::NixOS => "NixOS",
+            iso_probe::Distribution::Windows => "Windows",
             iso_probe::Distribution::Unknown => "unknown",
         }
     }

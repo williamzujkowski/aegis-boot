@@ -68,6 +68,10 @@ pub enum Quirk {
     /// Distro signs only its own CA's kernels and refuses kexec into
     /// foreign-CA kernels even with `KEXEC_SIG` satisfied (RHEL family).
     CrossDistroKexecRefused,
+    /// ISO uses a boot protocol incompatible with `kexec_file_load`
+    /// (Windows' NT loader, BSD bootloaders, etc.). The TUI should
+    /// disable kexec for these entries rather than fail silently.
+    NotKexecBootable,
 }
 
 /// Errors returned during probing.
@@ -226,6 +230,11 @@ pub fn lookup_quirks(distribution: Distribution) -> Vec<Quirk> {
         | Distribution::Alpine
         | Distribution::NixOS
         | Distribution::Unknown => vec![Quirk::UnsignedKernel],
+
+        // Windows uses the NT loader / UEFI bootmgfw, not a Linux kernel.
+        // Surface the non-bootability explicitly so the TUI can disable
+        // kexec rather than fail silently after the user picks it.
+        Distribution::Windows => vec![Quirk::NotKexecBootable],
     }
 }
 
@@ -329,6 +338,13 @@ mod tests {
         assert!(
             lookup_quirks(Distribution::NixOS).contains(&Quirk::UnsignedKernel)
         );
+    }
+
+    #[test]
+    fn windows_flags_not_kexec_bootable() {
+        let q = lookup_quirks(Distribution::Windows);
+        assert!(q.contains(&Quirk::NotKexecBootable));
+        assert!(!q.contains(&Quirk::UnsignedKernel));
     }
 
     #[test]

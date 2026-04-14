@@ -294,6 +294,7 @@ pub fn quirks_summary(iso: &DiscoveredIso) -> String {
             Quirk::BiosOnly => "bios-only",
             Quirk::RequiresWholeDeviceWrite => "needs-dd",
             Quirk::CrossDistroKexecRefused => "cross-distro-refused",
+            Quirk::NotKexecBootable => "not-kexec-bootable",
         })
         .collect();
     format!("[{}]", parts.join(","))

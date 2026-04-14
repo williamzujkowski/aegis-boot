@@ -84,6 +84,12 @@ pub enum Distribution {
     Alpine,
     /// NixOS install media (`boot/bzImage`).
     NixOS,
+    /// Windows installer media. Recognized by `bootmgr`, `sources/boot.wim`,
+    /// or `efi/microsoft/boot/`. **Not kexec-bootable**: Windows uses a
+    /// fundamentally different boot protocol (NT loader, not Linux kernel).
+    /// Surfaced so the TUI can give a specific diagnostic rather than fail
+    /// silently.
+    Windows,
     /// Layout not recognized.
     Unknown,
 }
@@ -98,7 +104,13 @@ impl Distribution {
         // their ISO volume labels and filenames, but at this path-only layer
         // we can't disambiguate from Fedora. Keep them separate variants; the
         // caller can upgrade detection once volume-label sniffing is added.
-        if path_str.contains("nixos") || path_str.ends_with("bzimage") {
+        if path_str.contains("bootmgr")
+            || path_str.contains("sources/boot.wim")
+            || path_str.contains("efi/microsoft")
+            || path_str.contains("windows")
+        {
+            Distribution::Windows
+        } else if path_str.contains("nixos") || path_str.ends_with("bzimage") {
             Distribution::NixOS
         } else if path_str.contains("alpine") || path_str.contains("vmlinuz-lts") {
             Distribution::Alpine
@@ -790,7 +802,10 @@ mod tests {
                 // (Alpine + NixOS behave like Arch at the path layer; RedHat
                 // like Fedora). The scan_directory tests only care about the
                 // 3 original categories, so nothing new to stage here.
-                Distribution::RedHat | Distribution::Alpine | Distribution::NixOS => {}
+                Distribution::RedHat
+                | Distribution::Alpine
+                | Distribution::NixOS
+                | Distribution::Windows => {}
                 Distribution::Unknown => {}
             }
 

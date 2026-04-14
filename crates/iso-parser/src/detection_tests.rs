@@ -78,3 +78,19 @@ fn arch_still_detected_from_generic_boot() {
         Distribution::Arch
     );
 }
+
+#[test]
+fn windows_detected_from_bootmgr() {
+    for path in [
+        "/bootmgr.efi",
+        "/sources/boot.wim",
+        "/efi/microsoft/boot/bootmgfw.efi",
+        "/windows/system32/boot/winload.efi",
+    ] {
+        assert_eq!(
+            Distribution::from_paths(&PathBuf::from(path)),
+            Distribution::Windows,
+            "{path} should be Windows"
+        );
+    }
+}
