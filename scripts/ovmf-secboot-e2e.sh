@@ -135,20 +135,34 @@ cp "$OVMF_VARS_SRC" "$WORK/vars.fd"
 chmod 0644 "$WORK/vars.fd"
 
 OUTPUT="$WORK/serial.log"
+DEBUG_OUT="$WORK/firmware-debug.log"
 log "booting QEMU under OVMF SecBoot (timeout ${TIMEOUT_SECONDS}s)"
+log "ESP layout dump:"
+mdir -i "$ESP_PART" -/ ::/ >&2 || true
 set +e
 timeout "$TIMEOUT_SECONDS" qemu-system-x86_64 \
     -nographic \
     -no-reboot \
+    -machine q35,smm=on \
+    -global driver=cfi.pflash01,property=secure,value=on \
     -m 1024M \
     -drive "if=pflash,format=raw,unit=0,file=$OVMF_CODE,readonly=on" \
     -drive "if=pflash,format=raw,unit=1,file=$WORK/vars.fd" \
-    -drive "if=virtio,format=raw,file=$ESP_IMG" \
+    -drive "if=ide,format=raw,file=$ESP_IMG" \
+    -boot order=c \
+    -debugcon "file:$DEBUG_OUT" \
+    -global isa-debugcon.iobase=0x402 \
     -serial mon:stdio \
     </dev/null \
     >"$OUTPUT" 2>&1
 qemu_exit=$?
 set -e
+
+if [[ -s "$DEBUG_OUT" ]]; then
+    echo "--- OVMF firmware debug (last 40 lines) ---"
+    tail -40 "$DEBUG_OUT"
+    echo "--- end OVMF firmware debug ---"
+fi
 
 echo "--- QEMU serial output (last 80 lines) ---"
 tail -80 "$OUTPUT"
