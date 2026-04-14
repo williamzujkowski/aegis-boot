@@ -1,0 +1,17 @@
+[package]
+name = "kexec-loader"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Thin safe wrapper over kexec_file_load(2) for the aegis-boot rescue TUI"
+
+[lib]
+
+[dependencies]
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

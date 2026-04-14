@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/iso-parser",
+    "crates/iso-probe",
+    "crates/rescue-tui",
+    "crates/kexec-loader",
+]
+exclude = ["crates/iso-parser/fuzz"]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/williamzujkowski/aegis-boot"
+
+[workspace.dependencies]
+thiserror = { version = "2.0", features = ["std"] }
+serde = { version = "1.0", features = ["derive"] }
+tracing = "0.1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
