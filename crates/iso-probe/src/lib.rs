@@ -128,15 +128,40 @@ fn boot_entry_to_discovered(entry: &BootEntry, search_root: &Path) -> Discovered
     }
 }
 
-/// Look up quirks for a distribution.
+/// Look up quirks for a distribution family.
 ///
-/// Stub implementation — real population is tracked in
-/// [#6](https://github.com/williamzujkowski/aegis-boot/issues/6) (per-distro
-/// compatibility matrix). Returns an empty list today; downstream code must
-/// not rely on `quirks.is_empty()` meaning "definitely safe."
+/// Data source: [`docs/compatibility/iso-matrix.md`][matrix]. Each mapping is
+/// a conservative default — the matrix doc is the ground truth and should be
+/// updated alongside any change here.
+///
+/// **Unknown distributions get the most cautious treatment** (assume unsigned
+/// kernel). Downstream code must **not** treat an empty return as "safe" —
+/// some verified-good layouts (e.g. Debian casper) legitimately return empty.
+///
+/// [matrix]: ../../../docs/compatibility/iso-matrix.md
 #[must_use]
-pub fn lookup_quirks(_distribution: Distribution) -> Vec<Quirk> {
-    Vec::new()
+pub fn lookup_quirks(distribution: Distribution) -> Vec<Quirk> {
+    match distribution {
+        // Canonical/Debian-signed kernels (Ubuntu, Debian live/casper).
+        // shim → grub → signed vmlinuz path is well-tested; `KEXEC_SIG`
+        // accepts kernels signed by the shipped distro CA. No known quirks.
+        Distribution::Debian => Vec::new(),
+
+        // Fedora (and RHEL-derivatives detected under the same layout).
+        // Fedora's kernel is signed by the Fedora UEFI CA, but RHEL/Rocky/
+        // Alma kernels historically refuse `kexec_file_load` of a kernel
+        // signed by a *different* CA even when `KEXEC_SIG` is satisfied
+        // (their lockdown LSM adds an extra keyring check). Surface this
+        // to the user so they can preflight-verify before commit.
+        Distribution::Fedora => vec![Quirk::CrossDistroKexecRefused],
+
+        // Arch install media ships unsigned kernels by default (no
+        // shim-review-board-approved shim). Unknown distributions share the
+        // same conservative default: assume unsigned until proven otherwise.
+        // Collapsed into one arm so clippy's identical-match-arms lint is
+        // satisfied — the distinction lives in the compatibility matrix doc.
+        Distribution::Arch | Distribution::Unknown => vec![Quirk::UnsignedKernel],
+    }
 }
 
 /// A live, loop-mounted ISO with absolute paths suitable for handoff to
@@ -194,17 +219,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn quirks_lookup_returns_empty_stub() {
-        // Until #6 populates the matrix, lookup must return empty for every
-        // distribution. The TUI must NOT treat empty as safe.
-        for d in [
-            Distribution::Arch,
-            Distribution::Debian,
-            Distribution::Fedora,
-            Distribution::Unknown,
-        ] {
-            assert!(lookup_quirks(d).is_empty());
-        }
+    fn debian_has_no_known_quirks() {
+        // Canonical/Debian signed + casper layout: verified-good default.
+        assert!(lookup_quirks(Distribution::Debian).is_empty());
+    }
+
+    #[test]
+    fn fedora_flags_cross_distro_kexec_refusal() {
+        let q = lookup_quirks(Distribution::Fedora);
+        assert!(q.contains(&Quirk::CrossDistroKexecRefused));
+        assert!(!q.contains(&Quirk::UnsignedKernel));
+    }
+
+    #[test]
+    fn arch_flags_unsigned_kernel() {
+        let q = lookup_quirks(Distribution::Arch);
+        assert!(q.contains(&Quirk::UnsignedKernel));
+    }
+
+    #[test]
+    fn unknown_defaults_to_unsigned_warning() {
+        // Conservative default when we can't identify the distribution.
+        let q = lookup_quirks(Distribution::Unknown);
+        assert!(q.contains(&Quirk::UnsignedKernel));
     }
 
     #[test]

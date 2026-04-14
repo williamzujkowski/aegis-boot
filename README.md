@@ -13,6 +13,7 @@ Boot chain: `UEFI firmware → shim → signed rescue kernel → initramfs → r
 - **[BUILDING.md](./BUILDING.md)** — Reproducible build setup (Docker + Nix)
 - **[THREAT_MODEL.md](./THREAT_MODEL.md)** — UEFI Secure Boot threat model (PK/KEK/MOK/SBAT)
 - **[docs/adr/](./docs/adr/)** — Architecture Decision Records
+- **[docs/compatibility/iso-matrix.md](./docs/compatibility/iso-matrix.md)** — Per-distro ISO + kexec compatibility matrix
 - **[Dockerfile.locked](./Dockerfile.locked)** — Pinned base image (Ubuntu 22.04, Rust 1.75.0, EDK II stable202311)
 - **[flake.nix](./flake.nix)** — Nix flake for declarative dev environments
 - **[crates/iso-parser](./crates/iso-parser)** — ISO media parser (on-media analysis, `std`-compatible)
