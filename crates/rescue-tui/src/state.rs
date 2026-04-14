@@ -19,6 +19,15 @@ pub enum Screen {
         /// Index into [`AppState::isos`] of the ISO under confirmation.
         selected: usize,
     },
+    /// Editing the kernel command line before kexec.
+    EditCmdline {
+        /// Index into [`AppState::isos`] of the ISO under edit.
+        selected: usize,
+        /// Current buffer (starts with the ISO-declared cmdline).
+        buffer: String,
+        /// Byte-offset cursor position within the buffer.
+        cursor: usize,
+    },
     /// Showing a fatal-or-classified error after attempted kexec.
     Error {
         /// User-facing diagnostic copied from [`error_diagnostic`].
@@ -37,6 +46,9 @@ pub struct AppState {
     pub isos: Vec<DiscoveredIso>,
     /// Current screen.
     pub screen: Screen,
+    /// Per-ISO cmdline overrides keyed by index. When absent the
+    /// ISO-declared default from `iso-probe` is used.
+    pub cmdline_overrides: std::collections::HashMap<usize, String>,
 }
 
 impl AppState {
@@ -46,7 +58,112 @@ impl AppState {
         Self {
             isos,
             screen: Screen::List { selected: 0 },
+            cmdline_overrides: std::collections::HashMap::new(),
         }
+    }
+
+    /// Effective cmdline for the ISO at `idx` — the user's override if one
+    /// exists, otherwise the ISO-declared default (or empty string).
+    #[must_use]
+    pub fn effective_cmdline(&self, idx: usize) -> String {
+        self.cmdline_overrides
+            .get(&idx)
+            .cloned()
+            .or_else(|| self.isos.get(idx)?.cmdline.clone())
+            .unwrap_or_default()
+    }
+
+    /// Transition confirm → edit-cmdline, seeding the buffer with whatever
+    /// is currently effective for the selected ISO.
+    pub fn enter_cmdline_editor(&mut self) {
+        let Screen::Confirm { selected } = self.screen else {
+            return;
+        };
+        let buffer = self.effective_cmdline(selected);
+        let cursor = buffer.len();
+        self.screen = Screen::EditCmdline {
+            selected,
+            buffer,
+            cursor,
+        };
+    }
+
+    /// Commit the editor's buffer as the override and return to Confirm.
+    pub fn commit_cmdline_edit(&mut self) {
+        let Screen::EditCmdline {
+            selected, buffer, ..
+        } = std::mem::replace(&mut self.screen, Screen::Quitting)
+        else {
+            return;
+        };
+        self.cmdline_overrides.insert(selected, buffer);
+        self.screen = Screen::Confirm { selected };
+    }
+
+    /// Cancel the editor and return to Confirm without saving.
+    pub fn cancel_cmdline_edit(&mut self) {
+        if let Screen::EditCmdline { selected, .. } = self.screen {
+            self.screen = Screen::Confirm { selected };
+        }
+    }
+
+    /// Insert a single character at the cursor.
+    pub fn cmdline_insert(&mut self, ch: char) {
+        let Screen::EditCmdline {
+            buffer, cursor, ..
+        } = &mut self.screen
+        else {
+            return;
+        };
+        buffer.insert(*cursor, ch);
+        *cursor += ch.len_utf8();
+    }
+
+    /// Delete one char before the cursor (backspace).
+    pub fn cmdline_backspace(&mut self) {
+        let Screen::EditCmdline {
+            buffer, cursor, ..
+        } = &mut self.screen
+        else {
+            return;
+        };
+        if *cursor == 0 {
+            return;
+        }
+        let new_cursor = prev_char_boundary(buffer, *cursor);
+        buffer.replace_range(new_cursor..*cursor, "");
+        *cursor = new_cursor;
+    }
+
+    /// Move cursor left one char (saturating).
+    pub fn cmdline_cursor_left(&mut self) {
+        let Screen::EditCmdline {
+            buffer, cursor, ..
+        } = &mut self.screen
+        else {
+            return;
+        };
+        if *cursor == 0 {
+            return;
+        }
+        *cursor = prev_char_boundary(buffer, *cursor);
+    }
+
+    /// Move cursor right one char (saturating).
+    pub fn cmdline_cursor_right(&mut self) {
+        let Screen::EditCmdline {
+            buffer, cursor, ..
+        } = &mut self.screen
+        else {
+            return;
+        };
+        if *cursor >= buffer.len() {
+            return;
+        }
+        let new_cursor = (*cursor + 1..=buffer.len())
+            .find(|candidate| buffer.is_char_boundary(*candidate))
+            .unwrap_or(buffer.len());
+        *cursor = new_cursor;
     }
 
     /// Advance the highlighted row up (negative) or down (positive), saturating
@@ -99,11 +216,24 @@ impl AppState {
     #[must_use]
     #[cfg(test)]
     pub fn selected_iso(&self) -> Option<&DiscoveredIso> {
-        let (Screen::List { selected } | Screen::Confirm { selected }) = self.screen else {
-            return None;
+        let selected = match &self.screen {
+            Screen::List { selected }
+            | Screen::Confirm { selected }
+            | Screen::EditCmdline { selected, .. } => *selected,
+            _ => return None,
         };
         self.isos.get(selected)
     }
+}
+
+/// Find the byte offset of the nearest char boundary before `cursor`.
+///
+/// UTF-8 chars are 1-4 bytes; step back 1 byte at a time looking for the
+/// previous boundary. Walks up to 4 bytes in the worst case.
+fn prev_char_boundary(buffer: &str, cursor: usize) -> usize {
+    (1..=cursor.min(4))
+        .find(|step| buffer.is_char_boundary(cursor - step))
+        .map_or(0, |step| cursor - step)
 }
 
 /// Map a [`KexecError`] to (user-facing message, optional remedy hint).
@@ -262,6 +392,111 @@ mod tests {
         let mut s = AppState::new(vec![fake_iso("a")]);
         s.quit();
         assert_eq!(s.screen, Screen::Quitting);
+    }
+
+    #[test]
+    fn enter_cmdline_editor_seeds_with_iso_default() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.confirm_selection();
+        s.enter_cmdline_editor();
+        let Screen::EditCmdline { buffer, cursor, selected } = &s.screen else {
+            panic!("expected EditCmdline screen");
+        };
+        assert_eq!(*selected, 0);
+        assert_eq!(buffer, "boot=casper"); // from fake_iso
+        assert_eq!(*cursor, buffer.len());
+    }
+
+    #[test]
+    fn cmdline_insert_at_cursor() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.confirm_selection();
+        s.enter_cmdline_editor();
+        s.cmdline_insert(' ');
+        s.cmdline_insert('q');
+        s.cmdline_insert('u');
+        s.cmdline_insert('i');
+        s.cmdline_insert('e');
+        s.cmdline_insert('t');
+        let Screen::EditCmdline { buffer, .. } = &s.screen else {
+            panic!("expected EditCmdline")
+        };
+        assert_eq!(buffer, "boot=casper quiet");
+    }
+
+    #[test]
+    fn cmdline_backspace_and_cursor_navigation() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.confirm_selection();
+        s.enter_cmdline_editor();
+        // Buffer is "boot=casper", cursor at end (11).
+        s.cmdline_backspace(); // remove 'r'
+        s.cmdline_backspace(); // remove 'e'
+        let Screen::EditCmdline { buffer, cursor, .. } = &s.screen else {
+            panic!()
+        };
+        assert_eq!(buffer, "boot=casp");
+        assert_eq!(*cursor, 9);
+        s.cmdline_cursor_left();
+        s.cmdline_cursor_left();
+        s.cmdline_insert('X');
+        let Screen::EditCmdline { buffer, .. } = &s.screen else {
+            panic!()
+        };
+        // cursor=9 after backspaces → left→left moves to 7 (before 's');
+        // inserting 'X' there gives "boot=ca" + "X" + "sp".
+        assert_eq!(buffer, "boot=caXsp");
+    }
+
+    #[test]
+    fn commit_cmdline_stores_override_and_returns_to_confirm() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.confirm_selection();
+        s.enter_cmdline_editor();
+        s.cmdline_insert(' ');
+        s.cmdline_insert('q');
+        s.commit_cmdline_edit();
+        assert_eq!(s.screen, Screen::Confirm { selected: 0 });
+        assert_eq!(s.cmdline_overrides.get(&0), Some(&"boot=casper q".to_string()));
+        assert_eq!(s.effective_cmdline(0), "boot=casper q");
+    }
+
+    #[test]
+    fn cancel_cmdline_edit_preserves_original() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.confirm_selection();
+        s.enter_cmdline_editor();
+        s.cmdline_insert('X');
+        s.cancel_cmdline_edit();
+        assert_eq!(s.screen, Screen::Confirm { selected: 0 });
+        assert!(s.cmdline_overrides.is_empty());
+        assert_eq!(s.effective_cmdline(0), "boot=casper"); // unchanged default
+    }
+
+    #[test]
+    fn backspace_on_empty_buffer_is_noop() {
+        let mut s = AppState::new(vec![{
+            let mut i = fake_iso("a");
+            i.cmdline = None; // no default
+            i
+        }]);
+        s.confirm_selection();
+        s.enter_cmdline_editor();
+        s.cmdline_backspace();
+        s.cmdline_cursor_left();
+        let Screen::EditCmdline { buffer, cursor, .. } = &s.screen else {
+            panic!()
+        };
+        assert_eq!(buffer, "");
+        assert_eq!(*cursor, 0);
+    }
+
+    #[test]
+    fn effective_cmdline_prefers_override() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        assert_eq!(s.effective_cmdline(0), "boot=casper");
+        s.cmdline_overrides.insert(0, "override=yes".to_string());
+        assert_eq!(s.effective_cmdline(0), "override=yes");
     }
 
     #[test]

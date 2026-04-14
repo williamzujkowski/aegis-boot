@@ -144,16 +144,33 @@ fn event_loop<B: ratatui::backend::Backend>(
             continue;
         }
 
+        // In the cmdline editor, typing characters (including 'q') should
+        // insert, not quit. Keep 'q' as global quit only outside the editor.
+        let in_editor = matches!(state.screen, Screen::EditCmdline { .. });
+        if !in_editor && key.code == KeyCode::Char('q') {
+            state.quit();
+            continue;
+        }
+
         match (&state.screen, key.code) {
-            (_, KeyCode::Char('q')) => state.quit(),
             (Screen::List { .. }, KeyCode::Up) => state.move_selection(-1),
             (Screen::List { .. }, KeyCode::Down) => state.move_selection(1),
             (Screen::List { .. }, KeyCode::Enter) => state.confirm_selection(),
+
             (Screen::Confirm { .. }, KeyCode::Esc) => state.cancel_confirmation(),
+            (Screen::Confirm { .. }, KeyCode::Char('e')) => state.enter_cmdline_editor(),
             (Screen::Confirm { selected }, KeyCode::Enter) => {
                 let idx = *selected;
                 attempt_kexec(state, idx);
             }
+
+            (Screen::EditCmdline { .. }, KeyCode::Enter) => state.commit_cmdline_edit(),
+            (Screen::EditCmdline { .. }, KeyCode::Esc) => state.cancel_cmdline_edit(),
+            (Screen::EditCmdline { .. }, KeyCode::Left) => state.cmdline_cursor_left(),
+            (Screen::EditCmdline { .. }, KeyCode::Right) => state.cmdline_cursor_right(),
+            (Screen::EditCmdline { .. }, KeyCode::Backspace) => state.cmdline_backspace(),
+            (Screen::EditCmdline { .. }, KeyCode::Char(c)) => state.cmdline_insert(c),
+
             (Screen::Error { .. }, _) => {
                 state.screen = Screen::List { selected: 0 };
             }
@@ -189,10 +206,18 @@ fn attempt_kexec(state: &mut AppState, idx: usize) {
             return;
         }
     };
+    // User override takes precedence over the ISO-declared default; fall
+    // back to whatever iso-probe extracted from the ISO's own boot config.
+    let cmdline = state
+        .cmdline_overrides
+        .get(&idx)
+        .cloned()
+        .or_else(|| prepared.cmdline.clone())
+        .unwrap_or_default();
     let req = kexec_loader::KexecRequest {
         kernel: prepared.kernel.clone(),
         initrd: prepared.initrd.clone(),
-        cmdline: prepared.cmdline.clone().unwrap_or_default(),
+        cmdline,
     };
     tracing::info!(
         kernel = %req.kernel.display(),

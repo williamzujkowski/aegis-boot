@@ -17,6 +17,11 @@ pub fn draw(frame: &mut Frame<'_>, state: &AppState) {
     match &state.screen {
         Screen::List { selected } => draw_list(frame, area, state, *selected),
         Screen::Confirm { selected } => draw_confirm(frame, area, state, *selected),
+        Screen::EditCmdline {
+            selected,
+            buffer,
+            cursor,
+        } => draw_edit_cmdline(frame, area, state, *selected, buffer, *cursor),
         Screen::Error { message, remedy } => draw_error(frame, area, message, remedy.as_deref()),
         Screen::Quitting => {}
     }
@@ -70,6 +75,18 @@ fn draw_confirm(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: u
     let Some(iso) = state.isos.get(selected) else {
         return;
     };
+    let override_active = state.cmdline_overrides.contains_key(&selected);
+    let effective_cmdline = state.effective_cmdline(selected);
+    let cmdline_display = if effective_cmdline.is_empty() {
+        "(none)".to_string()
+    } else {
+        effective_cmdline
+    };
+    let cmdline_label = if override_active {
+        "Cmdline*: "
+    } else {
+        "Cmdline:  "
+    };
     let lines: Vec<Line> = vec![
         Line::from(vec![
             Span::styled("Label:    ", Style::default().add_modifier(Modifier::BOLD)),
@@ -92,8 +109,8 @@ fn draw_confirm(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: u
             ),
         ]),
         Line::from(vec![
-            Span::styled("Cmdline:  ", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(iso.cmdline.clone().unwrap_or_else(|| "(none)".to_string())),
+            Span::styled(cmdline_label, Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(cmdline_display),
         ]),
         Line::from(""),
         Line::from(vec![
@@ -105,13 +122,65 @@ fn draw_confirm(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: u
             }),
         ]),
         Line::from(""),
-        Line::from("Press Enter to kexec into this ISO, Esc to cancel."),
+        Line::from("Enter: kexec · e: edit cmdline · Esc: cancel"),
     ];
     let para = Paragraph::new(lines)
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("Confirm kexec"),
+                .title(if override_active {
+                    "Confirm kexec (cmdline overridden)"
+                } else {
+                    "Confirm kexec"
+                }),
+        )
+        .wrap(Wrap { trim: false });
+    frame.render_widget(para, area);
+}
+
+fn draw_edit_cmdline(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &AppState,
+    selected: usize,
+    buffer: &str,
+    cursor: usize,
+) {
+    let default_cmdline = state
+        .isos
+        .get(selected)
+        .and_then(|i| i.cmdline.clone())
+        .unwrap_or_default();
+    let cursor_marker = "│"; // U+2502 BOX DRAWINGS LIGHT VERTICAL — one grapheme
+    let (before, after) = buffer.split_at(cursor.min(buffer.len()));
+    let rendered_buffer = format!("{before}{cursor_marker}{after}");
+
+    let lines = vec![
+        Line::from(vec![Span::styled(
+            "Edit kernel command line",
+            Style::default().add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Default: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(if default_cmdline.is_empty() {
+                "(none)".to_string()
+            } else {
+                default_cmdline
+            }),
+        ]),
+        Line::from(vec![
+            Span::styled("Current: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(rendered_buffer),
+        ]),
+        Line::from(""),
+        Line::from("Enter: save · Esc: cancel · ←/→: move · Backspace: delete"),
+    ];
+    let para = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Edit cmdline"),
         )
         .wrap(Wrap { trim: false });
     frame.render_widget(para, area);
