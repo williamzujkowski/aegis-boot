@@ -69,6 +69,7 @@ install -d -m 0755 \
     "$STAGE_DIR/dev" \
     "$STAGE_DIR/run" \
     "$STAGE_DIR/tmp" \
+    "$STAGE_DIR/mnt" \
     "$STAGE_DIR/run/media"
 
 # --- rescue-tui --------------------------------------------------------------
@@ -96,13 +97,20 @@ copy_libs() {
     local bin="$1"
     # `ldd` output: parse lines like "libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x...)"
     # and plain "/lib64/ld-linux-x86-64.so.2 (0x...)" for the dynamic linker.
+    # Mode 0755 because the dynamic linker is itself an ELF interpreter that
+    # the kernel execve's — without the exec bit, every dynamically-linked
+    # binary in the initramfs fails with "Permission denied".
     ldd "$bin" 2>/dev/null | awk '
         /=>/ { if ($3 ~ /^\//) print $3 }
         /^\t\// { print $1 }
     ' | sort -u | while IFS= read -r lib; do
         [[ -f "$lib" ]] || continue
-        local dest="$STAGE_DIR$lib"
-        install -D -m 0644 "$lib" "$dest"
+        # Follow symlinks so we put the real file at the expected path; this
+        # flattens /lib64/ld-linux-* -> /lib/x86_64-linux-gnu/ld-linux-* style
+        # distro layouts into a self-contained initramfs.
+        local resolved
+        resolved="$(readlink -f "$lib")"
+        install -D -m 0755 "$resolved" "$STAGE_DIR$lib"
     done
 }
 copy_libs "$STAGE_DIR/usr/bin/rescue-tui"

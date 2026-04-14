@@ -85,6 +85,14 @@ pub fn discover(roots: &[PathBuf]) -> Result<Vec<DiscoveredIso>, ProbeError> {
     let parser = iso_parser::IsoParser::new(iso_parser::OsIsoEnvironment::new());
     let mut all: Vec<DiscoveredIso> = Vec::new();
     for root in roots {
+        // Missing / unreadable roots are not an error — the rescue environment
+        // routinely runs with `/run/media` present but `/mnt` empty or vice
+        // versa depending on whether anything was attached at boot. Skip
+        // silently rather than abort the whole discovery.
+        if !root.exists() {
+            tracing::debug!(root = %root.display(), "iso-probe: skipping missing root");
+            continue;
+        }
         match pollster::block_on(parser.scan_directory(root)) {
             Ok(entries) => {
                 for entry in entries {
@@ -92,6 +100,12 @@ pub fn discover(roots: &[PathBuf]) -> Result<Vec<DiscoveredIso>, ProbeError> {
                 }
             }
             Err(IsoError::NoBootEntries(_)) => {}
+            Err(IsoError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                tracing::debug!(
+                    root = %root.display(),
+                    "iso-probe: skipping root that disappeared during scan"
+                );
+            }
             Err(e) => return Err(ProbeError::Parser(e)),
         }
     }

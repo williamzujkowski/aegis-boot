@@ -65,6 +65,13 @@ fn run(roots: &[PathBuf]) -> Result<(), Box<dyn std::error::Error>> {
         Err(iso_probe::ProbeError::NoIsosFound) => Vec::new(),
         Err(e) => return Err(e.into()),
     };
+    // Startup banner to stderr — visible on the serial console before the TUI
+    // takes over stdout, useful for smoke tests and operator triage on
+    // hardware where the terminal emulator doesn't report a usable size.
+    eprintln!(
+        "aegis-boot rescue-tui starting: discovered {} ISO(s)",
+        isos.len()
+    );
     let mut state = AppState::new(isos);
 
     enable_raw_mode()?;
