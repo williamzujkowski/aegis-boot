@@ -69,6 +69,7 @@ install -d -m 0755 \
     "$STAGE_DIR/dev" \
     "$STAGE_DIR/run" \
     "$STAGE_DIR/tmp" \
+    "$STAGE_DIR/mnt" \
     "$STAGE_DIR/run/media"
 
 # --- rescue-tui --------------------------------------------------------------
