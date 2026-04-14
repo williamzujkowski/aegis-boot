@@ -213,7 +213,16 @@ impl AppState {
 
     /// Record a kexec failure and transition to the Error screen.
     pub fn record_kexec_error(&mut self, err: &KexecError) {
-        let (message, remedy) = error_diagnostic(err);
+        // If the error occurred during a Confirm flow, enrich with
+        // ISO-specific context (sibling key discovery for
+        // SignatureRejected).
+        let iso = match &self.screen {
+            Screen::Confirm { selected } | Screen::EditCmdline { selected, .. } => {
+                self.isos.get(*selected)
+            }
+            _ => None,
+        };
+        let (message, remedy) = error_diagnostic_with_iso(err, iso);
         self.screen = Screen::Error { message, remedy };
     }
 
@@ -246,20 +255,82 @@ fn prev_char_boundary(buffer: &str, cursor: usize) -> usize {
         .map_or(0, |step| cursor - step)
 }
 
+/// Build the MOK enrollment remedy text, naming the specific key file if
+/// one is discoverable alongside the ISO. The operator should be able to
+/// copy-paste the resulting command verbatim.
+fn build_mokutil_remedy(iso: Option<&DiscoveredIso>) -> String {
+    let key_hint = iso.and_then(|iso| find_sibling_key(&iso.iso_path));
+    match key_hint {
+        Some(key_path) => format!(
+            "Enroll this ISO's signing key:\n  \
+             sudo mokutil --import {}\n\
+             Reboot and complete enrollment via MOK Manager (set a temporary \
+             password at --import; MOK Manager will prompt for it on the \
+             next boot). Then retry. Do NOT disable Secure Boot.",
+            key_path.display()
+        ),
+        None => "This ISO's signing key isn't in the platform or MOK keyring. \
+                 Place the public key alongside the ISO (as `<iso>.pub`, \
+                 `<iso>.key`, or `<iso>.der`) and aegis-boot will suggest \
+                 the exact `mokutil --import` command on the next attempt. \
+                 Do NOT disable Secure Boot."
+            .to_string(),
+    }
+}
+
+/// Look for a sibling key file alongside the ISO. Accepts `.pub`, `.key`,
+/// and `.der` extensions — the most common formats for detached signing
+/// keys published by distros.
+fn find_sibling_key(iso_path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let base = iso_path.file_stem()?;
+    let dir = iso_path.parent()?;
+    for ext in ["pub", "key", "der"] {
+        let candidate = dir.join(format!("{}.{ext}", base.to_string_lossy()));
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    // Also try full-filename extensions: ubuntu.iso.pub alongside ubuntu.iso
+    let fname = iso_path.file_name()?;
+    for ext in ["pub", "key", "der"] {
+        let candidate = dir.join(format!("{}.{ext}", fname.to_string_lossy()));
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 /// Map a [`KexecError`] to (user-facing message, optional remedy hint).
 ///
 /// Diagnostics are deliberately specific so the TUI never shows a generic
 /// "kexec failed" — see ADR 0001's commitment to "no black screens."
+///
+/// For context-free error mapping. The TUI-level variant
+/// [`error_diagnostic_with_iso`] augments the [`KexecError::SignatureRejected`]
+/// remedy with a specific `mokutil --import` command when the ISO has a
+/// sibling key file.
 #[must_use]
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn error_diagnostic(err: &KexecError) -> (String, Option<String>) {
+    error_diagnostic_with_iso(err, None)
+}
+
+/// Same as [`error_diagnostic`] but enriches the remedy with ISO-specific
+/// context when available. For `SignatureRejected`, if the caller passes
+/// in the ISO that triggered the error, we look for sibling key files
+/// (`<iso>.pub`, `<iso>.key`, `<iso>.der`) and embed the exact
+/// `mokutil --import` command — removing the "which file do I enroll?"
+/// guessing game from the recovery flow.
+#[must_use]
+pub fn error_diagnostic_with_iso(
+    err: &KexecError,
+    iso: Option<&DiscoveredIso>,
+) -> (String, Option<String>) {
     match err {
         KexecError::SignatureRejected => (
             "Kernel signature verification failed (KEXEC_SIG)".to_string(),
-            Some(
-                "Enroll this ISO's signing key with `mokutil --import <key.der>`, reboot, then \
-                 retry. Do NOT disable Secure Boot."
-                    .to_string(),
-            ),
+            Some(build_mokutil_remedy(iso)),
         ),
         KexecError::LockdownRefused => (
             "Operation refused by kernel lockdown".to_string(),
@@ -372,6 +443,70 @@ mod tests {
         // ADR 0001: must not *suggest* disabling SB. Allow "Do NOT disable" phrasing.
         let lc = r.to_lowercase();
         assert!(!lc.contains("disable secure boot") || lc.contains("not disable"));
+    }
+
+    #[test]
+    fn signature_rejected_without_iso_gives_generic_guidance() {
+        // No ISO context — remedy should tell user where to put the key
+        // so future attempts can auto-suggest.
+        let (_, remedy) = error_diagnostic_with_iso(&KexecError::SignatureRejected, None);
+        let r = unwrap_remedy(remedy);
+        assert!(r.contains("<iso>.pub") || r.contains(".pub"));
+        // Remedy says "Do NOT disable Secure Boot" — literal phrase is
+        // fine; the ADR 0001 commitment is no *suggestion* to disable.
+        let lc = r.to_lowercase();
+        assert!(!lc.contains("disable secure boot") || lc.contains("not disable"));
+    }
+
+    #[test]
+    fn signature_rejected_with_sibling_key_embeds_exact_command() {
+        use std::fs;
+        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("tempdir: {e}"));
+        let iso_path = dir.path().join("test.iso");
+        fs::write(&iso_path, b"dummy").unwrap_or_else(|e| panic!("write: {e}"));
+        let key_path = dir.path().join("test.pub");
+        fs::write(&key_path, b"pubkey").unwrap_or_else(|e| panic!("write key: {e}"));
+
+        let iso = DiscoveredIso {
+            iso_path: iso_path.clone(),
+            label: "t".into(),
+            distribution: iso_probe::Distribution::Debian,
+            kernel: std::path::PathBuf::from("vmlinuz"),
+            initrd: None,
+            cmdline: None,
+            quirks: vec![],
+            hash_verification: iso_probe::HashVerification::NotPresent,
+            signature_verification: iso_probe::SignatureVerification::NotPresent,
+        };
+        let (_, remedy) =
+            error_diagnostic_with_iso(&KexecError::SignatureRejected, Some(&iso));
+        let r = unwrap_remedy(remedy);
+        assert!(r.contains("mokutil --import"));
+        assert!(r.contains(&key_path.display().to_string()));
+    }
+
+    #[test]
+    fn find_sibling_key_tries_stem_and_full_filename() {
+        use std::fs;
+        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("tempdir: {e}"));
+        // Case 1: .pub with stem (debian.pub alongside debian.iso)
+        let iso_a = dir.path().join("debian.iso");
+        fs::write(&iso_a, b"x").unwrap_or_else(|e| panic!("write: {e}"));
+        let key_a = dir.path().join("debian.pub");
+        fs::write(&key_a, b"k").unwrap_or_else(|e| panic!("write: {e}"));
+        assert_eq!(find_sibling_key(&iso_a), Some(key_a));
+
+        // Case 2: .iso.pub full-name style (ubuntu.iso.pub alongside ubuntu.iso)
+        let iso_b = dir.path().join("ubuntu.iso");
+        fs::write(&iso_b, b"y").unwrap_or_else(|e| panic!("write: {e}"));
+        let key_b = dir.path().join("ubuntu.iso.pub");
+        fs::write(&key_b, b"k").unwrap_or_else(|e| panic!("write: {e}"));
+        assert_eq!(find_sibling_key(&iso_b), Some(key_b));
+
+        // Case 3: no key
+        let iso_c = dir.path().join("orphan.iso");
+        fs::write(&iso_c, b"z").unwrap_or_else(|e| panic!("write: {e}"));
+        assert!(find_sibling_key(&iso_c).is_none());
     }
 
     #[test]
