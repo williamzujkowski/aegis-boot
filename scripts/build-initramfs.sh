@@ -86,7 +86,7 @@ install -m 0755 "$BUSYBOX_PATH" "$STAGE_DIR/bin/busybox"
 # rescue-tui doesn't call these directly — they exist for the init script
 # below and for emergency shell fallback.
 for applet in sh mount umount mkdir ls cat dmesg switch_root losetup \
-              mdev blkid lsblk modprobe sleep echo; do
+              mdev blkid lsblk modprobe sleep echo ln readlink rmdir; do
     ln -sf /bin/busybox "$STAGE_DIR/bin/$applet"
 done
 
