@@ -1,7 +1,8 @@
 # Rust build artifacts
 target/
 **/target/
-Cargo.lock
+# Cargo.lock IS committed: this workspace ships a binary (rescue-tui)
+# so dependency resolution must be deterministic in CI and at release time.
 
 # Docker / build outputs
 *.sha256
