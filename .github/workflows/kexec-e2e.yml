@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-22.04
     permissions:
       contents: read
-    timeout-minutes: 12
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
@@ -25,12 +25,16 @@ jobs:
       - name: Install runtime + fixture-build tools
         run: |
           sudo apt-get update
+          # linux-image-virtual is ~40 MB; linux-image-generic pulls
+          # linux-firmware (~600 MB) which tips the job into timeout.
+          # The virtual image has everything QEMU needs.
           sudo apt-get install -y --no-install-recommends \
             qemu-system-x86 \
-            linux-image-generic \
+            linux-image-virtual \
             busybox-static cpio \
             xorriso
-          sudo chmod 0644 /boot/vmlinuz-*-generic /boot/initrd.img-*-generic || true
+          sudo chmod 0644 /boot/vmlinuz-*-virtual /boot/initrd.img-*-virtual \
+                          /boot/vmlinuz-*-generic /boot/initrd.img-*-generic 2>/dev/null || true
 
       - name: Install Rust toolchain (pinned)
         run: |
