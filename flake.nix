@@ -24,7 +24,7 @@
             python311
             python311Packages.pip
             nasm
-            uuid
+            util-linux
             iasl
             git
           ];
