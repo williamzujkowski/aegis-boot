@@ -1,0 +1,43 @@
+name: Integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  iso-probe-mount:
+    name: iso-probe loop-mount integration
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    env:
+      AEGIS_INTEGRATION_ROOT: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build + fixture tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xorriso
+
+      - name: Install Rust toolchain (pinned)
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain 1.85.0 --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Check kernel loop module is available
+        run: |
+          sudo modprobe loop || true
+          lsmod | grep -E '^loop' || {
+            echo "loop module not available on this runner"
+            exit 78  # neutral exit — skip, don't fail
+          }
+
+      - name: Run ignored integration tests
+        run: |
+          sudo -E "$HOME/.cargo/bin/cargo" test -p iso-probe --release -- --ignored --nocapture
