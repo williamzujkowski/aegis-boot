@@ -23,6 +23,9 @@ build*.sha256
 # Logs
 *.log
 
+# Build outputs from scripts/build-initramfs.sh
+out/
+
 # libfuzzer-generated corpora/artifacts (exclude live-run outputs; check in
 # seed corpora explicitly if needed).
 crates/*/fuzz/corpus/

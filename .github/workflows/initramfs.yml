@@ -1,0 +1,79 @@
+name: Initramfs Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  initramfs:
+    name: Build + verify reproducible initramfs
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends busybox-static cpio
+
+      - name: Install Rust toolchain (pinned)
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain 1.85.0 --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Build rescue-tui (release)
+        run: cargo build --release -p rescue-tui
+
+      - name: Build initramfs pass 1
+        env:
+          SOURCE_DATE_EPOCH: "1700000000"
+        run: |
+          OUT_DIR=out1 ./scripts/build-initramfs.sh
+          cp out1/initramfs.cpio.gz.sha256 pass1.sha256
+
+      - name: Build initramfs pass 2
+        env:
+          SOURCE_DATE_EPOCH: "1700000000"
+        run: |
+          OUT_DIR=out2 ./scripts/build-initramfs.sh
+          cp out2/initramfs.cpio.gz.sha256 pass2.sha256
+
+      - name: Verify reproducibility
+        run: |
+          p1=$(awk '{print $1}' pass1.sha256)
+          p2=$(awk '{print $1}' pass2.sha256)
+          echo "Pass 1: $p1"
+          echo "Pass 2: $p2"
+          if [ "$p1" = "$p2" ]; then
+            echo "initramfs.cpio.gz is reproducible"
+          else
+            echo "initramfs.cpio.gz diverged between passes"
+            exit 1
+          fi
+
+      - name: Size budget check
+        run: |
+          size=$(stat -c '%s' out1/initramfs.cpio.gz)
+          echo "initramfs size: $size bytes"
+          # 20 MB budget — matches the script's own check.
+          if [ "$size" -gt 20971520 ]; then
+            echo "size exceeds 20 MB budget"
+            exit 1
+          fi
+
+      - name: Upload initramfs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: initramfs
+          path: |
+            out1/initramfs.cpio.gz
+            out1/initramfs.cpio.gz.sha256
+          retention-days: 30

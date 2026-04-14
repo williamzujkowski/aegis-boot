@@ -71,6 +71,32 @@ diff p1.sha256 p2.sha256 && echo reproducible || echo NOT reproducible
 
 Removing these dependencies shrinks the image, eliminates the unreachable-submodule hazard (tracked as [#2](https://github.com/williamzujkowski/aegis-boot/issues/2)), and tightens the supply-chain surface to just what the runtime needs.
 
+## Assembling the initramfs
+
+Once \`rescue-tui\` is built, package it into a bootable initramfs with:
+
+```bash
+cargo build --release -p rescue-tui
+./scripts/build-initramfs.sh
+# → out/initramfs.cpio.gz
+# → out/initramfs.cpio.gz.sha256
+```
+
+### What ends up in the initramfs
+
+- `/usr/bin/rescue-tui` — the ratatui binary
+- `/bin/busybox` (+ applet symlinks: `sh`, `mount`, `umount`, `mdev`, …)
+- `/init` — PID 1 shell script that mounts `/proc`, `/sys`, `/dev`, auto-mounts block devices under `/run/media/*`, and `exec`s `rescue-tui`
+- Shared-library closure of `rescue-tui` (resolved via `ldd`)
+
+### Reproducibility
+
+The script is deterministic by construction: sorted cpio input, every mtime flattened to `$SOURCE_DATE_EPOCH`, gzip run with `--no-name`. Two back-to-back invocations produce byte-identical `initramfs.cpio.gz`. Verified in CI (`.github/workflows/initramfs.yml`).
+
+### Riding inside a signed distro kernel
+
+The `initramfs.cpio.gz` is meant to be concatenated onto an existing signed distro rescue initramfs (e.g. Ubuntu's `casper/initrd`). Under Secure Boot the kernel's signature covers the initramfs it was shipped with; any code in the combined initramfs inherits that trust as long as the kernel still verifies its payload. See [ADR 0001](./docs/adr/0001-runtime-architecture.md) for the full chain-of-trust rationale.
+
 ## Signing
 
 The rescue initramfs is not itself signed — it rides inside a signed distro kernel's initramfs build, which carries the vendor signature. See `THREAT_MODEL.md` and ADR 0001 for the full chain-of-trust rationale.
