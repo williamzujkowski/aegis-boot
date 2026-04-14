@@ -60,8 +60,13 @@ jobs:
       - name: Generate CycloneDX SBOM
         run: |
           cargo install --locked cargo-cyclonedx --version 0.5.7
-          cargo cyclonedx --format json --override-filename sbom
-          mv sbom.cdx.json out/sbom.cdx.json
+          # cargo-cyclonedx writes a `<package>.cdx.json` inside each member
+          # crate directory rather than a single workspace-wide file. The
+          # rescue-tui crate is what we actually ship; its SBOM closure
+          # transitively covers iso-probe + kexec-loader + iso-parser since
+          # those are compile-time dependencies.
+          ( cd crates/rescue-tui && cargo cyclonedx --format json )
+          cp crates/rescue-tui/rescue-tui.cdx.json out/sbom.cdx.json
 
       - name: Stage release artifacts
         run: |
