@@ -133,9 +133,8 @@ impl Drop for OwnedFd {
         // shared. Closing an already-closed or never-opened fd would be UB,
         // but construction paths guarantee `self.0 >= 0` and single-owner.
         #[allow(unsafe_code)]
-        unsafe {
-            libc::close(self.0);
-        }
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+        unsafe { libc::close(self.0); }
     }
 }
 
@@ -146,6 +145,7 @@ fn open_path(path: &Path) -> Result<OwnedFd, KexecError> {
     // owned buffer that outlives the syscall. `O_RDONLY | O_CLOEXEC` is a
     // safe flag combination. Return value is checked below.
     #[allow(unsafe_code)]
+    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
     let fd = unsafe { libc::open(c_path.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
     if fd < 0 {
         return Err(KexecError::Io(io::Error::last_os_error()));

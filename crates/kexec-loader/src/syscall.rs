@@ -39,6 +39,7 @@ pub(crate) fn kexec_file_load(
     // caller for the duration of the call. `cmdline_len` is the byte length
     // including the terminator, as required by the kexec_file_load ABI.
     #[allow(unsafe_code)]
+    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
     let rc = unsafe {
         libc::syscall(
             SYS_KEXEC_FILE_LOAD,
@@ -64,6 +65,7 @@ pub(crate) fn reboot_kexec() -> Result<(), KexecError> {
     // syscall once the kexec image has been loaded. It either does not
     // return (success) or fails with errno set. No pointers, no shared state.
     #[allow(unsafe_code)]
+    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
     let rc = unsafe { libc::reboot(libc::LINUX_REBOOT_CMD_KEXEC) };
     if rc < 0 {
         Err(KexecError::Io(io::Error::last_os_error()))
