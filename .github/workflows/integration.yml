@@ -40,7 +40,21 @@ jobs:
             echo "SKIP_INTEGRATION=1" >> "$GITHUB_ENV"
           fi
 
-      - name: Run ignored integration tests
+      - name: Run iso-probe loop-mount integration test
         if: env.SKIP_INTEGRATION != '1'
         run: |
           sudo -E "$HOME/.cargo/bin/cargo" test -p iso-probe --release -- --ignored --nocapture
+
+      - name: Install kernel image for kexec dry-run test
+        if: env.SKIP_INTEGRATION != '1'
+        run: |
+          sudo apt-get install -y --no-install-recommends linux-image-generic
+          sudo chmod 0644 /boot/vmlinuz-*-generic || true
+
+      - name: Run kexec-loader dry-run integration test
+        if: env.SKIP_INTEGRATION != '1'
+        run: |
+          sudo -E "$HOME/.cargo/bin/cargo" test -p kexec-loader --release -- --ignored --nocapture
+          # Belt-and-suspenders: make sure we don't leave a loaded kexec
+          # image staged on the runner after the test completes.
+          sudo kexec -u 2>/dev/null || true

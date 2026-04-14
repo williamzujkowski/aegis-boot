@@ -80,6 +80,37 @@ pub enum KexecError {
     Unsupported,
 }
 
+/// Load the requested kernel via `kexec_file_load(2)` without triggering the
+/// subsequent reboot.
+///
+/// On success the image is staged in kernel memory and
+/// `/sys/kernel/kexec_loaded` flips to `1`. Callers that want to actually
+/// hand off to the loaded kernel should use [`load_and_exec`]; this entry
+/// point exists so integration tests can verify the syscall path against a
+/// real kernel without replacing the test process.
+///
+/// # Errors
+///
+/// See [`KexecError`].
+#[cfg(target_os = "linux")]
+pub fn load_dry(req: &KexecRequest) -> Result<(), KexecError> {
+    let kernel_fd = open_path(&req.kernel)?;
+    let initrd_fd = req.initrd.as_deref().map(open_path).transpose()?;
+    let cmdline = CString::new(req.cmdline.as_bytes())
+        .map_err(|_| KexecError::InvalidPath(PathBuf::from(&req.cmdline)))?;
+    syscall::kexec_file_load(
+        kernel_fd.as_raw(),
+        initrd_fd.as_ref().map(OwnedFd::as_raw),
+        &cmdline,
+    )
+}
+
+/// Non-Linux stub — always returns [`KexecError::Unsupported`].
+#[cfg(not(target_os = "linux"))]
+pub fn load_dry(_req: &KexecRequest) -> Result<(), KexecError> {
+    Err(KexecError::Unsupported)
+}
+
 /// Load the requested kernel via `kexec_file_load(2)` and immediately trigger
 /// `reboot(LINUX_REBOOT_CMD_KEXEC)`.
 ///
@@ -93,12 +124,7 @@ pub enum KexecError {
 /// can present a specific diagnostic.
 #[cfg(target_os = "linux")]
 pub fn load_and_exec(req: &KexecRequest) -> Result<std::convert::Infallible, KexecError> {
-    let kernel_fd = open_path(&req.kernel)?;
-    let initrd_fd = req.initrd.as_deref().map(open_path).transpose()?;
-    let cmdline = CString::new(req.cmdline.as_bytes())
-        .map_err(|_| KexecError::InvalidPath(PathBuf::from(&req.cmdline)))?;
-
-    syscall::kexec_file_load(kernel_fd.as_raw(), initrd_fd.as_ref().map(OwnedFd::as_raw), &cmdline)?;
+    load_dry(req)?;
     syscall::reboot_kexec()?;
     // reboot_kexec never returns on success. If we got here, treat as Io.
     Err(KexecError::Io(io::Error::other(
