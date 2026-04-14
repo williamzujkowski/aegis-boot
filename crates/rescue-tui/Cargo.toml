@@ -1,0 +1,21 @@
+[package]
+name = "rescue-tui"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ratatui application for the aegis-boot signed Linux rescue environment"
+
+[[bin]]
+name = "rescue-tui"
+path = "src/main.rs"
+
+[dependencies]
+iso-probe = { path = "../iso-probe" }
+kexec-loader = { path = "../kexec-loader" }
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true
