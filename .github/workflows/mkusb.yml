@@ -84,7 +84,9 @@ jobs:
           echo "--- mkusb QEMU serial output (last 60 lines) ---"
           tail -60 /tmp/mkusb-boot.log
           echo "--- end ---"
-          if grep -qiE 'secure boot enabled|secureboot.*enabled' /tmp/mkusb-boot.log \
+          # Kernel + EFI stub log "Secure Boot is enabled" (note 'is');
+          # accept that phrasing plus the tighter variants.
+          if grep -qiE 'secure boot (is )?enabled|secureboot.*enabled' /tmp/mkusb-boot.log \
              && grep -q 'aegis-boot rescue-tui starting' /tmp/mkusb-boot.log; then
             echo "mkusb image boots cleanly under SB + rescue-tui runs: PASS"
           else
