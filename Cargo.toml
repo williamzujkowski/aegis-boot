@@ -18,9 +18,13 @@ repository = "https://github.com/williamzujkowski/aegis-boot"
 thiserror = { version = "2.0", features = ["std"] }
 serde = { version = "1.0", features = ["derive"] }
 tracing = "0.1"
+libc = "0.2"
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+# `deny`, not `forbid`, so individual crates can narrowly opt into `unsafe`
+# for syscall FFI (kexec-loader). Every such crate must justify it per
+# module with `#[allow(unsafe_code)]` and document the invariant.
+unsafe_code = "deny"
 missing_docs = "warn"
 
 [workspace.lints.clippy]
