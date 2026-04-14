@@ -1,314 +1,189 @@
-# Secure Boot Threat Model and Security Boundary Document
+# Aegis-Boot Threat Model
+
+**Version:** 2.0
+**Scope:** Option B runtime (signed Linux rescue + ratatui TUI + kexec) per [ADR 0001](./docs/adr/0001-runtime-architecture.md)
+**Last reviewed:** 2026-04-14
+
+This document replaces the v1.0 threat model, which assumed a systemd-boot + custom-signed-orchestrator chain. That assumption no longer matches the chosen runtime and has been removed rather than patched.
+
+---
 
 ## 1. Glossary
 
-- **PK (Platform Key)** — Master key in UEFI secure boot that signs KEK
-- **KEK (Key Exchange Key)** - Signs DB and DBX key databases
-- **MOK (Machine Owner Key)** — User-managed key for unsigned kernel modules
-- **db (signature database)** — Allowlist of trusted executables
-- **dbx (forbidden signatures database)** — Blocklist of known-bad signatures
-- **shim** — First-stage bootloader that delegates to systemd-boot
-- **ESP (EFI System Partition)** — FAT32 partition containing bootloaders
-- **UEFI (Unified Extensible Firmware Interface)** — Firmware interface standard
-- **TOCTOU (Time-of-Check-Time-of-Use)** — Race condition between verification and execution
-- **SBAT (Secure Boot Advanced Targeting)** — Revocation mechanism for boot components
+- **PK / KEK / db / dbx** — UEFI Secure Boot key hierarchy: Platform Key signs KEK signs the `db` allowlist and `dbx` blocklist.
+- **MOK (Machine Owner Key)** — Platform-agnostic user key, enrolled via `shim` and `mokutil`, used to authorize kernels/modules not signed by Microsoft or the distro CA.
+- **SBAT (Secure Boot Advanced Targeting)** — Component-level revocation mechanism carried inside `shim` and GRUB; lets vendors burn old vulnerable versions without issuing a fresh `dbx` hash.
+- **shim** — First-stage bootloader signed by Microsoft UEFI CA, delegates to a second-stage bootloader or kernel signed by the distro CA.
+- **KEXEC_SIG** — Kernel config gating `kexec_file_load(2)` on platform-keyring signature verification of the kexec target.
+- **Lockdown** — LSM mode (`integrity` or `confidentiality`) that restricts kernel interfaces when Secure Boot is enforced.
+- **Initramfs** — Compressed cpio archive unpacked by the kernel into a tmpfs root at boot.
 
----
+## 2. System Under Test
 
-## 2. Asset Inventory
+Aegis-boot is a rescue environment that boots under UEFI Secure Boot, discovers ISO images on attached media, and boots the user's selection via `kexec_file_load(2)`.
 
-| Asset ID | Asset Name                         | Type          | Criticality | Owner    |
-| -------- | ---------------------------------- | ------------- | ----------- | -------- |
-| A1       | Shim bootloader (shimx64.efi)      | Software      | Critical    | Vendor   |
-| A2       | systemd-boot (systemd-bootx64.efi) | Software      | Critical    | Project  |
-| A3       | Kernel (vmlinuz)                   | Software      | Critical    | Project  |
-| A4       | initramfs                          | Data/Software | High        | Project  |
-| A5       | MOK keys (PK/KEK/db/dbx)           | Cryptographic | Critical    | Platform |
-| A6       | ESP partition                      | Storage       | High        | Platform |
-| A7       | UEFI firmware                      | Firmware      | Critical    | Vendor   |
-| A8       | Aegis-Boot orchestrator binary     | Software      | High        | Project  |
-| A9       | Kernel command line (cmdline.txt)  | Configuration | High        | Project  |
-| A10      | Boot entries (EFI variable)        | Configuration | High        | Platform |
+### Components aegis-boot owns
 
----
+| Component        | Source                                 | Location in runtime |
+|------------------|----------------------------------------|---------------------|
+| `iso-parser`     | `crates/iso-parser/` (std, loopback)   | initramfs           |
+| `iso-probe`      | `crates/iso-probe/`                    | initramfs           |
+| `rescue-tui`     | `crates/rescue-tui/` (ratatui binary)  | initramfs, PID 1 or spawned by init |
+| `kexec-loader`   | `crates/kexec-loader/`                 | linked into rescue-tui |
 
-## 3. Threat Actors
+### Components aegis-boot depends on (outsourced trust)
 
-| ID  | Actor                          | Capability                          | Intent     | Opportunity |
-| --- | ------------------------------ | ----------------------------------- | ---------- | ----------- |
-| TA1 | Opportunistic local attacker   | Physical access, basic technical    | Varies     | High        |
-| TA2 | Script kiddie                  | Pre-built exploits                  | High       | Medium      |
-| TA3 | Insider (non-privileged)       | Logical access, physical            | Low-medium | Medium      |
-| TA4 | Organized crime                | Resources, custom malware           | High       | Low         |
-| TA5 | Nation-state APT               | Firmware-level access, supply chain | Very high  | Low         |
-| TA6 | Malicious insider (privileged) | Full system access                  | High       | High        |
+| Component        | Owner                                  | Why trusted       |
+|------------------|----------------------------------------|-------------------|
+| UEFI firmware    | Platform vendor                        | Platform root of trust |
+| `shim`           | Microsoft UEFI CA → vendor             | Microsoft-signed; SBAT-versioned |
+| Rescue kernel    | Upstream distro (Debian/Fedora/…)      | Signed by distro CA, CA in `shim` keyring |
+| Kernel `KEXEC_SIG` | Linux kernel maintainers             | Verifies kexec target signature against platform + MOK keyrings |
 
----
-
-## 4. Trust Boundaries and Data Flow
+## 3. Boot Chain of Trust
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        SECURE BOOT CHAIN OF TRUST                          │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌─────────┐    ┌─────────────┐    ┌──────────┐    ┌─────────────────┐    │
-│  │  UEFI   │───▶│    shim      │───▶│systemd-  │───▶│     kernel      │    │
-│  │ Firmware│    │  (A1)        │    │boot (A2) │    │     (A3)        │    │
-│  └─────────┘    └──────┬──────┘    └────┬─────┘    └────────┬────────┘    │
-│       │                │                 │                  │             │
-│       ▼                ▼                 ▼                  ▼             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                    SECURITY BOUNDARIES                             │   │
-│  │  B1: Hardware/Firmware    ── Firmware validates shim signature     │   │
-│  │  B2: Shim/Bootloader     ── shim validates systemd-boot            │   │
-│  │  B3: Bootloader/Kernel   ── systemd-boot validates kernel          │   │
-│  │  B4: Kernel/Initramfs    ── Kernel validates initramfs integrity   │   │
-│  │  B5: Kernel/Orchestrator ── Kernel validates orchestrator binary  │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────┐
+│  UEFI firmware   │   validates PE signature of next stage
+└────────┬─────────┘
+         ▼
+┌──────────────────┐
+│  shim (vendor)   │   reviewed by shim review board
+└────────┬─────────┘   checks SBAT, delegates to signed kernel
+         ▼
+┌──────────────────────────────┐
+│  signed Linux rescue kernel  │   distro-signed; mounts initramfs
+└────────────┬─────────────────┘
+             ▼
+┌──────────────────────────┐
+│  initramfs               │
+│  (rescue-tui + helpers)  │   NOT separately signed; rides kernel chain
+└────────────┬─────────────┘
+             ▼
+┌──────────────────────┐
+│  rescue-tui          │   runs in Linux userspace, post-ExitBootServices
+└────────────┬─────────┘
+             ▼
+┌───────────────────────────────────┐
+│  kexec_file_load(selected ISO)    │   kernel verifies target signature
+└────────────┬──────────────────────┘   via KEXEC_SIG + platform keyring
+             ▼
+┌─────────────────────┐
+│  target ISO kernel  │   boots per its own distro's Secure Boot policy
+└─────────────────────┘
 ```
 
-**Data Flow Summary:**
-
-1. UEFI firmware validates shim (B1)
-2. shim loads systemd-boot from ESP, verifies SBAT/DB (B2)
-3. systemd-boot reads boot entries, loads kernel + initramfs (B3)
-4. Kernel decompresses initramfs, mounts root (B4)
-5. systemd launches orchestrator binary (B5)
-
----
-
-## 5. Chain-of-Trust Assumptions
-
-### A1: UEFI Secure Boot is Enforced at Boot Time
-
-- **Justification:** Platform defaults to enforcing secure boot; users cannot bypass without physically rebooting and entering firmware setup
-- **Verification:** `bootctl status` shows `secureBoot:=enforced`
-
-### A2: Shim is Signed by Canonical Key
-
-- **Justification:** shim is signed by Microsoft Corporation UEFI CA 2023; SHA256 hash verified against Microsoft SBAT table
-- **Verification:** `sbattest` or check SBAT version against latest revocation list
-
-### A3: systemd-boot is Signed by shim-allowlisted Key
-
-- **Justification:** systemd-boot binary signed by systemd's DB key, included in shim's signature database
-- **Verification:** `sbattach --stat <boot-image>` shows valid signature chain
-
-### A4: Kernel is Signed by DB Key or Loading is Controlled
-
-- **Justification:** Kernel signed by Canonical's DB key; unsigned kernels rejected unless secure boot disabled
-- **Verification:** `journalctl -b | grep -i "signature.*failed"` should return empty
-
-### A5: MOK Keys are Protected Against Tampering
-
-- **Justification:** MOK enrollment requires physical presence (mokutil --import); keys stored in NVRAM with attribute 'boot-service-only'
-- **Verification:** `mokutil --list-enrolled` shows enrolled keys; verify key ownership
-
----
-
-## 6. ISO Signature Verification Requirements
-
-### 6.1 Signing Infrastructure Requirements
-
-- **Yubikey/FIDO2 hardware token** for key storage (recommended) or dedicated air-gapped signing host
-- **HSM (Hardware Security Module)** for production keys — threshold 2-of-3 signing
-- **Offline master key** stored in safe, activated only for signing ceremonies
-
-### 6.2 Verification Protocol
-
-```bash
-# Step 1: Verify shim signature against Microsoft SBAT
-sbattest
-
-# Step 2: Check systemd-boot signature
-sbattach --list-sigs /boot/EFI/systemd/systemd-bootx64.efi
-
-# Step 3: Verify kernel image signature
-sbsign --verify /boot/vmlinuz-$(uname -r)
-
-# Step 4: Verify initramfs integrity (if signed)
-cat /boot/initrd.img-$(uname -r) | sha256sum
-
-# Step 5: Verify orchestrator binary before execution
-chattr +i /usr/local/bin/aegis-boot  # immutable attribute
-```
-
-### 6.3 Failure Conditions
-
-| Condition                     | Action                        | Escalation |
-| ----------------------------- | ----------------------------- | ---------- |
-| SBAT version outdated         | Reject boot, notify admin     | P1         |
-| Signature verification failed | Halt boot, fallback to rescue | P1         |
-| Key revocation detected       | Immediate boot halt           | P1         |
-| Immutable bit removed         | Alert SOC, quarantine         | P2         |
-
-### 6.4 Automation Requirements
-
-- Daily SBAT check via cron job
-- Automated signature verification on package updates
-- Integrity measurement logging to remote audit server
-- Alert on any verification failure
-
----
-
-## 7. Attack Surface Enumeration
-
-### 7.1 Physical Attack Vectors
-
-| ID    | Vector               | Description                           |
-| ----- | -------------------- | ------------------------------------- |
-| AV-P1 | USB device insertion | BadUSB attack executing at boot       |
-| AV-P2 | Cold boot attack     | Memory dump after power cut           |
-| AV-P3 | Evil maid attack     | Physical modification during absence  |
-| AV-P4 | JTAG debug port      | Direct firmware access                |
-| AV-P5 | DMA via Thunderbolt  | Firewire/Thunderbolt DMA extraction   |
-| AV-P6 | Boot media removal   | Swap boot drive to compromised system |
-
-### 7.2 Logical Attack Vectors
-
-| ID    | Vector                        | Description                               |
-| ----- | ----------------------------- | ----------------------------------------- |
-| AV-L1 | Kernel command line injection | Modify cmdline.txt via ESP mount          |
-| AV-L2 | initramfs modification        | Inject payload before pivot_root          |
-| AV-L3 | Boot entry manipulation       | Modify EFI variable boot order            |
-| AV-L4 | MOK key injection             | Enroll malicious key via/shim             |
-| AV-L5 | TOCTOU race condition         | Exploit window between verify and execute |
-| AV-L6 | GRUB password bypass          | Bypass password via live USB              |
-
-### 7.3 Firmware/Supply Chain Attack Vectors
-
-| ID    | Vector                  | Description                       |
-| ----- | ----------------------- | --------------------------------- |
-| AV-F1 | Firmware implant        | Pre-installed firmware malware    |
-| AV-F2 | Shim downgrade          | Revert to vulnerable shim version |
-| AV-F3 | SBAT evasion            | Future SBAT bypass technique      |
-| AV-F4 | Supply chain compromise | Compromise during manufacturing   |
-
----
-
-## 8. STRIDE Analysis
-
-| ID  | Category               | Threat                              | Affected Asset | Severity |
-| --- | ---------------------- | ----------------------------------- | -------------- | -------- |
-| S1  | Spoofing               | Bootloader impersonation            | A2             | High     |
-| S2  | Spoofing               | Fake kernel image injection         | A3             | Critical |
-| T1  | Tampering              | Modify initramfs before boot        | A4             | High     |
-| T2  | Tampering              | Alter kernel command line           | A9             | Medium   |
-| T3  | Tampering              | Modify boot entry order             | A10            | High     |
-| T4  | Tampering              | Replace shim with malicious version | A1             | Critical |
-| R1  | Repudiation            | No audit trail of boot changes      | All            | Medium   |
-| R2  | Repudiation            | Attestation fails to log            | All            | Medium   |
-| I1  | Information Disclosure | Cold boot memory dump               | A8             | High     |
-| I2  | Information Disclosure | EFI variable exposure               | A10            | Low      |
-| D1  | Denial of Service      | Brick UEFI via bad update           | A7             | Critical |
-| D2  | Denial of Service      | Corrupt ESP rendering unbootable    | A6             | High     |
-| D3  | Denial of Service      | Remove boot entries via variable    | A10            | Medium   |
-| E1  | Elevation of Privilege | MOK enrollment for kernel modules   | A5             | Critical |
-| E2  | Elevation of Privilege | Bypass secure boot via exploit      | A1             | Critical |
-
----
-
-## 9. Attack Vectors with DREAD Scoring
-
-### AV-1: USB Thunderbolt Device Injection
-
-- **Attack:** Insert malicious USB-C/Thunderbolt device that executes DMA attack during POST
-- **DREAD:** Damage (3) + Reproducibility (2) + Exploitability (2) + Affected Users (3) + Discoverability (2) = **12/20 (Medium)**
-- **Mitigation:** Disable Thunderbolt in firmware, use USBGuard
-
-### AV-2: TOCTOU Boot Race
-
-- **Attack:** Exploit window between signature verification and kernel execution to inject payload
-- **DREAD:** Damage (4) + Reproducibility (1) + Exploitability (2) + Affected Users (3) + Discoverability (1) = **11/20 (Medium)**
-- **Mitigation:** Kernel lockdown mode, measured boot, immutable verification
-
-### AV-3: Boot Entry Injection via EFI Variable
-
-- **Attack:** Modify EFI variable to point to malicious .efi on ESP
-- **DREAD:** Damage (4) + Reproducibility (3) + Exploitability (3) + Affected Users (2) + Discoverability (2) = **14/20 (High)**
-- **Mitigation:** Firmware password protection, boot guard
-
-### AV-4: MOK Key Enrollment via OOB
-
-- **Attack:** Physical access to trigger MOK enrollment (within 5 second window or via reboot)
-- **DREAD:** Damage (5) + Reproducibility (3) + Exploitability (3) + Affected Users (3) + Discoverability (2) = **16/20 (Critical)**
-- **Mitigation:** Disable MOK enrollment, require signed MOK requests only
-
-### AV-5: Supply Chain Shim Replacement
-
-- **Attack:** Compromise during OS install or update, replace shim with backdoored version
-- **DREAD:** Damage (5) + Reproducibility (2) + Exploitability (1) + Affected Users (5) + Discoverability (1) = **14/20 (High)**
-- **Mitigation:** Verify ISO hash, only use official distribution channels
-
----
-
-## 10. Risk Matrix
-
-| Priority | Risk                            | Score | Action                                   |
-| -------- | ------------------------------- | ----- | ---------------------------------------- |
-| P1       | MOK key injection via OOB       | 16/20 | Disable MOK enrollment, HSM for keys     |
-| P1       | Shim replacement (supply chain) | 14/20 | Verify ISO, SBAT auto-update             |
-| P1       | Boot entry injection            | 14/20 | Firmware password, boot guard            |
-| P2       | initramfs modification          | 12/20 | Signed initramfs, immutable verification |
-| P2       | USB DMA injection               | 12/20 | Disable Thunderbolt, USBGuard            |
-| P3       | TOCTOU race                     | 11/20 | Kernel lockdown, measured boot           |
-| P3       | Cold boot attack                | 11/20 | Encrypted memory (TPM), memory wipe      |
-
----
-
-## 11. Incident Response
-
-### Detection Indicators
-
-```bash
-# Unusual boot entry added
-efibootmgr -v | grep -i "new"
-
-# MOK key enrolled unexpectedly
-mokutil --list-enrolled
-
-# Shim signature changed
-sbattest
-
-# Secure boot state changed
-bootctl status | grep -i secure
-
-# ESP mount point accessed unexpectedly
-auditctl -w /boot/efi -p wa -k esp_mod
-```
-
-### Response Procedures
-
-1. **Identify**: Run `bootctl status` and `sbattest` to determine state
-2. **Contain**: Boot to trusted recovery environment, mount ESP read-only
-3. **Eradicate**: Restore known-good shim/systemd-boot from trusted backup
-4. **Recover**: Re-enroll only verified keys, regenerate boot entries
-5. **Post-incident**: Audit logs, review physical security, rotate keys
-
-### Contacts
-
-- Security Team: security@aegis-boot.example
-- On-call: +1-555-0100
-- Hardware Vendor: [Vendor support contact]
-
----
-
-## 12. Review Schedule
-
-| Review Type             | Frequency | Owner         | Last Review |
-| ----------------------- | --------- | ------------- | ----------- |
-| Full threat model       | Annual    | Security Lead | [DATE]      |
-| Attack surface update   | Quarterly | Security Lead | [DATE]      |
-| STRIDE analysis refresh | Annual    | Security Lead | [DATE]      |
-| Key rotation            | Annual    | Platform Team | [DATE]      |
-| SBAT compliance check   | Monthly   | Platform Team | [DATE]      |
-
----
-
-**Document Version:** 1.0  
-**Classification:** Internal  
-**Last Updated:** [DATE]  
-**Next Review:** [DATE + 1 year]
+### Critical invariants
+
+1. `rescue-tui` **never runs before `ExitBootServices`**. All pre-OS trust is in the hands of firmware + shim + kernel.
+2. `kexec-loader` **only ever calls `kexec_file_load(2)`** — never `kexec_load(2)`, which bypasses `KEXEC_SIG`.
+3. `rescue-tui` **never proposes disabling Secure Boot**. On signature rejection, the UX presents a `mokutil` enrollment path.
+
+## 4. Assets
+
+| ID  | Asset                                     | Criticality | Owner            |
+|-----|-------------------------------------------|-------------|------------------|
+| A1  | UEFI platform keyring (db/dbx)            | Critical    | Platform vendor  |
+| A2  | `shim` binary (SBAT table, vendor cert)   | Critical    | Vendor/shim review |
+| A3  | Signed rescue kernel + initramfs          | Critical    | Distro           |
+| A4  | `rescue-tui` binary inside initramfs      | High        | Project          |
+| A5  | `kexec-loader` code path (`unsafe` FFI)   | High        | Project          |
+| A6  | User-supplied ISO content on attached media | Medium    | User             |
+| A7  | MOK keyring                               | High        | User (enrolled once) |
+| A8  | EFI System Partition                      | Medium      | Platform         |
+| A9  | Kernel command line for the target ISO    | Medium      | User (via TUI)   |
+
+## 5. Trust Tiers
+
+| Tier | Inputs                                                    | Treatment |
+|------|-----------------------------------------------------------|-----------|
+| T1 — Authoritative | Firmware, shim, signed kernel, kernel keyring verdict | Full trust — sole authority for go/no-go on kexec |
+| T2 — Semi-trusted | Project-owned Rust code in the initramfs                | Trusted for UX/flow; cannot override T1 |
+| T3 — Untrusted   | User-supplied ISO content, ISO-embedded boot configs    | Data only — never executed pre-verification |
+| T4 — Hostile     | Malformed ISOs, maliciously crafted loop-mount payloads  | Must fail closed; no crash, no out-of-bounds access |
+
+## 6. Threat Actors
+
+| ID  | Actor                        | Capability                                 |
+|-----|------------------------------|--------------------------------------------|
+| TA1 | Unprivileged local user      | Insert USB media, select ISOs              |
+| TA2 | Privileged local user (root post-boot of target) | Full OS after kexec succeeds |
+| TA3 | Malicious ISO author         | Crafted ISO / kernel image / cmdline       |
+| TA4 | Supply-chain attacker        | Compromise aegis-boot release artifacts    |
+| TA5 | Physical evil-maid           | Media swap, firmware tamper between boots  |
+| TA6 | Nation-state APT             | Firmware implants, signing cert theft, BootHole-class exploits |
+
+## 7. STRIDE — Option B Runtime
+
+| ID  | Category | Threat | Asset | Mitigation |
+|-----|----------|--------|-------|------------|
+| S1  | Spoofing | Unsigned ISO kernel presented as trusted | A6 → A3 | `KEXEC_SIG` rejects; `kexec-loader` returns `SignatureRejected`; TUI surfaces MOK enrollment path |
+| S2  | Spoofing | Malicious `shim` replacement on ESP | A2, A8 | Firmware `db` validation; SBAT on legitimate shim denies downgrade |
+| T1  | Tampering | Modify `rescue-tui` binary in initramfs | A4 | Initramfs is measured into TPM (IMA-appraisal, future work); kernel+initramfs ride a distro-signed chain |
+| T2  | Tampering | Inject kernel cmdline via TUI to weaken target ISO | A9 | `rescue-tui` constrains cmdline to ISO-declared defaults + explicit user override; audit-logged |
+| T3  | Tampering | Loop-mount race — swap ISO contents between probe and kexec | A6 | Open fd held for the entire probe→kexec window; `kexec_file_load` operates on fd, not path (no TOCTOU) |
+| R1  | Repudiation | No record of which ISO was kexec'd | A4 | `rescue-tui` emits structured `tracing` events captured by `journalctl` in the rescue environment |
+| I1  | Information Disclosure | `rescue-tui` error paths leak host info into TUI | A4 | Errors classified and redacted; only actionable diagnostics displayed |
+| I2  | Information Disclosure | Cold-boot memory dump of rescue environment | A3 | Out of scope — user responsibility; rescue env holds no secrets beyond ISO metadata |
+| D1  | Denial of Service | Malformed ISO hangs `iso-probe` | A6 | `iso-probe` has per-file timeout; bounded memory; fuzz coverage on parser |
+| D2  | Denial of Service | `rescue-tui` crashes, leaves user at kernel panic | A4 | Panics caught; fallback to login shell on a reserved VT; documented recovery |
+| E1  | EoP | Buffer bug in `kexec-loader` FFI escapes sandbox | A5 | `unsafe_code = forbid` crate-wide except 4 audited blocks with SAFETY comments; `kexec_load(2)` not exposed; `KEXEC_FILE_UNSAFE` flag not set |
+| E2  | EoP | Lockdown bypass lets user-mode code load unsigned kernel | A3 → A1 | Out of our scope (kernel CVE); tracked via upstream security advisories; trigger for revisiting Option A if rate > 1 critical/year × 2 years |
+
+## 8. ISO Handling Attack Surface
+
+Every ISO the user selects passes through this chain. Each step is a failure-closed boundary.
+
+1. **`iso-probe` discovery** — loop-mount in read-only mode, walk ISO9660/UDF, extract kernel + initrd + cmdline. Invalid layouts are skipped, not retried; malformed structures raise classified errors. Fuzzed via `cargo-fuzz` (see #3 / `crates/iso-parser/fuzz/`).
+2. **`rescue-tui` preflight** — render quirk warnings from `iso-probe`'s compatibility matrix (see #6). Block `kexec` attempts that match known-broken signatures.
+3. **`kexec-loader`** — open fd for the extracted kernel, pass to `kexec_file_load` with cmdline + optional initrd. Error classification table:
+   - `EKEYREJECTED` → `SignatureRejected` → TUI: "Enroll this ISO's signing key via `mokutil` or use a distro-signed ISO"
+   - `EPERM` → `LockdownRefused` → TUI: "Secure Boot policy refuses this operation"
+   - `ENOEXEC` → `UnsupportedImage` → TUI: "This kernel image format is not supported"
+   - other errno → `Io(raw)` with preserved errno for triage
+4. **`reboot(LINUX_REBOOT_CMD_KEXEC)`** — does not return on success. If it returns, the path is classified as `Io` and reported; the rescue TUI remains usable.
+
+## 9. Supply Chain
+
+| Risk | Mitigation |
+|------|------------|
+| Compromise of aegis-boot binaries in distribution | Release artifacts signed; reproducible-build CI (`rescue-tui` sha256 equal across two passes) with `SOURCE_DATE_EPOCH` — see [BUILDING.md](./BUILDING.md) |
+| Malicious Rust dependency | `cargo-deny` in CI (advisories + licenses + bans); minimum dep surface for `kexec-loader` (only `libc`, `thiserror`, `tracing`) |
+| Malicious SDK/build image | `Dockerfile.locked` pins `ubuntu:22.04` by SHA-256 digest and Rust by version |
+| `shim` / kernel compromise | Out of scope — we inherit distro + shim review board trust. ADR 0001 explicitly accepts this as the Option B tradeoff |
+
+## 10. Assumptions
+
+| A   | Assumption | Justification |
+|-----|------------|---------------|
+| Ax1 | UEFI Secure Boot is enforcing | Verified via `bootctl status` at build integration time; users deploy only in enforcing mode |
+| Ax2 | The rescue kernel is signed by a CA in the platform or MOK keyring | Project ships tested integrations for Debian/Fedora/Ubuntu/Alpine/Arch/NixOS (per #6 compatibility matrix) |
+| Ax3 | `KEXEC_SIG` is enabled and `kexec_load(2)` is disabled by lockdown | Required minimum kernel config — documented in README / BUILDING.md |
+| Ax4 | Users will not disable Secure Boot to make unsigned ISOs boot | UX never prompts to; `mokutil` enrollment is the supported remedy |
+
+## 11. Out of Scope
+
+- Cold-boot memory attacks against the rescue environment.
+- DMA attacks via Thunderbolt (platform configuration).
+- Side-channel attacks against the platform (Spectre-class).
+- TPM remote attestation (tracked separately — future ADR).
+- Post-kexec behavior of the target ISO (outside our trust boundary).
+
+## 12. Revisit Triggers
+
+Per ADR 0001, this threat model is partly a bet on the kexec-under-SB story remaining stable. Revisit if:
+
+- More than one critical CVE affecting `kexec_file_load` + `KEXEC_SIG` is published per year for two consecutive years.
+- `shim` review board changes revocation cadence such that distro-signed kernels stop being reliably available across major distros.
+- SBAT schema changes invalidate our trust inheritance assumption.
+
+In any of these cases, ADR 0001's preserved Option A dissent becomes the starting point for re-evaluation.
+
+## 13. Review Cadence
+
+| Review | Frequency | Trigger |
+|--------|-----------|---------|
+| Full threat model refresh | Annually (next: 2027-04-14) | Calendar |
+| STRIDE delta review | Per-PR if runtime trust boundary changes | Reviewer checklist |
+| Assumption validation | Per release | Release checklist |
+| Revisit-trigger audit | Quarterly | Calendar + CVE feed |
