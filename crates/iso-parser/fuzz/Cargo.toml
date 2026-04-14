@@ -1,0 +1,31 @@
+[package]
+name = "iso-parser-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+rust-version = "1.85"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.iso-parser]
+path = ".."
+
+[[bin]]
+name = "validate_path"
+path = "fuzz_targets/validate_path.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "distribution_from_paths"
+path = "fuzz_targets/distribution_from_paths.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

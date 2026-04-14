@@ -1,0 +1,49 @@
+name: Fuzz (nightly)
+
+on:
+  schedule:
+    # 07:00 UTC daily = 03:00 ET
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+    inputs:
+      duration_seconds:
+        description: "Per-target fuzz duration in seconds"
+        default: "600"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: Fuzz ${{ matrix.target }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [validate_path, distribution_from_paths]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install nightly toolchain
+        run: |
+          rustup toolchain install nightly --profile minimal
+          rustup override set nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "crates/iso-parser/fuzz -> target"
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked --version 0.12.0
+      - name: Run fuzz target
+        working-directory: crates/iso-parser
+        env:
+          DURATION: ${{ github.event.inputs.duration_seconds || '600' }}
+        run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=$DURATION
+      - name: Upload crashes on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes-${{ matrix.target }}
+          path: |
+            crates/iso-parser/fuzz/artifacts/**
+            crates/iso-parser/fuzz/corpus/**
+          retention-days: 30
