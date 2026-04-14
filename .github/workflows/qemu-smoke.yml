@@ -1,0 +1,58 @@
+name: QEMU Smoke Boot
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  qemu-smoke:
+    name: Boot initramfs under QEMU
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install QEMU + kernel + initramfs toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 \
+            linux-image-generic \
+            busybox-static \
+            cpio
+          # linux-image-generic installs vmlinuz under /boot, typically 0644
+          # on GHA runners. Verify readability up front.
+          ls -l /boot/vmlinuz-*-generic | tee /tmp/kernels.txt
+          # Pick the most recent readable kernel.
+          KERNEL=$(ls -1 /boot/vmlinuz-*-generic 2>/dev/null | sort | tail -1)
+          if [ -z "$KERNEL" ] || [ ! -r "$KERNEL" ]; then
+            echo "No readable kernel; attempting chmod"
+            sudo chmod 0644 /boot/vmlinuz-*-generic || true
+            KERNEL=$(ls -1 /boot/vmlinuz-*-generic 2>/dev/null | sort | tail -1)
+          fi
+          echo "KERNEL=$KERNEL" >> "$GITHUB_ENV"
+
+      - name: Install Rust toolchain (pinned)
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain 1.85.0 --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Build rescue-tui (release)
+        run: cargo build --release -p rescue-tui
+
+      - name: Build initramfs
+        env:
+          SOURCE_DATE_EPOCH: "1700000000"
+        run: ./scripts/build-initramfs.sh
+
+      - name: QEMU smoke boot
+        env:
+          TIMEOUT_SECONDS: "90"
+        run: ./scripts/qemu-smoke.sh
