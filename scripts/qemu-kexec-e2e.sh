@@ -111,9 +111,18 @@ fi
 
 # Load filesystem + loop modules (ISO9660 is usually a module on
 # Ubuntu stock kernels — mount silently fails without this).
-/bin/modprobe loop 2>/dev/null || true
-/bin/modprobe isofs 2>/dev/null || true
-/bin/modprobe udf 2>/dev/null || true
+/bin/echo "aegis-kexec-e2e: uname -r = $(/bin/uname -r)"
+/bin/echo "aegis-kexec-e2e: /lib/modules contents:"
+/bin/ls /lib/modules/ 2>&1 || true
+for k in /lib/modules/*; do
+    /bin/echo "aegis-kexec-e2e:   fs modules in $k:"
+    /bin/ls "$k/kernel/fs/" 2>&1 || true
+done
+/bin/modprobe loop   || /bin/echo "aegis-kexec-e2e: modprobe loop FAILED"
+/bin/modprobe isofs  || /bin/echo "aegis-kexec-e2e: modprobe isofs FAILED"
+/bin/modprobe udf    || /bin/echo "aegis-kexec-e2e: modprobe udf FAILED"
+/bin/echo "aegis-kexec-e2e: /proc/filesystems after modprobe:"
+/bin/grep -E 'iso9660|udf' /proc/filesystems || /bin/echo "  (neither iso9660 nor udf available)"
 
 ISO_DEV=""
 for candidate in /dev/sr0 /dev/vda /dev/sda; do
@@ -139,12 +148,13 @@ fi
 if /usr/sbin/losetup -f --show -r /var/aegis/fixture.iso > /tmp/loop 2>/dev/null; then
     LOOP=$(/bin/cat /tmp/loop)
     /bin/echo "aegis-kexec-e2e: preflight: losetup -> $LOOP"
-    if /bin/mount -r -t iso9660 "$LOOP" /mnt/preflight 2>/dev/null; then
+    mount_err=$(/bin/mount -r -t iso9660 "$LOOP" /mnt/preflight 2>&1)
+    if [ $? -eq 0 ]; then
         /bin/echo "aegis-kexec-e2e: preflight: mount ok; contents:"
         /bin/ls /mnt/preflight || true
         /bin/umount /mnt/preflight || true
     else
-        /bin/echo "aegis-kexec-e2e: preflight: mount FAILED after losetup"
+        /bin/echo "aegis-kexec-e2e: preflight: mount FAILED: $mount_err"
     fi
     /usr/sbin/losetup -d "$LOOP" 2>/dev/null || true
 else
