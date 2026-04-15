@@ -2,6 +2,38 @@
 
 All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] — 2026-04-15
+
+**Trust UX + verify-now + a11y polish.** Synthesis from two more parallel-agent surveys: trust/attestation UX (Firefox certs, OpenSSH first-connect, GPG/minisign, Gatekeeper, TPM eventlog, Cosign, Android Verified Boot) and accessibility/field-ops (brltty, speakup, Debian-installer a11y, GRUB, systemrescue, Clonezilla, memtest86+, rEFInd log, UEFI shell). Epics filed as [#92](https://github.com/williamzujkowski/aegis-boot/issues/92) and [#93](https://github.com/williamzujkowski/aegis-boot/issues/93).
+
+### Trust UX on the Confirm screen (#93)
+
+- **Android VB-style coloured verdict line** at the top of Confirm. One of GREEN / YELLOW / RED / GRAY with a one-sentence reason. Colored AND text-labeled so monochrome themes still read.
+- **Measured-bytes digest preview** — shows the exact `sha256(iso_path || 0x00 || cmdline)` that will be extended into PCR 12, truncated to 16 hex chars.
+- **Eventlog-style audit line** to the tracing stream before kexec with iso_path, cmdline, and full 64-char measurement hex.
+
+### Verify-now action (#89)
+
+- **`v` on List / Confirm re-runs SHA-256 against the selected ISO** with a live progress bar. Worker thread + `mpsc`, cancellable via Esc. Pattern: Ventoy F4.
+
+### Accessibility polish (#92 partial)
+
+- **Okabe-Ito colorblind-safe theme** — fourth named palette. Aliases `okabe-ito` / `colorblind` / `cb`. Deuteranopia- and protanopia-safe.
+- **SysRq emergency cheatsheet** in the `?` help overlay. Alt+SysRq+b/s/e documented.
+- **Theme list in help overlay** — four themes + the `AEGIS_THEME` env var.
+
+### Tests
+
+- v0.8.0: 121
+- v0.9.0: 126 (+5)
+
+### Deferred
+
+- #92 brltty + speakup in initramfs, dual-sink log capture to ESP, memtest-style one-frame error screen, TERM=dumb fallback
+- #93 signer key fingerprint display, typed confirmation on degraded trust
+- #90 always-present rescue-shell entry
+- #91 distro grouping / submenus
+
 ## [0.8.0] — 2026-04-15
 
 **UX overhaul release** ([#85](https://github.com/williamzujkowski/aegis-boot/issues/85)). Synthesis of a parallel-agent survey of best-in-class boot pickers (Ventoy, rEFInd, systemd-boot, GRUB2, Apple Option-key, Lenovo F12) and TUI applications (lazygit, ranger, fzf, k9s, helix, dialog). The rescue-tui is now substantially more discoverable, navigable, and trustworthy at a glance.
