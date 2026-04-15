@@ -97,6 +97,10 @@ fn draw_confirm(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: u
             Span::raw(iso.iso_path.display().to_string()),
         ]),
         Line::from(vec![
+            Span::styled("Size:     ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(humanize_size(iso.size_bytes)),
+        ]),
+        Line::from(vec![
             Span::styled("Kernel:   ", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(iso.kernel.display().to_string()),
         ]),
@@ -230,6 +234,26 @@ fn signature_span(verification: &iso_probe::SignatureVerification) -> Span<'_> {
     }
 }
 
+const KB: u64 = 1024;
+const MB: u64 = KB * 1024;
+const GB: u64 = MB * 1024;
+
+#[allow(clippy::cast_precision_loss)]
+fn humanize_size(bytes: Option<u64>) -> String {
+    let Some(b) = bytes else {
+        return "(unknown)".to_string();
+    };
+    if b >= GB {
+        format!("{:.2} GiB", b as f64 / GB as f64)
+    } else if b >= MB {
+        format!("{:.1} MiB", b as f64 / MB as f64)
+    } else if b >= KB {
+        format!("{:.0} KiB", b as f64 / KB as f64)
+    } else {
+        format!("{b} B")
+    }
+}
+
 fn draw_error(frame: &mut Frame<'_>, area: Rect, message: &str, remedy: Option<&str>) {
     let mut lines = vec![
         Line::from(vec![Span::styled(
@@ -295,6 +319,7 @@ mod tests {
             quirks: vec![],
             hash_verification: iso_probe::HashVerification::NotPresent,
             signature_verification: iso_probe::SignatureVerification::NotPresent,
+            size_bytes: Some(1_500_000_000),
         }
     }
 
@@ -347,6 +372,26 @@ mod tests {
         assert!(s.contains("casper/vmlinuz"));
         assert!(s.contains("boot=casper"));
         assert!(s.contains("Confirm kexec"));
+    }
+
+    #[test]
+    fn confirm_screen_shows_humanized_size() {
+        let mut state = AppState::new(vec![fake_iso("x")]);
+        state.confirm_selection();
+        let s = render_to_string(&state);
+        // fake_iso uses 1_500_000_000 bytes ≈ 1.40 GiB
+        assert!(s.contains("Size:"), "missing Size: label in {s}");
+        assert!(s.contains("GiB"), "missing GiB unit in {s}");
+    }
+
+    #[test]
+    fn humanize_size_handles_all_units() {
+        assert_eq!(humanize_size(None), "(unknown)");
+        assert_eq!(humanize_size(Some(0)), "0 B");
+        assert_eq!(humanize_size(Some(512)), "512 B");
+        assert_eq!(humanize_size(Some(2048)), "2 KiB");
+        assert_eq!(humanize_size(Some(2 * 1024 * 1024)), "2.0 MiB");
+        assert_eq!(humanize_size(Some(3 * 1024 * 1024 * 1024)), "3.00 GiB");
     }
 
     #[test]

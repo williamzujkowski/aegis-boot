@@ -50,6 +50,9 @@ pub struct DiscoveredIso {
     pub hash_verification: HashVerification,
     /// Minisign signature verification status (from sibling .minisig, if any).
     pub signature_verification: SignatureVerification,
+    /// File size in bytes from `stat(2)` on `iso_path`. `None` if stat failed.
+    /// Rendered as a human-readable value in the Confirm preview pane.
+    pub size_bytes: Option<u64>,
 }
 
 /// Compatibility quirks the TUI should surface to the user before invoking
@@ -182,6 +185,7 @@ fn boot_entry_to_discovered(entry: &BootEntry, search_root: &Path) -> Discovered
             "iso-probe: no sibling .minisig"
         ),
     }
+    let size_bytes = std::fs::metadata(&iso_path).ok().map(|m| m.len());
     DiscoveredIso {
         iso_path,
         label: entry.label.clone(),
@@ -192,6 +196,7 @@ fn boot_entry_to_discovered(entry: &BootEntry, search_root: &Path) -> Discovered
         quirks: lookup_quirks(entry.distribution),
         hash_verification,
         signature_verification,
+        size_bytes,
     }
 }
 
@@ -388,6 +393,7 @@ mod tests {
             quirks: vec![],
             hash_verification: HashVerification::NotPresent,
             signature_verification: SignatureVerification::NotPresent,
+            size_bytes: None,
         };
         // Sanity-check the path-joining we'd perform on a real mount.
         let mount = PathBuf::from("/mnt/test");
