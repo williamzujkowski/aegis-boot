@@ -87,15 +87,27 @@ virt-install --name aegis-boot-dev \
 ```bash
 mkdir -p test-isos
 cp ~/Downloads/ubuntu-24.04.iso test-isos/
-./scripts/qemu-loaded-stick.sh                    # serial
-./scripts/qemu-loaded-stick.sh -i                 # GTK
-./scripts/qemu-loaded-stick.sh -d ~/iso-stash -k  # custom dir, keep image
+./scripts/qemu-loaded-stick.sh                       # default: virtio, serial
+./scripts/qemu-loaded-stick.sh -i                    # GTK display
+./scripts/qemu-loaded-stick.sh -a sata -i            # AHCI path (real desktops)
+./scripts/qemu-loaded-stick.sh -a usb                # usb-storage on xHCI (real USB)
+./scripts/qemu-loaded-stick.sh -d ~/iso-stash -k     # custom dir, keep image
 ```
 
 The script builds a fresh `out/aegis-boot.img`, loop-mounts AEGIS_ISOS,
 copies every `.iso` (plus any sibling `.sha256` / `.minisig`) from the
 source dir, and boots under OVMF SecBoot. Image size auto-scales to
 1.5× the total ISO bytes (min 2 GiB).
+
+`--attach` chooses how the stick image is presented to the VM:
+
+| Mode | What it exercises | Use when |
+|---|---|---|
+| `virtio` (default) | paravirtual `virtio-blk` | fastest dev loop; only proves the boot chain |
+| `sata` | AHCI module path (`ahci.ko`) | matches most desktops + older laptops |
+| `usb` | `qemu-xhci` + `usb-storage` | closest to a real USB stick plugged into a host |
+
+All three modes were verified end-to-end in v0.7.0 with Alpine 3.20 (4 ISO entries discovered).
 
 ### Manual, if you want to inspect the partition
 

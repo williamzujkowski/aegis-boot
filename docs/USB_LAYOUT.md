@@ -115,6 +115,19 @@ sudo cp *.iso /mnt/aegis-isos/
 sudo umount /mnt/aegis-isos
 ```
 
+## Storage modules shipped in the initramfs
+
+For rescue-tui to see the AEGIS_ISOS partition (or any internal disk the operator might want to scan), the initramfs has to include the kernel modules for the storage controller. Most modern Ubuntu generic kernels (6.8+) compile these as modules, not built-in. As of v0.7.0 (#72), `build-initramfs.sh` ships:
+
+- `libahci`, `ahci` — SATA AHCI controllers (most desktops + older laptops)
+- `nvme-core`, `nvme` — NVMe SSDs (most modern laptops)
+- `usb-storage`, `uas` — USB mass storage (the deployment path)
+- `nls_utf8` — vfat fallback charset (the default `iocharset=utf8` is otherwise a missing module)
+
+`scsi_mod`, `sd_mod`, `usbcore`, `xhci-hcd/pci`, `ehci-hcd/pci`, and `loop`/`isofs`/`udf` are typically built-in on Ubuntu kernels and skipped at build time with an INFO log. `/init` modprobes the full set early; built-in modules return successfully without doing anything.
+
+Real-hardware boot has been validated only in QEMU simulation as of v0.7.0 (`scripts/qemu-loaded-stick.sh --attach {virtio,sata,usb}`). A Framework / ThinkPad / Dell shakedown is tracked in [#51](https://github.com/williamzujkowski/aegis-boot/issues/51).
+
 ## Chain of trust recap
 
 See [THREAT_MODEL.md](../THREAT_MODEL.md) for the full model. In short:

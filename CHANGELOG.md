@@ -4,16 +4,16 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 
 ## [0.7.0] — 2026-04-15
 
-**Real-hardware-ready release.** Foundation for actually using aegis-boot on a physical USB stick plugged into a real machine (the goal the project has been building toward). v0.6.x fixed the QEMU+virtio path; v0.7.0 adds the storage-controller modules real hardware needs.
+**Storage-module-complete release.** Adds the kernel modules real hardware needs (AHCI, NVMe, USB-storage, UAS) so rescue-tui can in principle see a USB stick or internal disk on a physical machine. **Real-hardware boot has not yet been validated** — that's gated on a Framework / ThinkPad / Dell shakedown ([#51](https://github.com/williamzujkowski/aegis-boot/issues/51)) and gates v1.0.0. v0.6.x fixed the QEMU+virtio path; v0.7.0 is the foundation for the next step.
 
 ### Headline
 
 - **Storage controller modules shipped in the initramfs** (#72). `build-initramfs.sh` now copies (or skips-as-built-in) AHCI (SATA), NVMe, USB core + xHCI/EHCI + usb-storage + UAS, plus SCSI core. On modern Ubuntu kernels (6.8+) these are modules; without shipping them, rescue-tui on real hardware had no visibility into the storage bus and the user's USB stick + internal disks were all invisible. `/init` now modprobes the set early with a longer (3s) settle sleep for USB hub/bus enumeration.
 - **`qemu-loaded-stick.sh --attach {virtio,sata,usb}`** (#72). Lets developers exercise each storage-driver path without real hardware. `virtio` is the fast paravirtual default; `sata` drives the AHCI module path real desktops use; `usb` hangs the stick off `qemu-xhci` with `usb-storage`, matching a real USB plug.
 
-### Verified end-to-end
+### Verified end-to-end (in QEMU only)
 
-With `alpine-3.20.3-x86_64.iso` on the AEGIS_ISOS partition:
+With `alpine-3.20.3-x86_64.iso` on the AEGIS_ISOS partition (real-hardware behavior may differ — drivers behave differently on actual PCI/USB buses):
 
 | Attach mode | Result |
 |---|---|
@@ -111,7 +111,7 @@ None of the v0.5.0-deferred items remain. v0.7.0 epic (TBD) will likely focus on
 
 ### Headline
 
-**`scripts/mkusb.sh` image builder** (#41). Produces a byte-reproducible bootable disk image:
+**`scripts/mkusb.sh` image builder** (#41). Produces a bootable disk image (only the `rescue-tui` binary is byte-reproducible under SOURCE_DATE_EPOCH; the disk image embeds host-installed shim/grub/kernel binaries and is not hash-stable across hosts):
 - GPT partition table
 - **ESP** (FAT32, 400 MB): MS-signed shim → Canonical-signed grub → signed kernel + combined initrd (distro initrd + our rescue initramfs)
 - **AEGIS_ISOS data partition** (FAT32 by default, remainder of disk): user drops `.iso` files here
