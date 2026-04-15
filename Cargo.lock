@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "aegis-fitness"
-version = "0.6.2"
+version = "0.7.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -352,7 +352,7 @@ dependencies = [
 
 [[package]]
 name = "iso-probe"
-version = "0.6.2"
+version = "0.7.0"
 dependencies = [
  "hex",
  "iso-parser",
@@ -382,7 +382,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "kexec-loader"
-version = "0.6.2"
+version = "0.7.0"
 dependencies = [
  "libc",
  "thiserror",
@@ -606,7 +606,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "rescue-tui"
-version = "0.6.2"
+version = "0.7.0"
 dependencies = [
  "crossterm",
  "hex",

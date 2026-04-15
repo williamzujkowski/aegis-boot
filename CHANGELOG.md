@@ -2,6 +2,34 @@
 
 All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] — 2026-04-15
+
+**Real-hardware-ready release.** Foundation for actually using aegis-boot on a physical USB stick plugged into a real machine (the goal the project has been building toward). v0.6.x fixed the QEMU+virtio path; v0.7.0 adds the storage-controller modules real hardware needs.
+
+### Headline
+
+- **Storage controller modules shipped in the initramfs** (#72). `build-initramfs.sh` now copies (or skips-as-built-in) AHCI (SATA), NVMe, USB core + xHCI/EHCI + usb-storage + UAS, plus SCSI core. On modern Ubuntu kernels (6.8+) these are modules; without shipping them, rescue-tui on real hardware had no visibility into the storage bus and the user's USB stick + internal disks were all invisible. `/init` now modprobes the set early with a longer (3s) settle sleep for USB hub/bus enumeration.
+- **`qemu-loaded-stick.sh --attach {virtio,sata,usb}`** (#72). Lets developers exercise each storage-driver path without real hardware. `virtio` is the fast paravirtual default; `sata` drives the AHCI module path real desktops use; `usb` hangs the stick off `qemu-xhci` with `usb-storage`, matching a real USB plug.
+
+### Verified end-to-end
+
+With `alpine-3.20.3-x86_64.iso` on the AEGIS_ISOS partition:
+
+| Attach mode | Result |
+|---|---|
+| `virtio` | `discovered 4 ISO(s)` |
+| `sata`   | `discovered 4 ISO(s)` (AHCI path, `/dev/sda*`) |
+| `usb`    | `discovered 4 ISO(s)` (xHCI + usb-storage, `/dev/sda*`) |
+
+### Size budget
+
+Initramfs went from 11.3 MiB → 11.6 MiB (+300 KiB). Most storage code is already built-in on Ubuntu generic kernels; the net-new shipped modules are libahci, ahci, nvme-core, nvme, usb-storage, uas, and nls_utf8. Well under the 20 MiB budget.
+
+### Deferred
+
+- Real-hardware shakedown on Framework / ThinkPad / Dell (gates v1.0.0 per #51). Needs physical access; can't run from CI.
+- exFAT support in `/init` mount fallbacks (module exists but not currently shipped). File if needed.
+
 ## [0.6.2] — 2026-04-15
 
 **Discovery + boot patch release.** Closes findings from the first end-to-end test of `qemu-loaded-stick.sh` (#66) against a real Alpine 3.20 ISO. v0.6.0 and v0.6.1 *appeared* to work in CI because `qemu-kexec-e2e.sh` uses a fixture ISO mounted directly as `-cdrom`, bypassing the AEGIS_ISOS partition path entirely. With a real loaded stick, rescue-tui silently reported "0 ISOs discovered" — three bugs in a row produced that result.
