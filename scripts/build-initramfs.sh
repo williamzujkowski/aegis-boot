@@ -454,15 +454,27 @@ done
 # Also auto-mount any other block device that looks like it has a
 # filesystem. Covers the case where the user attaches an ISO on a
 # secondary stick or USB drive alongside the boot media.
-for dev in /dev/sd* /dev/nvme*n*p* /dev/vd* /dev/mmcblk*p*; do
+# (#113) Iterate PARTITIONS, not whole disks — /dev/sda doesn't have
+# a filesystem and mount attempts print noisy "Can't open blockdev"
+# errors. The name pattern requires a trailing digit (partition
+# suffix): sd*[0-9] matches sda1/sdb2/... but not sda/sdb.
+for dev in /dev/sd*[0-9] /dev/nvme*n*p* /dev/vd*[0-9] /dev/mmcblk*p*; do
     [ -b "$dev" ] || continue
     # Skip the AEGIS_ISOS partition we already mounted.
     [ "$dev" = "${AEGIS_DEV:-}" ] && continue
     name=$(echo "$dev" | /bin/sed 's|.*/||')
     mp="/run/media/$name"
     /bin/mkdir -p "$mp"
+    # (#113) Explicit vfat options when auto-mount without a type
+    # fails — Linux vfat defaults to iocharset=iso8859-1 which is a
+    # module we don't ship. cp437 is built-in on Ubuntu generic
+    # kernels. Try auto first (ext4/ntfs/etc work fine), fall back
+    # to explicit vfat on failure.
     if /bin/mount -o ro "$dev" "$mp" 2>/dev/null; then
         /bin/echo "init: secondary-mount $dev -> $mp"
+    elif /bin/mount -t vfat -o ro,codepage=437,iocharset=cp437 \
+            "$dev" "$mp" 2>/dev/null; then
+        /bin/echo "init: secondary-mount $dev -> $mp (fs=vfat)"
     else
         /bin/rmdir "$mp" 2>/dev/null
     fi

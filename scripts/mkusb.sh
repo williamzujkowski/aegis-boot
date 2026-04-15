@@ -114,7 +114,20 @@ terminal_output serial console
 set timeout=3
 
 # Normal boot — concise kernel logs.
+# console= order MATTERS: last one wins as /dev/console for userspace.
+# We want tty0 (local monitor) as the default rescue-tui target on
+# real-hardware boots; kernel still echoes to all console= targets
+# so a serial operator gets dmesg + can edit grub to flip the order.
+# (#112)
 menuentry "aegis-boot rescue" {
+    linux /vmlinuz console=ttyS0,115200 console=tty0 panic=5 loglevel=4
+    initrd /initrd.img
+}
+
+# Serial-primary variant — for operators using a serial console or a
+# KVM IP console with no local monitor. rescue-tui's alt-screen
+# renders on ttyS0.
+menuentry "aegis-boot rescue (serial-primary)" {
     linux /vmlinuz console=tty0 console=ttyS0,115200 panic=5 loglevel=4
     initrd /initrd.img
 }
@@ -124,7 +137,7 @@ menuentry "aegis-boot rescue" {
 # the operator can read the pre-rescue-tui state on screen. Also tees
 # the /init log to /run/media/aegis-isos/aegis-boot-<ts>.log.
 menuentry "aegis-boot rescue (verbose — first-boot debug)" {
-    linux /vmlinuz console=tty0 console=ttyS0,115200 panic=30 loglevel=7 earlyprintk=efi ignore_loglevel aegis.verbose=1
+    linux /vmlinuz console=ttyS0,115200 console=tty0 panic=30 loglevel=7 earlyprintk=efi ignore_loglevel aegis.verbose=1
     initrd /initrd.img
 }
 EOF
