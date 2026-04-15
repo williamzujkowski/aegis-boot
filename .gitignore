@@ -31,3 +31,4 @@ out/
 crates/*/fuzz/corpus/
 crates/*/fuzz/artifacts/
 *.cdx.json
+.security-discoveries.jsonl
