@@ -83,6 +83,19 @@ if [[ -z "$BUSYBOX_PATH" ]]; then
 fi
 install -m 0755 "$BUSYBOX_PATH" "$STAGE_DIR/bin/busybox"
 
+# --- tpm2_pcrextend (optional — PCR attestation before kexec) ----------------
+# If present on the build host, ship it so rescue-tui's TPM measurement path
+# can extend PCR 12 before handoff. Without this, the measurement is skipped
+# with a logged warning — fine for TPM-less hardware but removes the
+# attestation story.
+TPM2_PCREXTEND="$(command -v tpm2_pcrextend || true)"
+if [[ -n "$TPM2_PCREXTEND" && -f "$TPM2_PCREXTEND" ]]; then
+    install -m 0755 "$TPM2_PCREXTEND" "$STAGE_DIR/usr/bin/tpm2_pcrextend"
+    log "shipping tpm2_pcrextend for TPM PCR attestation"
+else
+    log "tpm2_pcrextend not on PATH — TPM measurement will be skipped at runtime"
+fi
+
 # --- util-linux losetup (proper loop-device handling) ------------------------
 # Busybox's losetup applet doesn't accept `--show` and its behavior for
 # loop-device allocation on modern kernels (loop-control, on-demand node
@@ -224,6 +237,10 @@ copy_libs "$STAGE_DIR/bin/busybox" 2>/dev/null || true
 # util-linux losetup is dynamically linked.
 if [[ -f "$STAGE_DIR/sbin/losetup.util-linux" ]]; then
     copy_libs "$STAGE_DIR/sbin/losetup.util-linux"
+fi
+# tpm2_pcrextend pulls in a bunch of libtss2 — copy them all.
+if [[ -f "$STAGE_DIR/usr/bin/tpm2_pcrextend" ]]; then
+    copy_libs "$STAGE_DIR/usr/bin/tpm2_pcrextend"
 fi
 
 # --- PID 1 init script -------------------------------------------------------
