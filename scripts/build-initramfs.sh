@@ -82,6 +82,21 @@ if [[ -z "$BUSYBOX_PATH" ]]; then
     exit 1
 fi
 install -m 0755 "$BUSYBOX_PATH" "$STAGE_DIR/bin/busybox"
+
+# --- util-linux losetup (proper loop-device handling) ------------------------
+# Busybox's losetup applet doesn't accept `--show` and its behavior for
+# loop-device allocation on modern kernels (loop-control, on-demand node
+# creation) is inconsistent. Ship util-linux's real losetup if available;
+# iso-parser prefers it automatically when present.
+UTIL_LOSETUP="$(command -v losetup || true)"
+if [[ -n "$UTIL_LOSETUP" && -f "$UTIL_LOSETUP" ]]; then
+    # Find the actual binary, not a busybox symlink.
+    resolved=$(readlink -f "$UTIL_LOSETUP")
+    if ! [[ "$resolved" =~ busybox ]]; then
+        install -m 0755 "$resolved" "$STAGE_DIR/sbin/losetup.util-linux"
+        copy_libs_placeholder="$STAGE_DIR/sbin/losetup.util-linux"
+    fi
+fi
 # Applets. Covered: mount, umount, mkdir, ls, sh, cat, mdev.
 # rescue-tui doesn't call these directly — they exist for the init script
 # below and for emergency shell fallback.
@@ -117,6 +132,10 @@ copy_libs() {
 copy_libs "$STAGE_DIR/usr/bin/rescue-tui"
 # If distro busybox is dynamically linked, ldd would error; ignore silently.
 copy_libs "$STAGE_DIR/bin/busybox" 2>/dev/null || true
+# util-linux losetup is dynamically linked.
+if [[ -f "$STAGE_DIR/sbin/losetup.util-linux" ]]; then
+    copy_libs "$STAGE_DIR/sbin/losetup.util-linux"
+fi
 
 # --- PID 1 init script -------------------------------------------------------
 cat > "$STAGE_DIR/init" <<'INIT_SH'
@@ -158,7 +177,14 @@ for dev in /dev/sd* /dev/nvme*n*p* /dev/vd* /dev/mmcblk*p*; do
 done
 
 export AEGIS_ISO_ROOTS=/run/media/aegis-isos:/run/media
-export PATH=/usr/bin:/usr/sbin:/bin:/sbin
+# Prefer util-linux losetup over busybox applet — iso-parser's
+# loop-mount path works reliably with real losetup semantics.
+if [ -x /sbin/losetup.util-linux ]; then
+    /bin/ln -sf /sbin/losetup.util-linux /usr/sbin/losetup
+    export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+else
+    export PATH=/usr/bin:/usr/sbin:/bin:/sbin
+fi
 export TERM=linux
 
 # Hand off. On clean quit, drop to a shell so the user isn't staring at
