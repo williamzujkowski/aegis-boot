@@ -162,28 +162,35 @@ pub trait IsoEnvironment: Send + Sync {
     /// Unmount a previously mounted ISO
     fn unmount(&self, mount_point: &std::path::Path) -> Result<(), IsoError>;
 
-    /// Validate that a path doesn't escape intended directory
+    /// Validate that `path` is rooted under `base` and contains no
+    /// parent-directory escapes.
+    ///
+    /// Returns [`IsoError::PathTraversal`] when:
+    ///   * any path component is `..` (could escape on normalization), OR
+    ///   * `path` does not lie under `base` (absolute paths to elsewhere).
+    ///
+    /// Symlinks are NOT resolved — callers that mount untrusted media must
+    /// constrain symlink-following at the mount layer (e.g. `nosymfollow`),
+    /// not rely on this check.
+    ///
+    /// Previous implementation silently returned `Ok(path)` when
+    /// `strip_prefix(base)` failed, meaning paths outside `base` were
+    /// accepted. Fixed in #56.
     fn validate_path(
         &self,
         base: &std::path::Path,
         path: &std::path::Path,
     ) -> Result<PathBuf, IsoError> {
-        let resolved = path;
-
-        // Check for path traversal attempts
-        let resolved_str = resolved.to_string_lossy();
-        if resolved_str.contains("..") {
-            return Err(IsoError::PathTraversal(resolved_str.to_string()));
+        if path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(IsoError::PathTraversal(path.display().to_string()));
         }
-
-        // Ensure resolved path is under base
-        if let Ok(relative) = resolved.strip_prefix(base) {
-            if relative.starts_with("..") {
-                return Err(IsoError::PathTraversal(resolved_str.to_string()));
-            }
+        if !path.starts_with(base) {
+            return Err(IsoError::PathTraversal(path.display().to_string()));
         }
-
-        Ok(resolved.to_path_buf())
+        Ok(path.to_path_buf())
     }
 }
 
@@ -996,6 +1003,31 @@ mod tests {
         );
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_path_outside_base_rejected() {
+        // Regression for #56: validate_path used to silently return Ok
+        // when strip_prefix(base) failed, accepting absolute paths to
+        // anywhere on the filesystem.
+        let env = MockIsoEnvironment::new();
+        let result = env.validate_path(
+            PathBuf::from("/mnt/iso").as_path(),
+            PathBuf::from("/etc/passwd").as_path(),
+        );
+        assert!(matches!(result, Err(IsoError::PathTraversal(_))));
+    }
+
+    #[test]
+    fn test_path_sibling_of_base_rejected() {
+        // /safe2 starts with the string "/safe" but is NOT under /safe —
+        // Path::starts_with respects component boundaries, not prefix match.
+        let env = MockIsoEnvironment::new();
+        let result = env.validate_path(
+            PathBuf::from("/safe").as_path(),
+            PathBuf::from("/safe2/file").as_path(),
+        );
+        assert!(matches!(result, Err(IsoError::PathTraversal(_))));
     }
 
     #[tokio::test]
