@@ -439,6 +439,8 @@ impl<E: IsoEnvironment> IsoParser<E> {
         debug!("Scanning directory: {:?}", validated_path);
 
         let iso_files = self.find_iso_files(&validated_path)?;
+        let attempted = iso_files.len();
+        let mut skipped = 0usize;
 
         for iso_path in iso_files {
             debug!("Processing ISO: {:?}", iso_path);
@@ -446,10 +448,26 @@ impl<E: IsoEnvironment> IsoParser<E> {
             match self.process_iso(&iso_path).await {
                 Ok(mut iso_entries) => entries.append(&mut iso_entries),
                 Err(e) => {
-                    debug!("Failed to process ISO {:?}: {}", iso_path, e);
+                    skipped += 1;
+                    // Upgraded from debug → warn so silent-skip failures
+                    // surface on the serial console without operators
+                    // having to enable debug tracing. (#68)
+                    tracing::warn!(
+                        iso = %iso_path.display(),
+                        error = %e,
+                        "iso-parser: skipped ISO (mount/parse failed)"
+                    );
                 }
             }
         }
+
+        tracing::info!(
+            root = %validated_path.display(),
+            found_isos = attempted,
+            extracted_entries = entries.len(),
+            skipped_isos = skipped,
+            "iso-parser: scan summary"
+        );
 
         if entries.is_empty() {
             return Err(IsoError::NoBootEntries(

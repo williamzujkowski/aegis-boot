@@ -172,7 +172,8 @@ QEMU_ARGS=(
     -m 2048M
     -drive "if=pflash,format=raw,unit=0,file=$OVMF_CODE,readonly=on"
     -drive "if=pflash,format=raw,unit=1,file=$WORK/vars.fd"
-    -drive "if=ide,format=raw,file=$IMG"
+    -drive "if=none,id=stick,format=raw,file=$IMG"
+    -device virtio-blk-pci,drive=stick
     -boot order=c
 )
 

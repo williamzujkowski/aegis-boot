@@ -268,26 +268,87 @@ cat > "$STAGE_DIR/init" <<'INIT_SH'
 #!/bin/sh
 # aegis-boot PID 1 — minimal init that sets up the rescue environment and
 # hands control to /usr/bin/rescue-tui.
+#
+# Deliberately does NOT use `set -e`. Rescue-environment commands routinely
+# return non-zero (mount failures on absent filesystems, missing optional
+# devices, etc.); aborting PID 1 on any of them triggers a kernel panic and
+# reboot loop. Each command handles its own errors explicitly. (#68)
 
-set -e
+/bin/echo "init: aegis-boot /init starting (PID 1)"
 
 /bin/mount -t proc  proc  /proc
 /bin/mount -t sysfs sys   /sys
-/bin/mount -t devtmpfs dev /dev 2>/dev/null || /bin/mount -t tmpfs tmpfs /dev
+if /bin/mount -t devtmpfs dev /dev; then
+    /bin/echo "init: mounted devtmpfs at /dev"
+else
+    /bin/echo "init: WARNING devtmpfs mount failed — falling back to tmpfs (no devices visible)"
+    /bin/mount -t tmpfs tmpfs /dev
+fi
 /bin/mount -t tmpfs  run   /run
 
 # Give the kernel a moment to enumerate USB/NVMe devices before we look.
-/bin/sleep 1
+/bin/sleep 2
+/bin/echo "init: kernel cmdline: $(/bin/cat /proc/cmdline 2>/dev/null || echo '?')"
+/bin/echo "init: mounts active:"
+/bin/cat /proc/mounts 2>/dev/null | /bin/sed 's/^/init:   /' || /bin/echo "init:   (cat /proc/mounts failed)"
 
 # Prefer the stick's dedicated AEGIS_ISOS data partition if present.
-# findfs resolves LABEL=... to a block device path; mount at a stable
-# location so operators can reason about the layout.
+# Resolve LABEL=AEGIS_ISOS via three fallback strategies because busybox's
+# findfs does not always recognize FAT32 labels (#68 — observed silently
+# returning empty on Ubuntu busybox 1.30 against a FAT32 partition with
+# label AEGIS_ISOS, leading to "0 ISOs discovered" on otherwise-loaded
+# sticks):
+#   1. /bin/findfs LABEL=...           (works for ext*, sometimes FAT)
+#   2. /bin/blkid -L AEGIS_ISOS        (label cache, broader fs support)
+#   3. /dev/disk/by-label/AEGIS_ISOS   (udev/devtmpfs symlink, most reliable)
 /bin/mkdir -p /run/media/aegis-isos
-if AEGIS_DEV=$(/bin/findfs LABEL=AEGIS_ISOS 2>/dev/null) && [ -n "$AEGIS_DEV" ]; then
-    if /bin/mount -o ro "$AEGIS_DEV" /run/media/aegis-isos 2>/dev/null; then
-        /bin/echo "init: mounted $AEGIS_DEV (LABEL=AEGIS_ISOS) -> /run/media/aegis-isos"
+AEGIS_DEV=""
+for resolver in \
+    "/bin/findfs LABEL=AEGIS_ISOS" \
+    "/bin/blkid -L AEGIS_ISOS" \
+    "/bin/readlink -f /dev/disk/by-label/AEGIS_ISOS"; do
+    candidate=$($resolver 2>/dev/null || true)
+    if [ -n "$candidate" ] && [ -b "$candidate" ]; then
+        AEGIS_DEV="$candidate"
+        break
     fi
+done
+if [ -n "$AEGIS_DEV" ]; then
+    # busybox mount type-autodetect is unreliable; explicit types in
+    # fallback order. vfat needs codepage=437 + utf8 because the
+    # default iocharset (iso8859-*) is a module on Ubuntu kernels and
+    # we don't ship it — without these the mount fails silently. ext4
+    # is the right pick for >4 GiB ISOs and needs no nls. (#68)
+    mount_ok=0
+    for spec in \
+        "ext4:ro" \
+        "vfat:ro,codepage=437,iocharset=cp437" \
+        "vfat:ro" \
+        "exfat:ro"; do
+        fstype="${spec%%:*}"
+        opts="${spec#*:}"
+        mount_err=$(/bin/mount -t "$fstype" -o "$opts" "$AEGIS_DEV" /run/media/aegis-isos 2>&1)
+        if [ -z "$mount_err" ]; then
+            /bin/echo "init: mounted $AEGIS_DEV (LABEL=AEGIS_ISOS, fs=$fstype) -> /run/media/aegis-isos"
+            mount_ok=1
+            break
+        fi
+        /bin/echo "init:   tried fs=$fstype: $mount_err"
+    done
+    [ "$mount_ok" = 0 ] && /bin/echo "init: WARNING: found $AEGIS_DEV but all mount attempts failed (see above)"
+else
+    /bin/echo "init: AEGIS_ISOS label not resolved by findfs/blkid/by-label — secondary auto-mount loop will try /dev/sd*"
 fi
+
+# Diagnostic — dump what we see in /dev so we can debug "0 ISOs found"
+# on real hardware. The output goes to the serial console BEFORE
+# rescue-tui takes the alternate screen, so it's grep-able from a
+# QEMU run log. (#68)
+/bin/echo "init: block devices visible:"
+for dev in /dev/sd* /dev/nvme* /dev/vd* /dev/mmcblk* /dev/disk/by-label/*; do
+    [ -e "$dev" ] && /bin/echo "init:   $dev"
+done
+/bin/echo "init: end of block-device listing"
 
 # Also auto-mount any other block device that looks like it has a
 # filesystem. Covers the case where the user attaches an ISO on a
@@ -296,10 +357,14 @@ for dev in /dev/sd* /dev/nvme*n*p* /dev/vd* /dev/mmcblk*p*; do
     [ -b "$dev" ] || continue
     # Skip the AEGIS_ISOS partition we already mounted.
     [ "$dev" = "${AEGIS_DEV:-}" ] && continue
-    name=$(/usr/bin/basename "$dev" 2>/dev/null || echo "$dev" | /bin/sed 's|.*/||')
+    name=$(echo "$dev" | /bin/sed 's|.*/||')
     mp="/run/media/$name"
     /bin/mkdir -p "$mp"
-    /bin/mount -o ro "$dev" "$mp" 2>/dev/null || /bin/rmdir "$mp"
+    if /bin/mount -o ro "$dev" "$mp" 2>/dev/null; then
+        /bin/echo "init: secondary-mount $dev -> $mp"
+    else
+        /bin/rmdir "$mp" 2>/dev/null
+    fi
 done
 
 export AEGIS_ISO_ROOTS=/run/media/aegis-isos:/run/media

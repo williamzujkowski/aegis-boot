@@ -103,23 +103,38 @@ pub fn discover(roots: &[PathBuf]) -> Result<Vec<DiscoveredIso>, ProbeError> {
     for root in roots {
         // Missing / unreadable roots are not an error — the rescue environment
         // routinely runs with `/run/media` present but `/mnt` empty or vice
-        // versa depending on whether anything was attached at boot. Skip
-        // silently rather than abort the whole discovery.
+        // versa depending on whether anything was attached at boot. Log at
+        // INFO so an empty list is debuggable (#68 — operators were seeing
+        // "0 ISOs discovered" without any signal of where the scan looked).
         if !root.exists() {
-            tracing::debug!(root = %root.display(), "iso-probe: skipping missing root");
+            tracing::info!(
+                root = %root.display(),
+                "iso-probe: root does not exist — skipping"
+            );
             continue;
         }
+        tracing::info!(root = %root.display(), "iso-probe: scanning root");
         match pollster::block_on(parser.scan_directory(root)) {
             Ok(entries) => {
+                tracing::info!(
+                    root = %root.display(),
+                    extracted = entries.len(),
+                    "iso-probe: scan extracted entries"
+                );
                 for entry in entries {
                     all.push(boot_entry_to_discovered(&entry, root));
                 }
             }
-            Err(IsoError::NoBootEntries(_)) => {}
-            Err(IsoError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-                tracing::debug!(
+            Err(IsoError::NoBootEntries(_)) => {
+                tracing::info!(
                     root = %root.display(),
-                    "iso-probe: skipping root that disappeared during scan"
+                    "iso-probe: scan returned NoBootEntries (no .iso files found, or all skipped)"
+                );
+            }
+            Err(IsoError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                tracing::info!(
+                    root = %root.display(),
+                    "iso-probe: root disappeared during scan"
                 );
             }
             Err(e) => return Err(ProbeError::Parser(e)),
