@@ -2,6 +2,40 @@
 
 All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.10.0] — 2026-04-15
+
+**Rescue + trust challenge + evidence release.** Implements the three biggest deferred items from the UX epic parent ([#85](https://github.com/williamzujkowski/aegis-boot/issues/85)) and its trust/a11y children ([#92](https://github.com/williamzujkowski/aegis-boot/issues/92), [#93](https://github.com/williamzujkowski/aegis-boot/issues/93)).
+
+### Headline
+
+- **Always-present rescue-shell entry** ([#90](https://github.com/williamzujkowski/aegis-boot/issues/90)). The List screen now always ends with `[#] rescue shell (busybox)` — visible even when zero ISOs are discovered. Selecting it exits rescue-tui with sentinel code 42; `/init` recognizes the code and drops cleanly to `/bin/sh`. Previously "no ISOs found" was a dead end. Pattern: rEFInd tools row, Endless OS recovery.
+- **Typed trust confirmation on degraded verdicts** ([#93](https://github.com/williamzujkowski/aegis-boot/issues/93)). Pressing Enter on a YELLOW (untrusted signer) or GRAY (no verification material) Confirm screen now opens a challenge that requires typing `boot` exactly. GREEN verdicts skip it; RED verdicts stay hard-blocked by #55. Pattern: SSH first-connect, HSTS, Gatekeeper.
+- **memtest-style one-frame error screen** ([#92](https://github.com/williamzujkowski/aegis-boot/issues/92)). kexec-failure Error screen now renders a complete evidence block: version, SB/TPM state, ISO path + size + distro, trust verdict, effective cmdline, and the sha256 digest that was fed to PCR 12. One screen photograph = one complete bug report. Pattern: memtest86+.
+- **F10 save-log to AEGIS_ISOS** ([#92](https://github.com/williamzujkowski/aegis-boot/issues/92)). From the Error screen, F10 serializes the evidence block to `/run/media/aegis-isos/aegis-log-<unix_ts>.txt` (or `/tmp` fallback). Operator can pull it off the stick from any other machine post-reboot. Pattern: rEFInd's refind.log on ESP.
+
+### Breaking
+
+- The `AEGIS_ISOS` partition is now written to on Error-screen F10. If the partition is mounted read-only or full, the save fails silently with a logged warning. No behavior change unless the operator uses F10.
+- `Screen::Error` variant gains `return_to: usize` (landed earlier in v0.8.0; flagged here because it's now also used by the evidence panel).
+- rescue-tui's `main()` return type changed from `Result<(), _>` to `Result<u8, _>` so run() can propagate the shell-drop sentinel code. External callers of the binary should not be affected — it's an internal refactor.
+
+### Tests
+
+- v0.9.0: 126
+- v0.10.0: 139 (+13: rescue-shell entries 5, trust-challenge 5, evidence 2, +1 misc)
+
+### Deferred
+
+- #92 brltty + speakup in initramfs, TERM=dumb fallback, --selftest mode
+- #93 signer key fingerprint display (blocked on minisign-verify API)
+- #91 distro grouping / submenus (low priority — `s` sort covers it)
+
+### Verified
+
+- `cargo clippy --workspace --all-targets -- -D warnings` clean
+- `cargo test --workspace` 139 / 139 green
+- `qemu-loaded-stick.sh` boot still works end-to-end with Alpine 3.20
+
 ## [0.9.0] — 2026-04-15
 
 **Trust UX + verify-now + a11y polish.** Synthesis from two more parallel-agent surveys: trust/attestation UX (Firefox certs, OpenSSH first-connect, GPG/minisign, Gatekeeper, TPM eventlog, Cosign, Android Verified Boot) and accessibility/field-ops (brltty, speakup, Debian-installer a11y, GRUB, systemrescue, Clonezilla, memtest86+, rEFInd log, UEFI shell). Epics filed as [#92](https://github.com/williamzujkowski/aegis-boot/issues/92) and [#93](https://github.com/williamzujkowski/aegis-boot/issues/93).
