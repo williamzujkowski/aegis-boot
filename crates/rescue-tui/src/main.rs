@@ -10,6 +10,7 @@
 mod persistence;
 mod render;
 mod state;
+mod theme;
 mod tpm;
 
 use std::env;
@@ -107,6 +108,10 @@ fn run(roots: &[PathBuf]) -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     let mut state = AppState::new(isos);
+    if let Ok(name) = env::var("AEGIS_THEME") {
+        state.theme = theme::Theme::from_name(&name);
+        tracing::info!(theme = %name, "rescue-tui: theme override applied");
+    }
     apply_persisted_choice(&mut state);
 
     // Non-interactive automation mode. When AEGIS_AUTO_KEXEC is set to a

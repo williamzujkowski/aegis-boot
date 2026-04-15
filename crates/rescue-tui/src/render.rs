@@ -10,6 +10,7 @@ use ratatui::{
 };
 
 use crate::state::{quirks_summary, AppState, Screen};
+use crate::theme::Theme;
 
 /// Render the current frame for the given state.
 pub fn draw(frame: &mut Frame<'_>, state: &AppState) {
@@ -127,12 +128,12 @@ fn draw_confirm(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: u
         ]),
         Line::from(vec![
             Span::styled("Checksum: ", Style::default().add_modifier(Modifier::BOLD)),
-            checksum_span(&iso.hash_verification),
+            checksum_span(&iso.hash_verification, &state.theme),
         ]),
         Line::from(vec![
             Span::styled("Signature:", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(" "),
-            signature_span(&iso.signature_verification),
+            signature_span(&iso.signature_verification, &state.theme),
         ]),
         Line::from(""),
         Line::from(if state.is_kexec_blocked(selected) {
@@ -198,37 +199,39 @@ fn draw_edit_cmdline(
     frame.render_widget(para, area);
 }
 
-fn checksum_span(verification: &iso_probe::HashVerification) -> Span<'_> {
-    use ratatui::style::Color;
+fn checksum_span<'a>(verification: &iso_probe::HashVerification, theme: &Theme) -> Span<'a> {
     match verification {
         iso_probe::HashVerification::Verified { .. } => {
-            Span::styled("✓ verified", Style::default().fg(Color::Green))
+            Span::styled("✓ verified", Style::default().fg(theme.success))
         }
         iso_probe::HashVerification::Mismatch { .. } => Span::styled(
             "✗ MISMATCH — do NOT kexec",
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.error)
+                .add_modifier(Modifier::BOLD),
         ),
         iso_probe::HashVerification::NotPresent => Span::raw("(no sibling checksum)"),
     }
 }
 
-fn signature_span(verification: &iso_probe::SignatureVerification) -> Span<'_> {
-    use ratatui::style::Color;
+fn signature_span<'a>(verification: &iso_probe::SignatureVerification, theme: &Theme) -> Span<'a> {
     match verification {
         iso_probe::SignatureVerification::Verified { key_id, .. } => Span::styled(
             format!("✓ verified (signer: {key_id})"),
-            Style::default().fg(Color::Green),
+            Style::default().fg(theme.success),
         ),
         iso_probe::SignatureVerification::KeyNotTrusted { key_id } => Span::styled(
             format!("⚠ signer not trusted ({key_id})"),
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(theme.warning),
         ),
         iso_probe::SignatureVerification::Forged { .. } => Span::styled(
             "✗ FORGED — bytes don't match sig",
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.error)
+                .add_modifier(Modifier::BOLD),
         ),
         iso_probe::SignatureVerification::Error { .. } => {
-            Span::styled("? sig parse error", Style::default().fg(Color::Yellow))
+            Span::styled("? sig parse error", Style::default().fg(theme.warning))
         }
         iso_probe::SignatureVerification::NotPresent => Span::raw("(no .minisig sidecar)"),
     }

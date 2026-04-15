@@ -6,6 +6,8 @@
 use iso_probe::{DiscoveredIso, Quirk};
 use kexec_loader::KexecError;
 
+use crate::theme::Theme;
+
 /// Top-level UI state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Screen {
@@ -49,6 +51,8 @@ pub struct AppState {
     /// Per-ISO cmdline overrides keyed by index. When absent the
     /// ISO-declared default from `iso-probe` is used.
     pub cmdline_overrides: std::collections::HashMap<usize, String>,
+    /// Active color theme (resolved from `AEGIS_THEME` env var).
+    pub theme: Theme,
 }
 
 impl AppState {
@@ -59,6 +63,7 @@ impl AppState {
             isos,
             screen: Screen::List { selected: 0 },
             cmdline_overrides: std::collections::HashMap::new(),
+            theme: Theme::default_theme(),
         }
     }
 
