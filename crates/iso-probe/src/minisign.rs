@@ -22,7 +22,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use minisign_verify::{PublicKey, Signature};
+use minisign_verify::{Error as MinisignError, PublicKey, Signature};
 use serde::{Deserialize, Serialize};
 
 /// Outcome of a minisign signature verification.
@@ -110,31 +110,39 @@ pub fn verify_iso_signature(iso_path: &Path) -> SignatureVerification {
         }
     };
 
+    let mut saw_forgery_under_trusted_key = false;
     for (pubkey, source) in &trusted {
-        if pubkey.verify(&iso_bytes, &signature, false).is_ok() {
-            return SignatureVerification::Verified {
-                key_id: key_id_from_sig(&signature),
-                sig_path: PathBuf::from(source),
-            };
+        match pubkey.verify(&iso_bytes, &signature, false) {
+            Ok(()) => {
+                return SignatureVerification::Verified {
+                    key_id: key_id_from_sig(&signature),
+                    sig_path: PathBuf::from(source),
+                };
+            }
+            // Trusted key matches the signature's key_id but the signature
+            // does not verify over the bytes — the file was tampered after
+            // the trusted signer signed it. Distinct from "wrong signer."
+            // (#57)
+            Err(MinisignError::InvalidSignature) => {
+                saw_forgery_under_trusted_key = true;
+            }
+            // UnexpectedKeyId / other errors: this trusted key didn't sign
+            // it. Keep iterating in case another trusted key did.
+            Err(_) => {}
         }
     }
 
-    // Signature itself may still be cryptographically valid against *some*
-    // key we don't trust. Re-check against a throwaway parse to tell apart
-    // "wrong key" from "actively forged bytes". We can't do this without the
-    // signer's own pubkey, so conservatively report `KeyNotTrusted` and let
-    // the Forged branch kick in only when the bytes have been tampered
-    // under a trusted key (rare in practice).
-    if trusted.is_empty() {
-        SignatureVerification::KeyNotTrusted {
-            key_id: key_id_from_sig(&signature),
-        }
-    } else {
-        // We have trusted keys but none matched. Could be forged OR signed
-        // by an untrusted key. Conservative: report as untrusted.
-        SignatureVerification::KeyNotTrusted {
-            key_id: key_id_from_sig(&signature),
-        }
+    if saw_forgery_under_trusted_key {
+        return SignatureVerification::Forged {
+            sig_path: sig_path.clone(),
+        };
+    }
+
+    // No trusted key signed this ISO. Either trust store is empty (fail-
+    // closed default) or the signer is unknown to us. Either way the user
+    // sees an "untrusted" diagnostic, not a "forged" one.
+    SignatureVerification::KeyNotTrusted {
+        key_id: key_id_from_sig(&signature),
     }
 }
 
