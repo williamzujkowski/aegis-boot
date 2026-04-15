@@ -296,7 +296,7 @@ fi
 # below and for emergency shell fallback.
 for applet in sh mount umount mkdir ls cat dmesg switch_root losetup \
               mdev blkid lsblk modprobe sleep echo ln readlink rmdir \
-              findfs uname grep sed cp rm; do
+              findfs uname grep sed cp rm tee date; do
     ln -sf /bin/busybox "$STAGE_DIR/bin/$applet"
 done
 
@@ -358,6 +358,13 @@ else
 fi
 /bin/mount -t tmpfs  run   /run
 
+# #109 shakedown: every /bin/echo "init: ..." below is ALSO captured
+# to /run/aegis-init.log via a simple helper. After AEGIS_ISOS
+# mounts, the file is copied onto the data partition so the
+# diagnostics survive a reboot.
+INIT_LOG=/run/aegis-init.log
+: > "$INIT_LOG" 2>/dev/null
+
 # Load storage controller modules so /dev/sd* / /dev/nvme* appear on
 # real hardware. Order matters: bus cores before hosts before class
 # drivers. Ignore failures (modules may be built-in on some kernels
@@ -409,17 +416,21 @@ if [ -n "$AEGIS_DEV" ]; then
     # default iocharset (iso8859-*) is a module on Ubuntu kernels and
     # we don't ship it — without these the mount fails silently. ext4
     # is the right pick for >4 GiB ISOs and needs no nls. (#68)
+    # rw so /init can write aegis-boot-<ts>.log and rescue-tui can
+    # tee F10 save-log evidence to the partition. ISO bytes
+    # themselves are never modified — iso-probe opens .iso files
+    # read-only via loop-mount. (#109)
     mount_ok=0
     for spec in \
-        "ext4:ro" \
-        "vfat:ro,codepage=437,iocharset=cp437" \
-        "vfat:ro" \
-        "exfat:ro"; do
+        "ext4:rw" \
+        "vfat:rw,codepage=437,iocharset=cp437" \
+        "vfat:rw" \
+        "exfat:rw"; do
         fstype="${spec%%:*}"
         opts="${spec#*:}"
         mount_err=$(/bin/mount -t "$fstype" -o "$opts" "$AEGIS_DEV" /run/media/aegis-isos 2>&1)
         if [ -z "$mount_err" ]; then
-            /bin/echo "init: mounted $AEGIS_DEV (LABEL=AEGIS_ISOS, fs=$fstype) -> /run/media/aegis-isos"
+            /bin/echo "init: mounted $AEGIS_DEV (LABEL=AEGIS_ISOS, fs=$fstype, rw) -> /run/media/aegis-isos"
             mount_ok=1
             break
         fi
@@ -468,6 +479,54 @@ else
 fi
 
 # (loop / isofs / udf already modprobed in the early bulk load above.)
+
+# #109 shakedown: snapshot diagnostics into /run/aegis-init.log
+# before rescue-tui takes the alternate screen. Everything here is
+# readable post-reboot (copied to AEGIS_ISOS just below) and
+# post-TUI-exit (still on tmpfs when the shell drops).
+{
+    /bin/echo "=== /proc/cmdline ==="
+    /bin/cat /proc/cmdline 2>/dev/null
+    /bin/echo ""
+    /bin/echo "=== /proc/mounts ==="
+    /bin/cat /proc/mounts 2>/dev/null
+    /bin/echo ""
+    /bin/echo "=== /dev (block devices) ==="
+    /bin/ls -la /dev/sd* /dev/nvme* /dev/vd* /dev/mmcblk* 2>/dev/null
+    /bin/ls -la /dev/disk/by-label/ 2>/dev/null
+    /bin/echo ""
+    /bin/echo "=== /lib/modules ==="
+    /bin/ls /lib/modules/ 2>/dev/null
+    /bin/echo ""
+    /bin/echo "=== dmesg tail ==="
+    /bin/dmesg 2>/dev/null | /bin/tail -40 2>/dev/null || /bin/echo "(dmesg not accessible)"
+} >> "$INIT_LOG" 2>&1
+
+# Copy the snapshot to AEGIS_ISOS so it survives a reboot. Best-
+# effort — cp fails silently if the partition isn't mounted or is
+# read-only. /run/aegis-init.log stays on tmpfs regardless.
+if [ -d /run/media/aegis-isos ]; then
+    _ts=$(/bin/date +%Y%m%d-%H%M%S 2>/dev/null || /bin/echo "boot")
+    if /bin/cp "$INIT_LOG" "/run/media/aegis-isos/aegis-boot-${_ts}.log" 2>/dev/null; then
+        /bin/echo "init: wrote init log to AEGIS_ISOS/aegis-boot-${_ts}.log"
+    fi
+fi
+
+# Verbose-pause: if the kernel cmdline has aegis.verbose=1, pause
+# for 30s (or until Enter) so the operator can read the pre-TUI
+# diagnostics before the alt-screen takes over. (#109)
+if /bin/grep -q "aegis.verbose=1" /proc/cmdline 2>/dev/null; then
+    /bin/echo ""
+    /bin/echo "init: aegis.verbose=1 — pausing 30s before rescue-tui."
+    /bin/echo "init: press Enter to continue sooner."
+    /bin/echo ""
+    /bin/echo "Full init log: $INIT_LOG"
+    /bin/echo ""
+    /bin/sleep 30 &
+    _pid=$!
+    read -r _line 2>/dev/null || true
+    /bin/kill "$_pid" 2>/dev/null
+fi
 
 export TERM=linux
 

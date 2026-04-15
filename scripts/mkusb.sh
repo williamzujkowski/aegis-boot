@@ -111,9 +111,20 @@ cat > "$WORK/grub.cfg" <<'EOF'
 serial --unit=0 --speed=115200
 terminal_input serial console
 terminal_output serial console
-set timeout=1
+set timeout=3
+
+# Normal boot — concise kernel logs.
 menuentry "aegis-boot rescue" {
-    linux /vmlinuz console=ttyS0,115200 panic=5 loglevel=4
+    linux /vmlinuz console=tty0 console=ttyS0,115200 panic=5 loglevel=4
+    initrd /initrd.img
+}
+
+# Verbose boot (#109 shakedown) — loglevel=7, earlyprintk, and
+# AEGIS_BOOT_VERBOSE=1 causes /init to pause 30s after diagnostics so
+# the operator can read the pre-rescue-tui state on screen. Also tees
+# the /init log to /run/media/aegis-isos/aegis-boot-<ts>.log.
+menuentry "aegis-boot rescue (verbose — first-boot debug)" {
+    linux /vmlinuz console=tty0 console=ttyS0,115200 panic=30 loglevel=7 earlyprintk=efi ignore_loglevel aegis.verbose=1
     initrd /initrd.img
 }
 EOF
