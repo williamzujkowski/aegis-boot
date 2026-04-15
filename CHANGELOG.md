@@ -2,6 +2,35 @@
 
 All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.10.1] — 2026-04-15
+
+**Brand identity + design-review fixes.** Delivers [#76](https://github.com/williamzujkowski/aegis-boot/issues/76) (brand identity spec produced by the nexus-agents `ux_expert`) and the three concrete fixes from the expert's subsequent self-critique.
+
+### Brand identity (#76)
+
+- **`assets/brand/`** — master SVG + monochrome variant of the shield-with-keyhole logo; ASCII renders (full 10-line README hero + compact 3-line TUI); `palette.css` with oklch + hex; `BRAND.md` usage guidelines.
+- **README hero block** — shield ASCII + tagline + license/release/CI badges.
+- **Tagline:** *Signed boot. Any ISO. Your keys.*
+- **`aegis` theme** — fifth named palette alongside default / monochrome / high-contrast / okabe-ito. Steel-blue primary (`#3B82F6`), emerald success, amber warning, vermillion error. Verified under deuteranopia/protanopia; distinct from Ubuntu/Fedora/Arch distro palettes.
+- **TUI header** gains the `◆` shield mark in brand primary plus the tagline in dim italic.
+
+### Design-review fixes (#76 self-critique)
+
+- **Header degrades gracefully on narrow terminals.** Previously truncated mid-word ("Signed boot. Any ISO. Yo"). Now span-chain is gated on `area.width`: ≥90 = full; ≥70 drops tagline; ≥50 drops TPM; <50 keeps only mark + name + version. Shield mark always survives.
+- **TrustChallenge mismatch feedback.** Typed characters `≥4` that don't equal `boot` render in error colour + bold. Silent-fail on a security gate was trainable toward muscle-memory mashing.
+- **TPM status colour reflects TPM state.** Previously hardcoded to green regardless; `TPM:none` now renders amber (warning). A green "none" was a lie.
+
+### Deferred to follow-up issues
+
+- [#101](https://github.com/williamzujkowski/aegis-boot/issues/101) Confirm info density — verdict can scroll off 24-row terminals
+- [#102](https://github.com/williamzujkowski/aegis-boot/issues/102) Filter-mode entry visual subtlety
+- [#103](https://github.com/williamzujkowski/aegis-boot/issues/103) `q` on Confirm opens ConfirmQuit (should be Esc-back equivalent)
+- [#104](https://github.com/williamzujkowski/aegis-boot/issues/104) `AEGIS_A11Y=text` screen-reader / braille mode
+
+### Tests
+
+Workspace tests 140 (+1 for the aegis theme; no test-count change from design-review fixes since they're render-only).
+
 ## [0.10.0] — 2026-04-15
 
 **Rescue + trust challenge + evidence release.** Implements the three biggest deferred items from the UX epic parent ([#85](https://github.com/williamzujkowski/aegis-boot/issues/85)) and its trust/a11y children ([#92](https://github.com/williamzujkowski/aegis-boot/issues/92), [#93](https://github.com/williamzujkowski/aegis-boot/issues/93)).
