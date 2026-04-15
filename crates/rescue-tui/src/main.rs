@@ -129,6 +129,19 @@ fn run(roots: &[PathBuf]) -> Result<u8, Box<dyn std::error::Error>> {
         return run_auto_kexec(&state, &needle).map(|()| 0u8);
     }
 
+    // #104: text-mode fallback for screen readers / braille /
+    // 40-col serial / TERM=dumb. Triggered by AEGIS_A11Y=text or
+    // TERM=dumb. Renders a numbered menu to stdout and reads a
+    // line from stdin — no alt-screen, no cursor positioning, no
+    // escape sequences that would confuse assistive tech.
+    let text_mode_requested = env::var("AEGIS_A11Y")
+        .map(|v| v.eq_ignore_ascii_case("text"))
+        .unwrap_or(false)
+        || env::var("TERM").map(|v| v == "dumb").unwrap_or(false);
+    if text_mode_requested {
+        return run_text_mode(&mut state);
+    }
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -401,6 +414,214 @@ fn event_loop<B: ratatui::backend::Backend>(
             _ => {}
         }
     }
+}
+
+/// Text-mode fallback (#104). Plain-text numbered menu + stdin. No
+/// ratatui alt-screen, no ANSI colour (except on stderr which is fine
+/// for tracing — terminals usually ignore it with `TERM=dumb`). Every
+/// screen transition also emits an `ANN:` line to stderr so
+/// brltty/speakup can mirror it to braille/speech.
+fn run_text_mode(state: &mut AppState) -> Result<u8, Box<dyn std::error::Error>> {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+
+    loop {
+        let entries = state.visible_entries();
+
+        writeln!(out)?;
+        writeln!(out, "aegis-boot — pick an entry (text-mode)")?;
+        writeln!(out, "Signed boot. Any ISO. Your keys.")?;
+        writeln!(
+            out,
+            "SB: {}    TPM: {}",
+            state.secure_boot.summary(),
+            state.tpm.summary()
+        )?;
+        writeln!(out)?;
+
+        for (i, entry) in entries.iter().enumerate() {
+            match entry {
+                crate::state::ViewEntry::Iso(idx) => {
+                    let iso = &state.isos[*idx];
+                    let glyph = match trust_verdict_for_text(iso) {
+                        "green" => "[+]",
+                        "yellow" => "[~]",
+                        "red" => "[!]",
+                        _ => "[ ]",
+                    };
+                    writeln!(
+                        out,
+                        "  {:>2}. {} {}  ({})",
+                        i + 1,
+                        glyph,
+                        iso.label,
+                        iso.iso_path.display()
+                    )?;
+                }
+                crate::state::ViewEntry::RescueShell => {
+                    writeln!(out, "  {:>2}. [#] rescue shell (busybox)", i + 1)?;
+                }
+            }
+        }
+
+        writeln!(out)?;
+        writeln!(
+            out,
+            "Legend: [+] verified  [~] hash only  [ ] no trust  [!] tampered  [#] shell"
+        )?;
+        writeln!(out, "Enter number to select, 'q' + Enter to quit.")?;
+        write!(out, "> ")?;
+        out.flush()?;
+
+        tracing::info!(
+            event = "a11y_menu_shown",
+            entries = entries.len(),
+            "ANN: menu shown, {} entries",
+            entries.len()
+        );
+
+        let mut line = String::new();
+        if std::io::stdin().read_line(&mut line)? == 0 {
+            // EOF → treat as quit.
+            return Ok(0);
+        }
+        let input = line.trim();
+        if input.eq_ignore_ascii_case("q") || input.eq_ignore_ascii_case("quit") {
+            return Ok(0);
+        }
+        let Ok(n) = input.parse::<usize>() else {
+            writeln!(out, "error: not a number — try again or 'q' to quit")?;
+            continue;
+        };
+        if n == 0 || n > entries.len() {
+            writeln!(out, "error: out of range (1..={})", entries.len())?;
+            continue;
+        }
+        let Some(chosen) = entries.get(n - 1).copied() else {
+            writeln!(out, "error: index {n} no longer valid")?;
+            continue;
+        };
+        match chosen {
+            crate::state::ViewEntry::RescueShell => {
+                tracing::info!("ANN: operator selected rescue shell (text mode)");
+                state.shell_requested = true;
+                #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+                return Ok(crate::state::RESCUE_SHELL_EXIT_CODE as u8);
+            }
+            crate::state::ViewEntry::Iso(idx) => {
+                run_text_confirm(state, &mut out, idx)?;
+                // After confirm/verdict/shell return, loop repaints.
+                // If kexec succeeded it replaced the process.
+            }
+        }
+    }
+}
+
+/// Single-screen Confirm flow in text mode. Prints the one-frame
+/// evidence block, asks yes/no (or `boot` typed-confirmation for
+/// degraded trust), then dispatches to `attempt_kexec` or returns.
+fn run_text_confirm(
+    state: &mut AppState,
+    out: &mut impl std::io::Write,
+    idx: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(iso) = state.isos.get(idx) else {
+        return Ok(());
+    };
+    let cmdline = state.effective_cmdline(idx);
+    let measurement = hex::encode(crate::tpm::compute_measurement(&iso.iso_path, &cmdline));
+    let verdict = trust_verdict_for_text(iso);
+
+    writeln!(out)?;
+    writeln!(out, "── Confirm kexec ──────────────────────────────")?;
+    writeln!(out, "Verdict:    {}", verdict.to_uppercase())?;
+    writeln!(out, "Label:      {}", iso.label)?;
+    writeln!(out, "ISO:        {}", iso.iso_path.display())?;
+    writeln!(
+        out,
+        "Cmdline:    {}",
+        if cmdline.is_empty() {
+            "(none)"
+        } else {
+            &cmdline
+        }
+    )?;
+    writeln!(out, "Measures:   sha256:{} → PCR 12", &measurement[..32])?;
+    writeln!(out)?;
+
+    tracing::info!(
+        event = "a11y_confirm_shown",
+        iso = %iso.iso_path.display(),
+        verdict = verdict,
+        "ANN: confirm {} verdict {}",
+        iso.label,
+        verdict
+    );
+
+    if state.is_kexec_blocked(idx) {
+        writeln!(
+            out,
+            "BLOCKED: verification or quirk failure — kexec refused."
+        )?;
+        writeln!(out, "Press Enter to return to the list.")?;
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line)?;
+        drop(line);
+        return Ok(());
+    }
+
+    let prompt = if state.is_degraded_trust(idx) {
+        writeln!(
+            out,
+            "Degraded trust — type 'boot' (exactly) then Enter to proceed, or 'no' to cancel."
+        )?;
+        "boot"
+    } else {
+        writeln!(out, "Proceed with kexec? [y/N]")?;
+        "y"
+    };
+    write!(out, "> ")?;
+    out.flush()?;
+
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line)?;
+    let input = line.trim().to_ascii_lowercase();
+    if input == prompt || (prompt == "y" && (input == "yes" || input == "y")) {
+        attempt_kexec(state, idx);
+        // Only reached if kexec failed — surface the error.
+        if let crate::state::Screen::Error {
+            message, remedy, ..
+        } = &state.screen
+        {
+            writeln!(out)?;
+            writeln!(out, "kexec failed: {message}")?;
+            if let Some(r) = remedy {
+                writeln!(out, "Remedy: {r}")?;
+            }
+            // Return the screen to List for the next loop iteration.
+            state.screen = crate::state::Screen::List { selected: 0 };
+        }
+    }
+    Ok(())
+}
+
+fn trust_verdict_for_text(iso: &iso_probe::DiscoveredIso) -> &'static str {
+    use iso_probe::{HashVerification as H, Quirk, SignatureVerification as S};
+    if iso.quirks.contains(&Quirk::NotKexecBootable)
+        || matches!(iso.hash_verification, H::Mismatch { .. })
+        || matches!(iso.signature_verification, S::Forged { .. })
+    {
+        return "red";
+    }
+    if matches!(iso.signature_verification, S::Verified { .. })
+        || matches!(iso.hash_verification, H::Verified { .. })
+    {
+        return "green";
+    }
+    if matches!(iso.signature_verification, S::KeyNotTrusted { .. }) {
+        return "yellow";
+    }
+    "gray"
 }
 
 /// Write an error-screen evidence snapshot to the `AEGIS_ISOS` data
