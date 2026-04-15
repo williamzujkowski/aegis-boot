@@ -38,6 +38,23 @@ jobs:
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test --all-features --locked
 
+  fitness:
+    name: aegis-fitness audit
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup toolchain install 1.85.0 --profile minimal && rustup override set 1.85.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Run fitness audit (threshold 80)
+        # Stage 8 of dev-test.sh — repo + scripts + docs hygiene.
+        # Threshold lowered from the dev-test default (90) to 80 because
+        # this job does not build initramfs artifacts (no QEMU here), so
+        # the 3 artifact-presence checks (30 pts total) WARN instead of
+        # PASS. The artifact-bearing checks still run end-to-end in
+        # dev-test.sh locally and in initramfs.yml. Wired per #53.
+        run: cargo run --release -p aegis-fitness -- --threshold 80
+
   cargo-deny:
     name: cargo-deny (advisories + licenses + bans)
     runs-on: ubuntu-22.04
