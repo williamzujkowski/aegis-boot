@@ -580,26 +580,52 @@ impl<E: IsoEnvironment> IsoParser<E> {
 
                 let has_initrd = self.env.exists(&initrd);
 
-                entries.push(BootEntry {
-                    label: format!(
+                // Classify from the actual kernel filename — `boot/vmlinuz-lts`
+                // and `boot/vmlinuz-virt` are Alpine, not Arch, etc. This
+                // layout matches multiple distros that share the
+                // `/boot/vmlinuz*` convention; use the path classifier
+                // rather than a hardcoded `Distribution::Arch`. (#116)
+                let rel_kernel = kernel
+                    .strip_prefix(mount_point)
+                    .map(|p| p.to_path_buf())
+                    .map_err(|_| {
+                        IsoError::Io(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "Kernel path escape",
+                        ))
+                    })?;
+                let distribution = Distribution::from_paths(&rel_kernel);
+                let label = match distribution {
+                    Distribution::Alpine => format!(
+                        "Alpine {}",
+                        name.strip_prefix("vmlinuz-").unwrap_or("").trim()
+                    ),
+                    Distribution::Arch => format!(
                         "Arch Linux {}",
                         name.strip_prefix("vmlinuz").unwrap_or("").trim()
                     ),
-                    kernel: kernel
-                        .strip_prefix(mount_point)
-                        .map(|p| p.to_path_buf())
-                        .map_err(|_| {
-                            IsoError::Io(std::io::Error::new(
-                                std::io::ErrorKind::InvalidData,
-                                "Kernel path escape",
-                            ))
-                        })?,
-                    initrd: if has_initrd { Some(initrd) } else { None },
-                    kernel_args: Some(
+                    _ => format!(
+                        "Linux {}",
+                        name.strip_prefix("vmlinuz").unwrap_or("").trim()
+                    ),
+                };
+                // Kernel args: only set for actual Arch; leave empty for
+                // Alpine/unknown so the ISO's own boot config wins.
+                let kernel_args = if distribution == Distribution::Arch {
+                    Some(
                         "archisobasedir=arch archiso_http_server=https://mirror.archlinux.org"
                             .to_string(),
-                    ),
-                    distribution: Distribution::Arch,
+                    )
+                } else {
+                    None
+                };
+
+                entries.push(BootEntry {
+                    label,
+                    kernel: rel_kernel,
+                    initrd: if has_initrd { Some(initrd) } else { None },
+                    kernel_args,
+                    distribution,
                     source_iso: source_iso
                         .file_name()
                         .and_then(|n| n.to_str())
