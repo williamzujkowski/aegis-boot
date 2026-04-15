@@ -82,6 +82,23 @@ virt-install --name aegis-boot-dev \
 
 ## Dropping ISOs onto the data partition
 
+### One-shot via `qemu-loaded-stick.sh` (recommended)
+
+```bash
+mkdir -p test-isos
+cp ~/Downloads/ubuntu-24.04.iso test-isos/
+./scripts/qemu-loaded-stick.sh                    # serial
+./scripts/qemu-loaded-stick.sh -i                 # GTK
+./scripts/qemu-loaded-stick.sh -d ~/iso-stash -k  # custom dir, keep image
+```
+
+The script builds a fresh `out/aegis-boot.img`, loop-mounts AEGIS_ISOS,
+copies every `.iso` (plus any sibling `.sha256` / `.minisig`) from the
+source dir, and boots under OVMF SecBoot. Image size auto-scales to
+1.5× the total ISO bytes (min 2 GiB).
+
+### Manual, if you want to inspect the partition
+
 ```bash
 # Attach the image as a loop device
 sudo losetup -fP out/aegis-boot.img
