@@ -4,7 +4,7 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 
 ## [0.6.0] — 2026-04-14
 
-**The polish release.** Lands all four nice-to-haves deferred from v0.5.0. No deployment-shape changes — `mkusb.sh` output is byte-compatible with v0.5.0's; this release adds operator-facing affordances on top.
+**The polish release.** Lands all four nice-to-haves deferred from v0.5.0. No deployment-shape changes — `mkusb.sh` output structure is unchanged from v0.5.0's; this release adds operator-facing affordances on top. (Note: the disk image embeds host-installed shim/grub/kernel binaries and is not byte-reproducible across hosts — only the rescue-tui binary is verified reproducible under SOURCE_DATE_EPOCH.)
 
 ### Headline
 
@@ -16,7 +16,7 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 ### Test tally
 
 - **v0.5.0:** 87 tests
-- **v0.6.0:** 100 tests (+13: 5 TPM + 2 size + 4 theme + 5 fitness)
+- **v0.6.0:** 100 unit tests (+13: 5 TPM + 2 size + 4 theme + 5 fitness-scoring). The "5 fitness" tests cover the `aegis-fitness` binary's score-computation logic, not the audit checks themselves (the binary runs 9 checks at runtime).
 
 ### Deferred
 
