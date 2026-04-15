@@ -112,7 +112,16 @@ impl Distribution {
             Distribution::Windows
         } else if path_str.contains("nixos") || path_str.ends_with("bzimage") {
             Distribution::NixOS
-        } else if path_str.contains("alpine") || path_str.contains("vmlinuz-lts") {
+        } else if path_str.contains("alpine")
+            // Alpine's kernel filename suffix is the authoritative
+            // signal — `vmlinuz-lts` (Standard) and `vmlinuz-virt`
+            // (Virt edition). Kept case-insensitive; path_str is
+            // already lowercased. (#116)
+            || path_str.contains("vmlinuz-lts")
+            || path_str.contains("vmlinuz-virt")
+            || path_str.contains("initramfs-lts")
+            || path_str.contains("initramfs-virt")
+        {
             Distribution::Alpine
         } else if path_str.contains("rhel")
             || path_str.contains("rocky")
