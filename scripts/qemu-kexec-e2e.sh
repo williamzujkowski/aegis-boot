@@ -102,6 +102,13 @@ set -e
 /bin/mount -t tmpfs tmpfs /var/aegis
 /bin/sleep 1
 
+# Prefer util-linux losetup (shipped into initramfs by build-initramfs.sh)
+# over busybox's applet — real losetup honors --show and handles modern
+# kernels' loop-control semantics reliably.
+if [ -x /sbin/losetup.util-linux ]; then
+    /bin/ln -sf /sbin/losetup.util-linux /usr/sbin/losetup
+fi
+
 ISO_DEV=""
 for candidate in /dev/sr0 /dev/vda /dev/sda; do
     if [ -b "$candidate" ]; then
@@ -116,16 +123,32 @@ if [ -z "$ISO_DEV" ]; then
 fi
 
 /bin/echo "aegis-kexec-e2e: ISO device = $ISO_DEV, copying to tmpfs"
-# iso-parser's mount flow shells out to `mount -o loop` or `losetup +
-# mount`. Either way it wants a regular file, not a block-device
-# symlink — copy the raw bytes onto tmpfs.
 /bin/cat "$ISO_DEV" > /var/aegis/fixture.iso
 /bin/echo "aegis-kexec-e2e: ISO copied: $(/bin/ls -l /var/aegis/fixture.iso)"
 
+# Pre-flight: prove the loop-mount chain works before handing off to
+# rescue-tui. Log the result so if we fail later we know whether it
+# was the mount itself or something else.
+/bin/mkdir -p /mnt/preflight
+if /usr/sbin/losetup -f --show -r /var/aegis/fixture.iso > /tmp/loop 2>/dev/null; then
+    LOOP=$(/bin/cat /tmp/loop)
+    /bin/echo "aegis-kexec-e2e: preflight: losetup -> $LOOP"
+    if /bin/mount -r -t iso9660 "$LOOP" /mnt/preflight 2>/dev/null; then
+        /bin/echo "aegis-kexec-e2e: preflight: mount ok; contents:"
+        /bin/ls /mnt/preflight || true
+        /bin/umount /mnt/preflight || true
+    else
+        /bin/echo "aegis-kexec-e2e: preflight: mount FAILED after losetup"
+    fi
+    /usr/sbin/losetup -d "$LOOP" 2>/dev/null || true
+else
+    /bin/echo "aegis-kexec-e2e: preflight: losetup FAILED"
+fi
+
 export AEGIS_ISO_ROOTS=/var/aegis
 export AEGIS_AUTO_KEXEC=fixture.iso
-export RUST_LOG=info
-export PATH=/usr/bin:/usr/sbin:/bin:/sbin
+export RUST_LOG=debug
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export TERM=linux
 /bin/echo "aegis-kexec-e2e: invoking rescue-tui in auto-kexec mode"
 /usr/bin/rescue-tui || {
