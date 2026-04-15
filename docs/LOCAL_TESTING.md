@@ -1,6 +1,6 @@
 # Local testing
 
-While GitHub Actions CI is the primary validation gate, you can run the full matrix locally in ~6-8 minutes using KVM + libvirt. This is the right dev loop when:
+While GitHub Actions CI is the primary validation gate, you can run the full matrix locally in ~8-15 minutes using KVM + libvirt (varies by hardware — fast NVMe + warm cargo cache hits the low end; cold cache or slower disks land closer to the high end). This is the right dev loop when:
 
 - GHA billing is constrained or paused.
 - You want instant feedback before pushing.
@@ -39,8 +39,9 @@ Steps it runs, in order (short-circuits on first failure):
 5. `scripts/mkusb.sh` — produces `out/aegis-boot.img`
 6. QEMU boot of the mkusb image under OVMF SecBoot — asserts SB enforcing + rescue-tui starts
 7. `scripts/qemu-kexec-e2e.sh` — asserts the rescue-tui → target-kernel kexec handoff
+8. `cargo run --release -p aegis-fitness` — repo / build / artifact health audit (added in v0.6.0)
 
-Total runtime on a Framework laptop: ~6-8 min. Most of that is step 6 (QEMU cold boot) and step 7 (second QEMU cold boot + initramfs customization + ISO build).
+Total runtime on a Framework laptop with warm cargo cache: ~8-10 min. Most of that is step 6 (QEMU cold boot) and step 7 (second QEMU cold boot + initramfs customization + ISO build). Cold cargo cache adds 2-5 min on top.
 
 ## Iterating on specific tests
 
