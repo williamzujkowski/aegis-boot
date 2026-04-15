@@ -10,6 +10,7 @@
 mod persistence;
 mod render;
 mod state;
+mod tpm;
 
 use std::env;
 use std::io;
@@ -325,6 +326,23 @@ fn attempt_kexec(state: &mut AppState, idx: usize) {
         initrd: prepared.initrd.clone(),
         cmdline,
     };
+    // TPM PCR measurement: extend sha256(iso_path || 0x00 || cmdline)
+    // into PCR 12 before kexec. Failure is logged but doesn't block —
+    // rescue-tui may run on TPM-less hardware during physical-access
+    // recovery.
+    let measurement = tpm::compute_measurement(&iso.iso_path, &req.cmdline);
+    match tpm::extend_pcr(tpm::DEFAULT_PCR, &measurement) {
+        Ok(hex) => tracing::info!(
+            pcr = tpm::DEFAULT_PCR,
+            measurement = %hex,
+            "TPM: extended PCR with pre-kexec measurement"
+        ),
+        Err(e) => tracing::warn!(
+            error = %e,
+            "TPM: skipping pre-kexec measurement"
+        ),
+    }
+
     tracing::info!(
         kernel = %req.kernel.display(),
         initrd = ?req.initrd.as_ref().map(|p| p.display().to_string()),
