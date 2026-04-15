@@ -76,6 +76,50 @@ pub struct AppState {
     /// TPM availability, detected once at startup. Rendered in the
     /// persistent header banner. (#85)
     pub tpm: TpmStatus,
+    /// Active substring filter on the List screen (#85 Tier 2).
+    /// Empty means show all ISOs. Matches against label + path,
+    /// case-insensitive.
+    pub filter: String,
+    /// True while the user is actively typing into the filter input
+    /// (`/` opened, Enter / Esc closes).
+    pub filter_editing: bool,
+    /// Sort order for the List screen view. Cycled with `s`.
+    pub sort_order: SortOrder,
+}
+
+/// Sort order applied to the List view. Cycled with the `s` key.
+/// Persisted only in-process — not saved across reboots (operators may
+/// want different defaults per use). (#85 Tier 2)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortOrder {
+    /// Alphabetical by label (default).
+    Name,
+    /// Largest ISOs first — usually the "main" install media.
+    SizeDesc,
+    /// Group by distribution family.
+    Distro,
+}
+
+impl SortOrder {
+    /// Cycle to the next sort order.
+    #[must_use]
+    pub fn next(self) -> Self {
+        match self {
+            Self::Name => Self::SizeDesc,
+            Self::SizeDesc => Self::Distro,
+            Self::Distro => Self::Name,
+        }
+    }
+
+    /// Short label for the header / footer.
+    #[must_use]
+    pub fn summary(self) -> &'static str {
+        match self {
+            Self::Name => "name",
+            Self::SizeDesc => "size↓",
+            Self::Distro => "distro",
+        }
+    }
 }
 
 /// Coarse Secure Boot enforcement state, detected once at startup.
@@ -167,6 +211,112 @@ impl AppState {
             theme: Theme::default_theme(),
             secure_boot: SecureBootStatus::detect(),
             tpm: TpmStatus::detect(),
+            filter: String::new(),
+            filter_editing: false,
+            sort_order: SortOrder::Name,
+        }
+    }
+
+    /// Indices into [`Self::isos`] in display order — applies both the
+    /// substring filter and the active sort. Selection cursor on the
+    /// List screen indexes INTO this view, not directly into `isos`.
+    /// (#85 Tier 2)
+    #[must_use]
+    pub fn visible_indices(&self) -> Vec<usize> {
+        let needle = self.filter.to_ascii_lowercase();
+        let mut indices: Vec<usize> = self
+            .isos
+            .iter()
+            .enumerate()
+            .filter(|(_, iso)| {
+                if needle.is_empty() {
+                    return true;
+                }
+                let label = iso.label.to_ascii_lowercase();
+                let path = iso.iso_path.to_string_lossy().to_ascii_lowercase();
+                label.contains(&needle) || path.contains(&needle)
+            })
+            .map(|(i, _)| i)
+            .collect();
+        match self.sort_order {
+            SortOrder::Name => {
+                indices.sort_by(|&a, &b| self.isos[a].label.cmp(&self.isos[b].label));
+            }
+            SortOrder::SizeDesc => {
+                indices.sort_by(|&a, &b| {
+                    self.isos[b]
+                        .size_bytes
+                        .unwrap_or(0)
+                        .cmp(&self.isos[a].size_bytes.unwrap_or(0))
+                });
+            }
+            SortOrder::Distro => {
+                indices.sort_by(|&a, &b| {
+                    let da = format!("{:?}", self.isos[a].distribution);
+                    let db = format!("{:?}", self.isos[b].distribution);
+                    da.cmp(&db)
+                        .then_with(|| self.isos[a].label.cmp(&self.isos[b].label))
+                });
+            }
+        }
+        indices
+    }
+
+    /// Translate a List-cursor position to a real index into `isos`,
+    /// or None if the view is empty / cursor out of range.
+    #[must_use]
+    pub fn real_index(&self, cursor: usize) -> Option<usize> {
+        self.visible_indices().get(cursor).copied()
+    }
+
+    /// Cycle to the next sort order. (#85 Tier 2)
+    pub fn cycle_sort(&mut self) {
+        self.sort_order = self.sort_order.next();
+        // Reset cursor so the view doesn't point past the (possibly
+        // reordered) list end.
+        if let Screen::List { selected } = &mut self.screen {
+            *selected = 0;
+        }
+    }
+
+    /// Open the filter editor. (#85 Tier 2)
+    pub fn open_filter(&mut self) {
+        if matches!(self.screen, Screen::List { .. }) {
+            self.filter_editing = true;
+        }
+    }
+
+    /// Append a character to the filter while editing.
+    pub fn filter_push(&mut self, c: char) {
+        if self.filter_editing {
+            self.filter.push(c);
+            if let Screen::List { selected } = &mut self.screen {
+                *selected = 0;
+            }
+        }
+    }
+
+    /// Delete the last character from the filter while editing.
+    pub fn filter_backspace(&mut self) {
+        if self.filter_editing {
+            self.filter.pop();
+            if let Screen::List { selected } = &mut self.screen {
+                *selected = 0;
+            }
+        }
+    }
+
+    /// Commit the filter (Enter): keep the query, exit editing mode.
+    pub fn filter_commit(&mut self) {
+        self.filter_editing = false;
+    }
+
+    /// Cancel the filter (Esc): clear the query and exit editing mode.
+    pub fn filter_cancel(&mut self) {
+        self.filter_editing = false;
+        self.filter.clear();
+        if let Screen::List { selected } = &mut self.screen {
+            *selected = 0;
         }
     }
 
@@ -291,36 +441,38 @@ impl AppState {
         *cursor = new_cursor;
     }
 
-    /// Jump to the first row (vim `g`). No-op outside the List screen
-    /// or on an empty list. (#85)
+    /// Jump to the first visible row (vim `g`). (#85)
     pub fn move_to_first(&mut self) {
+        let has_view = !self.visible_indices().is_empty();
         if let Screen::List { selected } = &mut self.screen {
-            if !self.isos.is_empty() {
+            if has_view {
                 *selected = 0;
             }
         }
     }
 
-    /// Jump to the last row (vim `G`). No-op outside the List screen
-    /// or on an empty list. (#85)
+    /// Jump to the last visible row (vim `G`). (#85)
     pub fn move_to_last(&mut self) {
+        let view_len = self.visible_indices().len();
         if let Screen::List { selected } = &mut self.screen {
-            if !self.isos.is_empty() {
-                *selected = self.isos.len() - 1;
+            if view_len > 0 {
+                *selected = view_len - 1;
             }
         }
     }
 
-    /// Advance the highlighted row up (negative) or down (positive), saturating
-    /// at list bounds.
+    /// Advance the visible cursor up (negative) or down (positive),
+    /// saturating at the visible-list bounds. With Tier 2 filter+sort,
+    /// `selected` indexes the visible view (#85), not raw `isos`.
     pub fn move_selection(&mut self, delta: i32) {
+        let view_len = self.visible_indices().len();
         let Screen::List { selected } = &mut self.screen else {
             return;
         };
-        if self.isos.is_empty() {
+        if view_len == 0 {
             return;
         }
-        let max = self.isos.len() - 1;
+        let max = view_len - 1;
         if delta < 0 {
             let step = delta.unsigned_abs() as usize;
             *selected = selected.saturating_sub(step);
@@ -330,19 +482,28 @@ impl AppState {
         }
     }
 
-    /// Transition list → confirm for the highlighted ISO.
+    /// Transition list → confirm for the highlighted ISO. The cursor on
+    /// List indexes the visible view; we translate to the real iso
+    /// index here so downstream screens see the canonical id.
     pub fn confirm_selection(&mut self) {
         if let Screen::List { selected } = self.screen {
-            if !self.isos.is_empty() {
-                self.screen = Screen::Confirm { selected };
+            if let Some(real) = self.real_index(selected) {
+                self.screen = Screen::Confirm { selected: real };
             }
         }
     }
 
-    /// Transition confirm → list (cancel).
+    /// Transition confirm → list (cancel). Maps the real ISO index
+    /// back to its position in the current visible view (or 0 if it's
+    /// no longer visible — e.g. filter changed).
     pub fn cancel_confirmation(&mut self) {
         if let Screen::Confirm { selected } = self.screen {
-            self.screen = Screen::List { selected };
+            let cursor = self
+                .visible_indices()
+                .iter()
+                .position(|&i| i == selected)
+                .unwrap_or(0);
+            self.screen = Screen::List { selected: cursor };
         }
     }
 
@@ -793,6 +954,81 @@ mod tests {
             Screen::Error { return_to, .. } => assert_eq!(return_to, 1),
             other => panic!("expected Error, got {other:?}"),
         }
+    }
+
+    // --- Tier 2 UX (#85) -----------------------------------------------
+
+    #[test]
+    fn visible_indices_no_filter_returns_all_sorted_by_name() {
+        let s = AppState::new(vec![
+            fake_iso("zebra"),
+            fake_iso("alpha"),
+            fake_iso("mango"),
+        ]);
+        let v = s.visible_indices();
+        assert_eq!(v.len(), 3);
+        // SortOrder::Name is default — labels must come back A..Z.
+        let labels: Vec<&str> = v.iter().map(|&i| s.isos[i].label.as_str()).collect();
+        assert_eq!(labels, ["alpha", "mango", "zebra"]);
+    }
+
+    #[test]
+    fn filter_substring_case_insensitive() {
+        let mut s = AppState::new(vec![
+            fake_iso("Ubuntu-24.04"),
+            fake_iso("fedora-40"),
+            fake_iso("debian-12"),
+        ]);
+        s.filter = "DEB".to_string();
+        let labels: Vec<&str> = s
+            .visible_indices()
+            .iter()
+            .map(|&i| s.isos[i].label.as_str())
+            .collect();
+        assert_eq!(labels, ["debian-12"]);
+    }
+
+    #[test]
+    fn cycle_sort_visits_all_orders() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        assert_eq!(s.sort_order, SortOrder::Name);
+        s.cycle_sort();
+        assert_eq!(s.sort_order, SortOrder::SizeDesc);
+        s.cycle_sort();
+        assert_eq!(s.sort_order, SortOrder::Distro);
+        s.cycle_sort();
+        assert_eq!(s.sort_order, SortOrder::Name);
+    }
+
+    #[test]
+    fn filter_editing_typing_pins_cursor_to_zero() {
+        let mut s = AppState::new(vec![fake_iso("aaa"), fake_iso("bbb"), fake_iso("ccc")]);
+        s.move_selection(2);
+        s.open_filter();
+        s.filter_push('b');
+        // After typing, cursor should be 0 (first match: bbb).
+        assert_eq!(s.screen, Screen::List { selected: 0 });
+    }
+
+    #[test]
+    fn filter_cancel_clears_query_and_resets_cursor() {
+        let mut s = AppState::new(vec![fake_iso("aaa"), fake_iso("bbb")]);
+        s.open_filter();
+        s.filter_push('z'); // matches nothing
+        s.filter_cancel();
+        assert!(s.filter.is_empty());
+        assert!(!s.filter_editing);
+        assert_eq!(s.visible_indices().len(), 2);
+    }
+
+    #[test]
+    fn confirm_selection_translates_visible_cursor_to_real_index() {
+        // Filter so only the second iso is visible. Cursor=0 in the
+        // visible view should map to real index 1.
+        let mut s = AppState::new(vec![fake_iso("ubuntu"), fake_iso("debian")]);
+        s.filter = "debian".to_string();
+        s.confirm_selection();
+        assert_eq!(s.screen, Screen::Confirm { selected: 1 });
     }
 
     #[test]

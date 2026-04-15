@@ -103,14 +103,22 @@ fn draw_footer(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         Screen::Help { prior } | Screen::ConfirmQuit { prior } => prior.as_ref(),
         other => other,
     };
-    let hint = match effective {
-        Screen::List { .. } => " [↑↓/jk] Move  [g/G] First/Last  [Enter] Boot  [?] Help  [q] Quit",
-        Screen::Confirm { .. } => {
-            " [Enter] kexec  [e] Edit cmdline  [Esc/h] Back  [?] Help  [q] Quit"
+    let hint = if state.filter_editing {
+        " Filter: type to match  ·  [Enter] commit  ·  [Esc] clear"
+    } else {
+        match effective {
+            Screen::List { .. } => {
+                " [↑↓/jk] Move  [Enter] Boot  [/] Filter  [s] Sort  [?] Help  [q] Quit"
+            }
+            Screen::Confirm { .. } => {
+                " [Enter] kexec  [e] Edit cmdline  [Esc/h] Back  [?] Help  [q] Quit"
+            }
+            Screen::EditCmdline { .. } => {
+                " [Enter] Save  [Esc] Cancel  [←/→] Move  [Backspace] Delete"
+            }
+            Screen::Error { .. } => " Press any key to return to the list  ·  [q] Quit",
+            Screen::Quitting | Screen::Help { .. } | Screen::ConfirmQuit { .. } => "",
         }
-        Screen::EditCmdline { .. } => " [Enter] Save  [Esc] Cancel  [←/→] Move  [Backspace] Delete",
-        Screen::Error { .. } => " Press any key to return to the list  ·  [q] Quit",
-        Screen::Quitting | Screen::Help { .. } | Screen::ConfirmQuit { .. } => "",
     };
     frame.render_widget(Paragraph::new(hint), area);
 }
@@ -159,6 +167,8 @@ fn draw_help_overlay(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         Line::from("   ↑ ↓ / j k     move selection"),
         Line::from("   g / G         first / last entry"),
         Line::from("   Enter / l     confirm selection"),
+        Line::from("   /             open filter (substring match)"),
+        Line::from("   s             cycle sort: name → size → distro"),
         Line::from(""),
         Line::from(" Confirm screen"),
         Line::from("   Enter         kexec into the ISO"),
@@ -221,10 +231,52 @@ fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usiz
         return;
     }
 
-    let items: Vec<ListItem> = state
-        .isos
+    // Tier 2 (#85) — info bar above list shows filter + sort state.
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(1)])
+        .split(area);
+    let (info_area, list_area) = (chunks[0], chunks[1]);
+
+    let info_line = if state.filter_editing {
+        format!(
+            " /{}_   sort: {}   (Enter commits, Esc clears)",
+            state.filter,
+            state.sort_order.summary()
+        )
+    } else if !state.filter.is_empty() {
+        format!(
+            " filter: \"{}\"   sort: {}   (/ edit, s cycle sort)",
+            state.filter,
+            state.sort_order.summary()
+        )
+    } else {
+        format!(
+            " sort: {}   (/ filter, s cycle sort)",
+            state.sort_order.summary()
+        )
+    };
+    frame.render_widget(Paragraph::new(info_line), info_area);
+
+    let view = state.visible_indices();
+    if view.is_empty() {
+        let msg = format!(
+            "No ISOs match filter \"{}\".\nPress / to edit or Esc to clear.",
+            state.filter
+        );
+        let p = Paragraph::new(msg).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" aegis-boot — no matches "),
+        );
+        frame.render_widget(p, list_area);
+        return;
+    }
+
+    let items: Vec<ListItem> = view
         .iter()
-        .map(|iso| {
+        .map(|&i| {
+            let iso = &state.isos[i];
             let glyph = status_glyph(iso);
             let qs = quirks_summary(iso);
             let line = if qs.is_empty() {
@@ -236,15 +288,20 @@ fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usiz
         })
         .collect();
 
-    let title = format!(" aegis-boot — pick an ISO ({} found) ", state.isos.len());
+    let title = format!(
+        " aegis-boot — pick an ISO ({}/{} shown) ",
+        view.len(),
+        state.isos.len()
+    );
     let list = List::new(items)
         .block(Block::default().borders(Borders::ALL).title(title))
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .highlight_symbol("> ");
 
     let mut list_state = ListState::default();
-    list_state.select(Some(selected));
-    frame.render_stateful_widget(list, area, &mut list_state);
+    let cursor = selected.min(view.len().saturating_sub(1));
+    list_state.select(Some(cursor));
+    frame.render_stateful_widget(list, list_area, &mut list_state);
 }
 
 fn draw_confirm(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usize) {

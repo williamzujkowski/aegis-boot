@@ -186,8 +186,21 @@ fn event_loop<B: ratatui::backend::Backend>(
         }
 
         let in_editor = matches!(state.screen, Screen::EditCmdline { .. });
+        let in_filter_input = state.filter_editing;
 
-        // Global keys (not in cmdline editor):
+        // Filter editor consumes all keys while active (#85 Tier 2).
+        if in_filter_input {
+            match key.code {
+                KeyCode::Enter => state.filter_commit(),
+                KeyCode::Esc => state.filter_cancel(),
+                KeyCode::Backspace => state.filter_backspace(),
+                KeyCode::Char(c) => state.filter_push(c),
+                _ => {}
+            }
+            continue;
+        }
+
+        // Global keys (not in cmdline editor / filter input):
         //   q  → quit confirmation prompt (was instant exit before #85)
         //   ?  → help overlay
         if !in_editor {
@@ -213,6 +226,8 @@ fn event_loop<B: ratatui::backend::Backend>(
             (Screen::List { .. }, KeyCode::Enter | KeyCode::Char('l')) => {
                 state.confirm_selection();
             }
+            (Screen::List { .. }, KeyCode::Char('/')) => state.open_filter(),
+            (Screen::List { .. }, KeyCode::Char('s')) => state.cycle_sort(),
 
             (Screen::Confirm { .. }, KeyCode::Esc | KeyCode::Char('h')) => {
                 state.cancel_confirmation();
