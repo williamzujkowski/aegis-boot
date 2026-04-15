@@ -100,6 +100,10 @@ pub enum ProbeError {
 pub fn discover(roots: &[PathBuf]) -> Result<Vec<DiscoveredIso>, ProbeError> {
     let parser = iso_parser::IsoParser::new(iso_parser::OsIsoEnvironment::new());
     let mut all: Vec<DiscoveredIso> = Vec::new();
+    // Dedupe by post-scan iso_path so roots that share ancestry (e.g.
+    // /run/media/aegis-isos is a subdir of /run/media — both are in
+    // AEGIS_ISO_ROOTS) don't yield duplicate entries. (#117)
+    let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
     for root in roots {
         // Missing / unreadable roots are not an error — the rescue environment
         // routinely runs with `/run/media` present but `/mnt` empty or vice
@@ -116,14 +120,21 @@ pub fn discover(roots: &[PathBuf]) -> Result<Vec<DiscoveredIso>, ProbeError> {
         tracing::info!(root = %root.display(), "iso-probe: scanning root");
         match pollster::block_on(parser.scan_directory(root)) {
             Ok(entries) => {
+                let before = all.len();
+                for entry in &entries {
+                    let iso_path = root.join(&entry.source_iso);
+                    let canonical = std::fs::canonicalize(&iso_path).unwrap_or(iso_path);
+                    if !seen.insert(canonical) {
+                        continue;
+                    }
+                    all.push(boot_entry_to_discovered(entry, root));
+                }
                 tracing::info!(
                     root = %root.display(),
                     extracted = entries.len(),
+                    kept = all.len() - before,
                     "iso-probe: scan extracted entries"
                 );
-                for entry in entries {
-                    all.push(boot_entry_to_discovered(&entry, root));
-                }
             }
             Err(IsoError::NoBootEntries(_)) => {
                 tracing::info!(

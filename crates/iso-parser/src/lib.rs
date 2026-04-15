@@ -646,6 +646,23 @@ impl<E: IsoEnvironment> IsoParser<E> {
     ) -> Result<Vec<BootEntry>, IsoError> {
         let mut entries = Vec::new();
 
+        // Debian-family ISOs have one or more of: /install (debian-
+        // installer), /casper (ubuntu live), /.disk/info (both), or
+        // /pool (package pool). Gate on at least one of those being
+        // present — without the gate, try_debian_layout also matches
+        // Alpine's /boot/vmlinuz-lts and produces spurious
+        // "Debian/Ubuntu" entries. (#122)
+        let debian_markers = [
+            mount_point.join("install"),
+            mount_point.join("casper"),
+            mount_point.join(".disk"),
+            mount_point.join("pool"),
+            mount_point.join("dists"),
+        ];
+        if !debian_markers.iter().any(|p| self.env.exists(p)) {
+            return Ok(entries);
+        }
+
         // Try multiple potential locations
         let search_paths = [
             mount_point.join("install"),
