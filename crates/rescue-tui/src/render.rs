@@ -525,25 +525,45 @@ fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usiz
         .split(area);
     let (info_area, list_area) = (chunks[0], chunks[1]);
 
-    let info_line = if state.filter_editing {
-        format!(
-            " /{}_   sort: {}   (Enter commits, Esc clears)",
-            state.filter,
-            state.sort_order.summary()
-        )
-    } else if !state.filter.is_empty() {
-        format!(
-            " filter: \"{}\"   sort: {}   (/ edit, s cycle sort)",
-            state.filter,
-            state.sort_order.summary()
-        )
+    // Design-review #102: filter-mode visual was too subtle (trailing
+    // `_` the only indicator). Now: when editing, render a reversed-
+    // style banner with "FILTER:" prefix so it's unmistakable, plus a
+    // blinking caret span. Committed filter keeps the quieter style.
+    if state.filter_editing {
+        let styled = Line::from(vec![
+            Span::styled(
+                " FILTER ",
+                Style::default()
+                    .fg(state.theme.warning)
+                    .add_modifier(Modifier::REVERSED | Modifier::BOLD),
+            ),
+            Span::raw("  /"),
+            Span::styled(
+                state.filter.clone(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("│", Style::default().add_modifier(Modifier::SLOW_BLINK)),
+            Span::raw(format!(
+                "   sort: {}   (Enter commits, Esc clears)",
+                state.sort_order.summary()
+            )),
+        ]);
+        frame.render_widget(Paragraph::new(styled), info_area);
     } else {
-        format!(
-            " sort: {}   (/ filter, s cycle sort)",
-            state.sort_order.summary()
-        )
-    };
-    frame.render_widget(Paragraph::new(info_line), info_area);
+        let info_line = if state.filter.is_empty() {
+            format!(
+                " sort: {}   (/ filter, s cycle sort)",
+                state.sort_order.summary()
+            )
+        } else {
+            format!(
+                " filter: \"{}\"   sort: {}   (/ edit, s cycle sort)",
+                state.filter,
+                state.sort_order.summary()
+            )
+        };
+        frame.render_widget(Paragraph::new(info_line), info_area);
+    }
 
     // Full entries view includes the rescue-shell synthetic row at
     // the end, even when the ISO list is empty (#90).
@@ -666,17 +686,18 @@ fn draw_confirm(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: u
             Span::styled("Size:     ", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(humanize_size(iso.size_bytes)),
         ]),
+        // Design-review #101: compact kernel+initrd onto one line and
+        // checksum+signature onto one "Trust:" line so the verdict at
+        // top stays visible on 24-row terminals with verbose quirks.
         Line::from(vec![
-            Span::styled("Kernel:   ", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(iso.kernel.display().to_string()),
-        ]),
-        Line::from(vec![
-            Span::styled("Initrd:   ", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(
+            Span::styled("Boot:     ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(format!(
+                "{}  +  {}",
+                iso.kernel.display(),
                 iso.initrd
                     .as_ref()
-                    .map_or("(none)".to_string(), |p| p.display().to_string()),
-            ),
+                    .map_or("(no initrd)".to_string(), |p| p.display().to_string()),
+            )),
         ]),
         Line::from(vec![
             Span::styled(cmdline_label, Style::default().add_modifier(Modifier::BOLD)),
@@ -692,12 +713,9 @@ fn draw_confirm(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: u
             }),
         ]),
         Line::from(vec![
-            Span::styled("Checksum: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled("Trust:    ", Style::default().add_modifier(Modifier::BOLD)),
             checksum_span(&iso.hash_verification, &state.theme),
-        ]),
-        Line::from(vec![
-            Span::styled("Signature:", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(" "),
+            Span::raw("   "),
             signature_span(&iso.signature_verification, &state.theme),
         ]),
         Line::from(""),

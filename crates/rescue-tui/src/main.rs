@@ -263,12 +263,18 @@ fn event_loop<B: ratatui::backend::Backend>(
         }
 
         // Global keys (not in cmdline editor / filter input):
-        //   q  → quit confirmation prompt (was instant exit before #85)
+        //   q  → on Confirm, back to List (design-review #103 — the
+        //        reboot-the-machine prompt was overloaded with
+        //        "quit this screen"); elsewhere, open the quit prompt.
         //   ?  → help overlay
         if !in_editor {
             match key.code {
                 KeyCode::Char('q') => {
-                    state.request_quit();
+                    if matches!(state.screen, Screen::Confirm { .. }) {
+                        state.cancel_confirmation();
+                    } else {
+                        state.request_quit();
+                    }
                     continue;
                 }
                 KeyCode::Char('?') => {
