@@ -17,6 +17,8 @@ use std::env;
 use std::io;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::thread;
 use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -142,10 +144,18 @@ fn run(roots: &[PathBuf]) -> Result<(), Box<dyn std::error::Error>> {
     result
 }
 
+// Event loop is intentionally over the 100-line clippy threshold: the
+// screen-specific key handling lives here in one place, and splitting
+// it hurts readability more than the length.
+#[allow(clippy::too_many_lines)]
 fn event_loop<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     state: &mut AppState,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Active verify-now worker (#89). None when no verification is in
+    // flight; Some(rx) while the worker thread is streaming progress.
+    let mut active_verify: Option<Receiver<VerifyMsg>> = None;
+
     loop {
         terminal.draw(|f| render::draw(f, state))?;
 
@@ -153,13 +163,56 @@ fn event_loop<B: ratatui::backend::Backend>(
             return Ok(());
         }
 
-        if !event::poll(Duration::from_millis(250))? {
+        // Drain any pending verify-now progress / completion.
+        if let Some(rx) = active_verify.as_ref() {
+            loop {
+                match rx.try_recv() {
+                    Ok(VerifyMsg::Progress { bytes, total }) => {
+                        state.verify_tick(bytes, total);
+                    }
+                    Ok(VerifyMsg::Done(Ok(outcome))) => {
+                        state.verify_finish(outcome);
+                        active_verify = None;
+                        break;
+                    }
+                    Ok(VerifyMsg::Done(Err(e))) => {
+                        tracing::warn!(error = %e, "verify-now: worker failed");
+                        state.cancel_verify();
+                        active_verify = None;
+                        break;
+                    }
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        active_verify = None;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Shorter poll timeout while verifying so the progress bar
+        // animates smoothly; 250ms is fine otherwise.
+        let poll = if active_verify.is_some() {
+            Duration::from_millis(50)
+        } else {
+            Duration::from_millis(250)
+        };
+        if !event::poll(poll)? {
             continue;
         }
         let Event::Key(key) = event::read()? else {
             continue;
         };
         if key.kind != KeyEventKind::Press {
+            continue;
+        }
+
+        // Verifying screen swallows all keys: Esc cancels, others no-op.
+        if matches!(state.screen, Screen::Verifying { .. }) {
+            if key.code == KeyCode::Esc {
+                state.cancel_verify();
+                active_verify = None;
+            }
             continue;
         }
 
@@ -228,6 +281,23 @@ fn event_loop<B: ratatui::backend::Backend>(
             }
             (Screen::List { .. }, KeyCode::Char('/')) => state.open_filter(),
             (Screen::List { .. }, KeyCode::Char('s')) => state.cycle_sort(),
+            (Screen::List { selected }, KeyCode::Char('v')) => {
+                if let Some(real_idx) = state.real_index(*selected) {
+                    if let Some(iso) = state.isos.get(real_idx) {
+                        let rx = spawn_verify_worker(iso.iso_path.clone());
+                        state.begin_verify(real_idx);
+                        active_verify = Some(rx);
+                    }
+                }
+            }
+            (Screen::Confirm { selected }, KeyCode::Char('v')) => {
+                let real_idx = *selected;
+                if let Some(iso) = state.isos.get(real_idx) {
+                    let rx = spawn_verify_worker(iso.iso_path.clone());
+                    state.begin_verify(real_idx);
+                    active_verify = Some(rx);
+                }
+            }
 
             (Screen::Confirm { .. }, KeyCode::Esc | KeyCode::Char('h')) => {
                 state.cancel_confirmation();
@@ -267,6 +337,37 @@ fn event_loop<B: ratatui::backend::Backend>(
 /// Find the first ISO whose path contains `needle` (substring match on the
 /// absolute path). Pure helper for `AEGIS_AUTO_KEXEC`; extracted for unit
 /// testing without spinning up QEMU. (#54)
+/// Message from the verify-now worker thread back to the event loop.
+/// The worker is fire-and-forget after cancel — the channel is dropped
+/// on the UI side and the thread exits when sends fail. (#89)
+#[derive(Debug)]
+enum VerifyMsg {
+    /// Incremental progress update.
+    Progress { bytes: u64, total: u64 },
+    /// Worker finished. Contains either the [`iso_probe::HashVerification`]
+    /// outcome (success path) or an I/O error.
+    Done(Result<iso_probe::HashVerification, String>),
+}
+
+/// Kick off a verify-now worker thread for the ISO at the given path.
+/// Returns the receiver end; caller installs it into `active_verify` so
+/// the event loop can poll. The thread runs sha256 with periodic
+/// progress ticks. (#89)
+fn spawn_verify_worker(iso_path: PathBuf) -> Receiver<VerifyMsg> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let tx_progress = tx.clone();
+        let result = iso_probe::verify_iso_hash_with_progress(&iso_path, |bytes, total| {
+            // Send is best-effort; drop errors when the UI side
+            // has cancelled and released its Receiver.
+            let _ = tx_progress.send(VerifyMsg::Progress { bytes, total });
+        });
+        let payload = result.map_err(|e| e.to_string());
+        let _ = tx.send(VerifyMsg::Done(payload));
+    });
+    rx
+}
+
 fn find_auto_kexec_target(isos: &[iso_probe::DiscoveredIso], needle: &str) -> Option<usize> {
     if needle.is_empty() {
         return None;

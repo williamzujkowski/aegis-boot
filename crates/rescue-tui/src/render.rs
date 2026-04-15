@@ -5,7 +5,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, Borders, Gauge, List, ListItem, ListState, Paragraph, Wrap},
     Frame,
 };
 
@@ -70,8 +70,97 @@ fn draw_body(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         Screen::Error {
             message, remedy, ..
         } => draw_error(frame, area, message, remedy.as_deref()),
+        Screen::Verifying {
+            selected,
+            bytes,
+            total,
+            ..
+        } => draw_verifying(frame, area, state, *selected, *bytes, *total),
         Screen::Quitting | Screen::Help { .. } | Screen::ConfirmQuit { .. } => {}
     }
+}
+
+fn draw_verifying(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &AppState,
+    selected: usize,
+    bytes: u64,
+    total: u64,
+) {
+    let Some(iso) = state.isos.get(selected) else {
+        return;
+    };
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(3),
+            Constraint::Min(1),
+        ])
+        .split(area);
+    let (label_area, path_area, gauge_area, note_area) =
+        (chunks[0], chunks[1], chunks[2], chunks[3]);
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                "Verifying:  ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(&iso.label),
+        ])),
+        label_area,
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                "ISO path:   ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(iso.iso_path.display().to_string()),
+        ])),
+        path_area,
+    );
+
+    // Cast u64 → f64 for the ratio. Precision loss on the high bits is
+    // meaningless for a progress bar — we just need a 0..=1 value.
+    #[allow(clippy::cast_precision_loss)]
+    let ratio = if total > 0 {
+        (bytes as f64 / total as f64).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    // Cast f64 → u16 for percent. Ratio is pre-clamped to [0, 1],
+    // so 100.0 * ratio ∈ [0, 100] — u16 cannot truncate or sign-flip.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let pct = (ratio * 100.0) as u16;
+    let label = if total > 0 {
+        format!(
+            "{pct}%   ({} / {})",
+            humanize_size(Some(bytes)),
+            humanize_size(Some(total))
+        )
+    } else {
+        "preparing…".to_string()
+    };
+    frame.render_widget(
+        Gauge::default()
+            .block(Block::default().borders(Borders::ALL).title(" SHA-256 "))
+            .gauge_style(Style::default().fg(state.theme.success))
+            .ratio(ratio)
+            .label(label),
+        gauge_area,
+    );
+
+    frame.render_widget(
+        Paragraph::new(
+            "Re-running hash verification against the ISO bytes on the\ndata partition. This is the same computation iso-probe ran at\ndiscovery time. Esc to cancel; the worker will finish in the\nbackground and the result will be discarded.",
+        )
+        .wrap(Wrap { trim: false }),
+        note_area,
+    );
 }
 
 fn draw_header(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
@@ -108,15 +197,16 @@ fn draw_footer(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     } else {
         match effective {
             Screen::List { .. } => {
-                " [↑↓/jk] Move  [Enter] Boot  [/] Filter  [s] Sort  [?] Help  [q] Quit"
+                " [↑↓/jk] Move  [Enter] Boot  [/] Filter  [s] Sort  [v] Verify  [?] Help  [q] Quit"
             }
             Screen::Confirm { .. } => {
-                " [Enter] kexec  [e] Edit cmdline  [Esc/h] Back  [?] Help  [q] Quit"
+                " [Enter] kexec  [e] cmdline  [v] Verify  [Esc/h] Back  [?] Help  [q] Quit"
             }
             Screen::EditCmdline { .. } => {
                 " [Enter] Save  [Esc] Cancel  [←/→] Move  [Backspace] Delete"
             }
             Screen::Error { .. } => " Press any key to return to the list  ·  [q] Quit",
+            Screen::Verifying { .. } => " Verifying in background  ·  [Esc] Cancel",
             Screen::Quitting | Screen::Help { .. } | Screen::ConfirmQuit { .. } => "",
         }
     };
@@ -232,6 +322,7 @@ fn draw_help_overlay(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         Line::from("   Enter / l     confirm selection"),
         Line::from("   /             open filter (substring match)"),
         Line::from("   s             cycle sort: name → size → distro"),
+        Line::from("   v             verify now (re-run SHA-256 with progress)"),
         Line::from(""),
         Line::from(" Confirm screen"),
         Line::from("   Enter         kexec into the ISO"),

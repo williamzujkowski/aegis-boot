@@ -54,6 +54,20 @@ pub enum Screen {
         /// Boxed screen to restore on cancel.
         prior: Box<Screen>,
     },
+    /// Verify-now action (#89) — a worker thread streams progress
+    /// while re-running hash verification against the selected ISO.
+    Verifying {
+        /// Real ISO index (not visible-view index) being verified.
+        selected: usize,
+        /// Bytes hashed so far.
+        bytes: u64,
+        /// Total bytes to hash (0 if unknown).
+        total: u64,
+        /// Populated when the worker finishes — caller then updates
+        /// the ISO's verification fields in place and dismisses the
+        /// screen.
+        result: Option<HashVerification>,
+    },
     /// User asked to quit; main loop should exit cleanly.
     Quitting,
 }
@@ -565,6 +579,50 @@ impl AppState {
         }
     }
 
+    /// Open the Verifying screen for the ISO at real index `idx`.
+    /// Caller (main.rs) spawns the worker thread that will feed
+    /// progress ticks via [`Self::verify_tick`] and completion via
+    /// [`Self::verify_finish`]. (#89)
+    pub fn begin_verify(&mut self, idx: usize) {
+        if self.isos.get(idx).is_some() {
+            self.screen = Screen::Verifying {
+                selected: idx,
+                bytes: 0,
+                total: 0,
+                result: None,
+            };
+        }
+    }
+
+    /// Progress update from the verify worker.
+    pub fn verify_tick(&mut self, new_bytes: u64, new_total: u64) {
+        if let Screen::Verifying { bytes, total, .. } = &mut self.screen {
+            *bytes = new_bytes;
+            *total = new_total;
+        }
+    }
+
+    /// Worker finished. Update the ISO's `hash_verification` in place
+    /// and transition back to the Confirm screen on the same ISO so
+    /// the operator sees the refreshed verdict. (#89)
+    pub fn verify_finish(&mut self, outcome: HashVerification) {
+        if let Screen::Verifying { selected, .. } = self.screen {
+            if let Some(iso) = self.isos.get_mut(selected) {
+                iso.hash_verification = outcome;
+            }
+            self.screen = Screen::Confirm { selected };
+        }
+    }
+
+    /// Cancel an in-progress verification (Esc). Dismisses the
+    /// Verifying screen without updating the iso. The worker thread
+    /// continues in the background; its result is discarded.
+    pub fn cancel_verify(&mut self) {
+        if let Screen::Verifying { selected, .. } = self.screen {
+            self.screen = Screen::Confirm { selected };
+        }
+    }
+
     /// Confirm exit — only call from `ConfirmQuit` screen. Direct exit.
     pub fn confirm_quit(&mut self) {
         self.screen = Screen::Quitting;
@@ -1029,6 +1087,59 @@ mod tests {
         s.filter = "debian".to_string();
         s.confirm_selection();
         assert_eq!(s.screen, Screen::Confirm { selected: 1 });
+    }
+
+    // --- verify-now (#89) ---------------------------------------------
+
+    #[test]
+    fn begin_verify_opens_verifying_screen() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.begin_verify(0);
+        assert!(matches!(
+            s.screen,
+            Screen::Verifying {
+                selected: 0,
+                bytes: 0,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn verify_tick_updates_progress() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.begin_verify(0);
+        s.verify_tick(1024, 4096);
+        match s.screen {
+            Screen::Verifying { bytes, total, .. } => {
+                assert_eq!(bytes, 1024);
+                assert_eq!(total, 4096);
+            }
+            _ => panic!("expected Verifying"),
+        }
+    }
+
+    #[test]
+    fn verify_finish_updates_iso_and_returns_to_confirm() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.begin_verify(0);
+        let outcome = HashVerification::Verified {
+            digest: "abc123".to_string(),
+            source: "fake".to_string(),
+        };
+        s.verify_finish(outcome.clone());
+        assert_eq!(s.isos[0].hash_verification, outcome);
+        assert!(matches!(s.screen, Screen::Confirm { selected: 0 }));
+    }
+
+    #[test]
+    fn cancel_verify_returns_to_confirm_without_updating_iso() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        let original = s.isos[0].hash_verification.clone();
+        s.begin_verify(0);
+        s.cancel_verify();
+        assert!(matches!(s.screen, Screen::Confirm { selected: 0 }));
+        assert_eq!(s.isos[0].hash_verification, original);
     }
 
     #[test]

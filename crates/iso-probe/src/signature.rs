@@ -73,10 +73,30 @@ impl HashVerification {
 /// Returns [`std::io::Error`] on failure to read the ISO itself. Missing or
 /// unreadable sibling files are handled as `NotPresent`, not errors.
 pub fn verify_iso_hash(iso_path: &Path) -> std::io::Result<HashVerification> {
+    verify_iso_hash_with_progress(iso_path, |_, _| {})
+}
+
+/// Progress-reporting variant of [`verify_iso_hash`] for interactive
+/// operator-initiated re-verification (#89). Calls `on_progress(bytes_read,
+/// total_bytes)` periodically during the hash computation so the caller can
+/// render a progress bar. No guarantees on tick frequency — fast enough for
+/// a human-perceivable bar (~10 Hz on modern `NVMe`).
+///
+/// # Errors
+///
+/// Same as [`verify_iso_hash`].
+pub fn verify_iso_hash_with_progress<F>(
+    iso_path: &Path,
+    mut on_progress: F,
+) -> std::io::Result<HashVerification>
+where
+    F: FnMut(u64, u64),
+{
     let Some(expected) = find_expected_hash(iso_path) else {
         return Ok(HashVerification::NotPresent);
     };
-    let actual = sha256_of_file(iso_path)?;
+    let total = std::fs::metadata(iso_path).map(|m| m.len()).unwrap_or(0);
+    let actual = sha256_of_file_with_progress(iso_path, total, &mut on_progress)?;
     if actual == expected.hash.to_ascii_lowercase() {
         Ok(HashVerification::Verified {
             digest: actual,
@@ -163,18 +183,40 @@ fn is_sha256_hex(s: &str) -> bool {
     s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
-fn sha256_of_file(path: &Path) -> std::io::Result<String> {
+/// Streaming SHA-256 with periodic callback into `on_progress(bytes_read,
+/// total)`. Tick rate capped at ~10 Hz so the callback doesn't dominate
+/// CPU on fast storage. (#89)
+fn sha256_of_file_with_progress(
+    path: &Path,
+    total: u64,
+    on_progress: &mut dyn FnMut(u64, u64),
+) -> std::io::Result<String> {
+    use std::time::{Duration, Instant};
     let file = File::open(path)?;
     let mut reader = BufReader::with_capacity(1 << 20, file);
     let mut hasher = Sha256::new();
-    let mut buf = [0u8; 8192];
+    // Heap-allocated 64 KiB buffer — too large to sit on the stack per
+    // clippy::large_stack_arrays.
+    let mut buf = vec![0u8; 65_536];
+    let mut bytes = 0u64;
+    let mut last_tick = Instant::now();
+    let tick_interval = Duration::from_millis(100);
+    // Emit an initial "starting" tick so the progress bar renders
+    // immediately on slow storage.
+    on_progress(0, total);
     loop {
         let n = reader.read(&mut buf)?;
         if n == 0 {
             break;
         }
         hasher.update(&buf[..n]);
+        bytes += n as u64;
+        if last_tick.elapsed() >= tick_interval {
+            on_progress(bytes, total);
+            last_tick = Instant::now();
+        }
     }
+    on_progress(bytes, total);
     Ok(hex::encode(hasher.finalize()))
 }
 

@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 
 pub use iso_parser::{BootEntry, Distribution, IsoError};
 pub use minisign::{verify_iso_signature, SignatureVerification};
-pub use signature::{verify_iso_hash, HashVerification};
+pub use signature::{verify_iso_hash, verify_iso_hash_with_progress, HashVerification};
 
 /// Metadata for a single discovered ISO. Paths are relative to the (now
 /// unmounted) ISO root and become absolute once handed to [`prepare`].
