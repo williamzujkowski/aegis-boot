@@ -76,8 +76,75 @@ fn draw_body(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
             total,
             ..
         } => draw_verifying(frame, area, state, *selected, *bytes, *total),
+        Screen::TrustChallenge { selected, buffer } => {
+            draw_trust_challenge(frame, area, state, *selected, buffer);
+        }
         Screen::Quitting | Screen::Help { .. } | Screen::ConfirmQuit { .. } => {}
     }
+}
+
+fn draw_trust_challenge(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &AppState,
+    selected: usize,
+    buffer: &str,
+) {
+    let Some(iso) = state.isos.get(selected) else {
+        return;
+    };
+    let verdict = trust_verdict(iso);
+    let lines = vec![
+        Line::from(Span::styled(
+            "Degraded trust — typed confirmation required",
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .fg(state.theme.warning),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Verdict: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                verdict.label(),
+                Style::default().fg(verdict.color(&state.theme)),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("ISO:     ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(iso.iso_path.display().to_string()),
+        ]),
+        Line::from(""),
+        Line::from("This ISO lacks a verified signature in AEGIS_TRUSTED_KEYS, or has no"),
+        Line::from("sidecar checksum/.minisig. Booting it is a trust decision."),
+        Line::from(""),
+        Line::from("To proceed, type the word below exactly then press Enter."),
+        Line::from("Esc cancels."),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Type: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "boot",
+                Style::default()
+                    .fg(state.theme.error)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("You:  ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(buffer),
+            Span::styled("│", Style::default().add_modifier(Modifier::SLOW_BLINK)),
+        ]),
+    ];
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Trust challenge (#93) "),
+            )
+            .wrap(Wrap { trim: false }),
+        area,
+    );
 }
 
 fn draw_verifying(
@@ -207,6 +274,7 @@ fn draw_footer(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
             }
             Screen::Error { .. } => " Press any key to return to the list  ·  [q] Quit",
             Screen::Verifying { .. } => " Verifying in background  ·  [Esc] Cancel",
+            Screen::TrustChallenge { .. } => " Type `boot` + Enter to proceed  ·  [Esc] Cancel",
             Screen::Quitting | Screen::Help { .. } | Screen::ConfirmQuit { .. } => "",
         }
     };
@@ -384,6 +452,7 @@ fn draw_confirm_quit_overlay(frame: &mut Frame<'_>, area: Rect, state: &AppState
 }
 
 fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usize) {
+    use crate::state::ViewEntry;
     if state.isos.is_empty() {
         let empty = Paragraph::new(
             "No bootable ISOs found.\n\nPress q to quit, or check that AEGIS_ISO_ROOTS\npoints at a directory containing .iso files.",
@@ -420,48 +489,58 @@ fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usiz
     };
     frame.render_widget(Paragraph::new(info_line), info_area);
 
-    let view = state.visible_indices();
-    if view.is_empty() {
-        let msg = format!(
-            "No ISOs match filter \"{}\".\nPress / to edit or Esc to clear.",
-            state.filter
-        );
-        let p = Paragraph::new(msg).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" aegis-boot — no matches "),
-        );
-        frame.render_widget(p, list_area);
-        return;
-    }
-
-    let items: Vec<ListItem> = view
+    // Full entries view includes the rescue-shell synthetic row at
+    // the end, even when the ISO list is empty (#90).
+    let entries = state.visible_entries();
+    let iso_entries: Vec<usize> = entries
         .iter()
-        .map(|&i| {
-            let iso = &state.isos[i];
-            let glyph = status_glyph(iso);
-            let qs = quirks_summary(iso);
-            let line = if qs.is_empty() {
-                format!("{glyph} {}  ({})", iso.label, iso.distribution_name())
+        .filter_map(|e| {
+            if let ViewEntry::Iso(i) = e {
+                Some(*i)
             } else {
-                format!("{glyph} {}  ({})  {qs}", iso.label, iso.distribution_name())
-            };
-            ListItem::new(line)
+                None
+            }
         })
         .collect();
 
-    let title = format!(
-        " aegis-boot — pick an ISO ({}/{} shown) ",
-        view.len(),
-        state.isos.len()
-    );
+    let items: Vec<ListItem> = entries
+        .iter()
+        .map(|e| match e {
+            ViewEntry::Iso(i) => {
+                let iso = &state.isos[*i];
+                let glyph = status_glyph(iso);
+                let qs = quirks_summary(iso);
+                let line = if qs.is_empty() {
+                    format!("{glyph} {}  ({})", iso.label, iso.distribution_name())
+                } else {
+                    format!("{glyph} {}  ({})  {qs}", iso.label, iso.distribution_name())
+                };
+                ListItem::new(line)
+            }
+            ViewEntry::RescueShell => {
+                ListItem::new("[#] rescue shell (busybox)  — dropped from rescue-tui")
+            }
+        })
+        .collect();
+
+    let title = if iso_entries.is_empty() && state.filter.is_empty() {
+        " aegis-boot — no ISOs; shell available ".to_string()
+    } else if iso_entries.is_empty() {
+        format!(" aegis-boot — no matches for \"{}\" ", state.filter)
+    } else {
+        format!(
+            " aegis-boot — pick an ISO ({}/{} shown, +shell) ",
+            iso_entries.len(),
+            state.isos.len()
+        )
+    };
     let list = List::new(items)
         .block(Block::default().borders(Borders::ALL).title(title))
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .highlight_symbol("> ");
 
     let mut list_state = ListState::default();
-    let cursor = selected.min(view.len().saturating_sub(1));
+    let cursor = selected.min(entries.len().saturating_sub(1));
     list_state.select(Some(cursor));
     frame.render_stateful_widget(list, list_area, &mut list_state);
 }

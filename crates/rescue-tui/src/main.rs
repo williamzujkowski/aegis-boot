@@ -38,7 +38,7 @@ fn main() -> ExitCode {
     tracing_subscriber_init();
     let roots = parse_roots(env::var("AEGIS_ISO_ROOTS").ok().as_deref());
     match run(&roots) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => ExitCode::from(code),
         Err(e) => {
             eprintln!("rescue-tui: {e}");
             ExitCode::from(1)
@@ -75,7 +75,7 @@ fn parse_roots(env_var: Option<&str>) -> Vec<PathBuf> {
     }
 }
 
-fn run(roots: &[PathBuf]) -> Result<(), Box<dyn std::error::Error>> {
+fn run(roots: &[PathBuf]) -> Result<u8, Box<dyn std::error::Error>> {
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         roots = ?roots,
@@ -126,7 +126,7 @@ fn run(roots: &[PathBuf]) -> Result<(), Box<dyn std::error::Error>> {
     // support CI end-to-end testing without a TTY. Real operator automation
     // should live outside the TUI binary.
     if let Ok(needle) = env::var("AEGIS_AUTO_KEXEC") {
-        return run_auto_kexec(&state, &needle);
+        return run_auto_kexec(&state, &needle).map(|()| 0u8);
     }
 
     enable_raw_mode()?;
@@ -135,13 +135,22 @@ fn run(roots: &[PathBuf]) -> Result<(), Box<dyn std::error::Error>> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let result = event_loop(&mut terminal, &mut state);
+    let loop_result = event_loop(&mut terminal, &mut state);
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
 
-    result
+    loop_result?;
+
+    // #90: if the operator selected the rescue-shell entry, signal
+    // that to /init via the exit code. Otherwise ordinary quit.
+    if state.shell_requested {
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+        Ok(crate::state::RESCUE_SHELL_EXIT_CODE as u8)
+    } else {
+        Ok(0)
+    }
 }
 
 // Event loop is intentionally over the 100-line clippy threshold: the
@@ -277,7 +286,22 @@ fn event_loop<B: ratatui::backend::Backend>(
             (Screen::List { .. }, KeyCode::Char('g')) => state.move_to_first(),
             (Screen::List { .. }, KeyCode::Char('G')) => state.move_to_last(),
             (Screen::List { .. }, KeyCode::Enter | KeyCode::Char('l')) => {
-                state.confirm_selection();
+                if state.is_shell_selected() {
+                    // #90: rescue shell picked. Signal the shell-drop
+                    // exit path; run() will propagate the sentinel
+                    // code so /init can exec /bin/sh.
+                    tracing::info!(
+                        "operator selected rescue shell — exiting with code {}",
+                        crate::state::RESCUE_SHELL_EXIT_CODE
+                    );
+                    state.shell_requested = true;
+                    // Direct exit — no confirmation prompt needed;
+                    // the operator already picked the shell
+                    // explicitly.
+                    state.confirm_quit();
+                } else {
+                    state.confirm_selection();
+                }
             }
             (Screen::List { .. }, KeyCode::Char('/')) => state.open_filter(),
             (Screen::List { .. }, KeyCode::Char('s')) => state.cycle_sort(),
@@ -311,9 +335,29 @@ fn event_loop<B: ratatui::backend::Backend>(
                         "rescue-tui: refused kexec — ISO is kexec-blocked (quirk or verification failure)"
                     );
                     state.record_kexec_error(&kexec_loader::KexecError::UnsupportedImage);
+                } else if state.is_degraded_trust(idx) {
+                    // #93: YELLOW/GRAY verdict → require typing "boot".
+                    state.enter_trust_challenge(idx);
                 } else {
                     attempt_kexec(state, idx);
                 }
+            }
+
+            // Trust challenge (#93): Enter only fires kexec if the
+            // buffer equals "boot" — otherwise ignored. Backspace /
+            // characters edit the buffer; Esc cancels.
+            (Screen::TrustChallenge { selected, buffer }, KeyCode::Enter) => {
+                let idx = *selected;
+                if buffer == "boot" {
+                    attempt_kexec(state, idx);
+                }
+            }
+            (Screen::TrustChallenge { .. }, KeyCode::Esc) => state.trust_challenge_cancel(),
+            (Screen::TrustChallenge { .. }, KeyCode::Backspace) => {
+                state.trust_challenge_backspace();
+            }
+            (Screen::TrustChallenge { .. }, KeyCode::Char(c)) => {
+                state.trust_challenge_push(c);
             }
 
             (Screen::EditCmdline { .. }, KeyCode::Enter) => state.commit_cmdline_edit(),

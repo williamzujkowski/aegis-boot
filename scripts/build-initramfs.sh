@@ -471,14 +471,19 @@ fi
 
 export TERM=linux
 
-# Hand off. On clean quit, drop to a shell so the user isn't staring at
-# a kernel panic.
-/usr/bin/rescue-tui || {
-    /bin/echo "rescue-tui exited; dropping to emergency shell"
-    exec /bin/sh
-}
-
-# rescue-tui returned without error (unusual — kexec would have replaced us).
+# Hand off. Exit code semantics (#90):
+#   0        — operator chose Quit → drop to emergency shell (old default)
+#   42       — operator chose the rescue-shell entry explicitly
+#   anything — crash / unclean exit → emergency shell
+# All paths land in /bin/sh; the different branches only differ in the
+# banner so an operator reading the serial log can tell which happened.
+/usr/bin/rescue-tui
+rc=$?
+case "$rc" in
+    0)   /bin/echo "init: rescue-tui quit cleanly; dropping to emergency shell" ;;
+    42)  /bin/echo "init: rescue shell requested by operator (#90)" ;;
+    *)   /bin/echo "init: rescue-tui exited unexpectedly (rc=$rc); dropping to emergency shell" ;;
+esac
 exec /bin/sh
 INIT_SH
 chmod 0755 "$STAGE_DIR/init"

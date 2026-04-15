@@ -54,6 +54,18 @@ pub enum Screen {
         /// Boxed screen to restore on cancel.
         prior: Box<Screen>,
     },
+    /// Typed-confirmation challenge before kexec'ing an ISO whose
+    /// trust state is degraded (YELLOW untrusted signer, GRAY no
+    /// verification material). Operator must type `boot` exactly to
+    /// continue — prevents muscle-memory Enter on a warned state.
+    /// SSH first-connect / HSTS / Gatekeeper "type the app name"
+    /// pattern. (#93)
+    TrustChallenge {
+        /// Real ISO index being kexec'd.
+        selected: usize,
+        /// Current input buffer (characters typed so far).
+        buffer: String,
+    },
     /// Verify-now action (#89) — a worker thread streams progress
     /// while re-running hash verification against the selected ISO.
     Verifying {
@@ -90,6 +102,10 @@ pub struct AppState {
     /// TPM availability, detected once at startup. Rendered in the
     /// persistent header banner. (#85)
     pub tpm: TpmStatus,
+    /// Set when the operator picked the rescue-shell entry (#90).
+    /// Causes `main.rs::run()` to exit with [`RESCUE_SHELL_EXIT_CODE`]
+    /// so the initramfs `/init` script can drop to busybox.
+    pub shell_requested: bool,
     /// Active substring filter on the List screen (#85 Tier 2).
     /// Empty means show all ISOs. Matches against label + path,
     /// case-insensitive.
@@ -113,6 +129,25 @@ pub enum SortOrder {
     /// Group by distribution family.
     Distro,
 }
+
+/// An entry displayed on the List screen. Includes discovered ISOs
+/// (by real index) and synthetic entries like the always-present
+/// rescue shell (#90).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewEntry {
+    /// Real ISO at this index into [`AppState::isos`].
+    Iso(usize),
+    /// Synthetic "drop to rescue shell" entry (#90). Selecting it
+    /// exits rescue-tui with [`RESCUE_SHELL_EXIT_CODE`] so the
+    /// initramfs `/init` can recognize the operator request and
+    /// `exec /bin/sh`.
+    RescueShell,
+}
+
+/// Exit code rescue-tui returns when the operator picks the synthetic
+/// "rescue shell" entry. `/init` switches on this value and drops to
+/// busybox instead of treating the exit as an error. (#90)
+pub const RESCUE_SHELL_EXIT_CODE: i32 = 42;
 
 impl SortOrder {
     /// Cycle to the next sort order.
@@ -225,16 +260,40 @@ impl AppState {
             theme: Theme::default_theme(),
             secure_boot: SecureBootStatus::detect(),
             tpm: TpmStatus::detect(),
+            shell_requested: false,
             filter: String::new(),
             filter_editing: false,
             sort_order: SortOrder::Name,
         }
     }
 
+    /// Ordered list of entries displayed on the List screen (#90).
+    /// Mix of [`ViewEntry::Iso`] (one per filter-matching ISO in sort
+    /// order) followed by the synthetic [`ViewEntry::RescueShell`] at
+    /// the end. The rescue-shell entry is always present — even when
+    /// no ISOs are discovered — so operators always have an escape
+    /// hatch to a signed busybox shell.
+    #[must_use]
+    pub fn visible_entries(&self) -> Vec<ViewEntry> {
+        let mut entries: Vec<ViewEntry> = self
+            .visible_indices()
+            .into_iter()
+            .map(ViewEntry::Iso)
+            .collect();
+        entries.push(ViewEntry::RescueShell);
+        entries
+    }
+
+    /// Translate a List-cursor position to the selected [`ViewEntry`].
+    #[must_use]
+    pub fn view_entry(&self, cursor: usize) -> Option<ViewEntry> {
+        self.visible_entries().into_iter().nth(cursor)
+    }
+
     /// Indices into [`Self::isos`] in display order — applies both the
-    /// substring filter and the active sort. Selection cursor on the
-    /// List screen indexes INTO this view, not directly into `isos`.
-    /// (#85 Tier 2)
+    /// substring filter and the active sort. This is the ISO-only view
+    /// (no rescue-shell entry). Use [`Self::visible_entries`] when
+    /// rendering or navigating. (#85 Tier 2)
     #[must_use]
     pub fn visible_indices(&self) -> Vec<usize> {
         let needle = self.filter.to_ascii_lowercase();
@@ -455,9 +514,12 @@ impl AppState {
         *cursor = new_cursor;
     }
 
-    /// Jump to the first visible row (vim `g`). (#85)
+    /// Jump to the first visible row (vim `g`). (#85). The visible
+    /// view always has at least one row (the rescue-shell entry
+    /// since #90), so the `has_view` check is trivially true — kept
+    /// for defence in depth in case that invariant ever changes.
     pub fn move_to_first(&mut self) {
-        let has_view = !self.visible_indices().is_empty();
+        let has_view = !self.visible_entries().is_empty();
         if let Screen::List { selected } = &mut self.screen {
             if has_view {
                 *selected = 0;
@@ -465,9 +527,10 @@ impl AppState {
         }
     }
 
-    /// Jump to the last visible row (vim `G`). (#85)
+    /// Jump to the last visible row (vim `G`). With #90 the last row
+    /// is always the rescue-shell entry.
     pub fn move_to_last(&mut self) {
-        let view_len = self.visible_indices().len();
+        let view_len = self.visible_entries().len();
         if let Screen::List { selected } = &mut self.screen {
             if view_len > 0 {
                 *selected = view_len - 1;
@@ -476,10 +539,10 @@ impl AppState {
     }
 
     /// Advance the visible cursor up (negative) or down (positive),
-    /// saturating at the visible-list bounds. With Tier 2 filter+sort,
-    /// `selected` indexes the visible view (#85), not raw `isos`.
+    /// saturating at the visible-list bounds. Cursor indexes the full
+    /// entries list (ISOs + rescue shell), not just ISOs (#85, #90).
     pub fn move_selection(&mut self, delta: i32) {
-        let view_len = self.visible_indices().len();
+        let view_len = self.visible_entries().len();
         let Screen::List { selected } = &mut self.screen else {
             return;
         };
@@ -496,26 +559,40 @@ impl AppState {
         }
     }
 
-    /// Transition list → confirm for the highlighted ISO. The cursor on
-    /// List indexes the visible view; we translate to the real iso
-    /// index here so downstream screens see the canonical id.
+    /// Transition list → confirm for the highlighted ISO. The cursor
+    /// on List indexes the full entries view (ISOs + rescue shell);
+    /// ISO selections route to Confirm, shell selections are handled
+    /// by [`Self::is_shell_selected`] (main.rs exits with
+    /// [`RESCUE_SHELL_EXIT_CODE`] in that case).
     pub fn confirm_selection(&mut self) {
         if let Screen::List { selected } = self.screen {
-            if let Some(real) = self.real_index(selected) {
+            if let Some(ViewEntry::Iso(real)) = self.view_entry(selected) {
                 self.screen = Screen::Confirm { selected: real };
             }
         }
     }
 
+    /// Whether the List cursor currently highlights the synthetic
+    /// rescue-shell entry. main.rs uses this to branch on Enter. (#90)
+    #[must_use]
+    pub fn is_shell_selected(&self) -> bool {
+        if let Screen::List { selected } = self.screen {
+            matches!(self.view_entry(selected), Some(ViewEntry::RescueShell))
+        } else {
+            false
+        }
+    }
+
     /// Transition confirm → list (cancel). Maps the real ISO index
-    /// back to its position in the current visible view (or 0 if it's
-    /// no longer visible — e.g. filter changed).
+    /// back to its cursor position in the current entries view (ISO
+    /// entries + rescue shell, #90). Falls back to 0 if the ISO is
+    /// no longer visible (e.g. filter changed).
     pub fn cancel_confirmation(&mut self) {
         if let Screen::Confirm { selected } = self.screen {
             let cursor = self
-                .visible_indices()
+                .visible_entries()
                 .iter()
-                .position(|&i| i == selected)
+                .position(|e| matches!(e, ViewEntry::Iso(i) if *i == selected))
                 .unwrap_or(0);
             self.screen = Screen::List { selected: cursor };
         }
@@ -576,6 +653,58 @@ impl AppState {
         if let Screen::ConfirmQuit { prior } = std::mem::replace(&mut self.screen, Screen::Quitting)
         {
             self.screen = *prior;
+        }
+    }
+
+    /// Coarse trust classification for the Confirm screen's verdict
+    /// line AND for deciding whether [`Self::enter_trust_challenge`]
+    /// fires before a kexec. Mirrors the `TrustVerdict` enum in
+    /// render.rs but kept here so state-machine tests don't need to
+    /// depend on the UI layer. (#93)
+    #[must_use]
+    pub fn is_degraded_trust(&self, idx: usize) -> bool {
+        let Some(iso) = self.isos.get(idx) else {
+            return false;
+        };
+        // GREEN if hash OR signature is verified.
+        let verified = matches!(
+            iso.signature_verification,
+            SignatureVerification::Verified { .. }
+        ) || matches!(iso.hash_verification, HashVerification::Verified { .. });
+        !verified
+    }
+
+    /// Enter the typed-confirmation challenge screen for a degraded
+    /// trust state. (#93)
+    pub fn enter_trust_challenge(&mut self, idx: usize) {
+        self.screen = Screen::TrustChallenge {
+            selected: idx,
+            buffer: String::new(),
+        };
+    }
+
+    /// Character entry for the trust challenge. Returns true iff the
+    /// buffer now equals the expected token "boot" — caller then
+    /// proceeds to kexec.
+    pub fn trust_challenge_push(&mut self, c: char) -> bool {
+        if let Screen::TrustChallenge { buffer, .. } = &mut self.screen {
+            buffer.push(c);
+            return buffer == "boot";
+        }
+        false
+    }
+
+    /// Backspace in the trust challenge buffer.
+    pub fn trust_challenge_backspace(&mut self) {
+        if let Screen::TrustChallenge { buffer, .. } = &mut self.screen {
+            buffer.pop();
+        }
+    }
+
+    /// Cancel the trust challenge and return to Confirm.
+    pub fn trust_challenge_cancel(&mut self) {
+        if let Screen::TrustChallenge { selected, .. } = self.screen {
+            self.screen = Screen::Confirm { selected };
         }
     }
 
@@ -821,11 +950,12 @@ mod tests {
 
     #[test]
     fn movement_clamps_at_bounds() {
+        // 3 ISOs + 1 rescue-shell row = 4 entries; max cursor = 3.
         let mut s = AppState::new(vec![fake_iso("a"), fake_iso("b"), fake_iso("c")]);
         s.move_selection(-5);
         assert_eq!(s.screen, Screen::List { selected: 0 });
         s.move_selection(99);
-        assert_eq!(s.screen, Screen::List { selected: 2 });
+        assert_eq!(s.screen, Screen::List { selected: 3 });
     }
 
     #[test]
@@ -997,9 +1127,10 @@ mod tests {
 
     #[test]
     fn move_to_last_jumps_to_max() {
+        // 3 ISOs + 1 rescue-shell row = last cursor is 3.
         let mut s = AppState::new(vec![fake_iso("a"), fake_iso("b"), fake_iso("c")]);
         s.move_to_last();
-        assert_eq!(s.screen, Screen::List { selected: 2 });
+        assert_eq!(s.screen, Screen::List { selected: 3 });
     }
 
     #[test]
@@ -1087,6 +1218,109 @@ mod tests {
         s.filter = "debian".to_string();
         s.confirm_selection();
         assert_eq!(s.screen, Screen::Confirm { selected: 1 });
+    }
+
+    // --- rescue-shell entry (#90) -------------------------------------
+
+    #[test]
+    fn rescue_shell_entry_always_last_even_with_no_isos() {
+        let s = AppState::new(vec![]);
+        let entries = s.visible_entries();
+        assert_eq!(entries, vec![ViewEntry::RescueShell]);
+    }
+
+    #[test]
+    fn rescue_shell_entry_appended_after_isos() {
+        let s = AppState::new(vec![fake_iso("a"), fake_iso("b")]);
+        let entries = s.visible_entries();
+        assert_eq!(entries.len(), 3);
+        assert!(matches!(entries[2], ViewEntry::RescueShell));
+    }
+
+    #[test]
+    fn rescue_shell_entry_survives_filter_with_no_iso_matches() {
+        let mut s = AppState::new(vec![fake_iso("ubuntu")]);
+        s.filter = "nope".to_string();
+        assert_eq!(s.visible_entries(), vec![ViewEntry::RescueShell]);
+    }
+
+    #[test]
+    fn is_shell_selected_true_when_cursor_on_shell_row() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.move_to_last();
+        assert!(s.is_shell_selected());
+    }
+
+    #[test]
+    fn is_shell_selected_false_when_cursor_on_iso_row() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.move_to_first();
+        assert!(!s.is_shell_selected());
+    }
+
+    // --- typed trust challenge (#93) ----------------------------------
+
+    #[test]
+    fn enter_trust_challenge_opens_screen_with_empty_buffer() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.enter_trust_challenge(0);
+        assert!(matches!(
+            s.screen,
+            Screen::TrustChallenge {
+                selected: 0,
+                ref buffer,
+            } if buffer.is_empty()
+        ));
+    }
+
+    #[test]
+    fn trust_challenge_push_returns_true_at_boot_string() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.enter_trust_challenge(0);
+        assert!(!s.trust_challenge_push('b'));
+        assert!(!s.trust_challenge_push('o'));
+        assert!(!s.trust_challenge_push('o'));
+        assert!(s.trust_challenge_push('t'));
+    }
+
+    #[test]
+    fn trust_challenge_backspace_rolls_back() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.enter_trust_challenge(0);
+        s.trust_challenge_push('b');
+        s.trust_challenge_push('x');
+        s.trust_challenge_backspace();
+        // 'b' alone is not "boot" yet.
+        assert!(!matches!(
+            &s.screen,
+            Screen::TrustChallenge { buffer, .. } if buffer == "boot"
+        ));
+    }
+
+    #[test]
+    fn trust_challenge_cancel_returns_to_confirm() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.enter_trust_challenge(0);
+        s.trust_challenge_cancel();
+        assert!(matches!(s.screen, Screen::Confirm { selected: 0 }));
+    }
+
+    #[test]
+    fn is_degraded_trust_true_when_no_verification() {
+        let s = AppState::new(vec![fake_iso("a")]);
+        // fake_iso() has NotPresent for both hash and sig → degraded.
+        assert!(s.is_degraded_trust(0));
+    }
+
+    #[test]
+    fn is_degraded_trust_false_when_hash_verified() {
+        let mut iso = fake_iso("a");
+        iso.hash_verification = HashVerification::Verified {
+            digest: "abc".to_string(),
+            source: "/x".to_string(),
+        };
+        let s = AppState::new(vec![iso]);
+        assert!(!s.is_degraded_trust(0));
     }
 
     // --- verify-now (#89) ---------------------------------------------
