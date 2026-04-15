@@ -2,6 +2,61 @@
 
 All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] — 2026-04-15
+
+**UX overhaul release** ([#85](https://github.com/williamzujkowski/aegis-boot/issues/85)). Synthesis of a parallel-agent survey of best-in-class boot pickers (Ventoy, rEFInd, systemd-boot, GRUB2, Apple Option-key, Lenovo F12) and TUI applications (lazygit, ranger, fzf, k9s, helix, dialog). The rescue-tui is now substantially more discoverable, navigable, and trustworthy at a glance.
+
+### Headline — chrome and discoverability
+
+- **Persistent header banner** with `aegis-boot vX.Y.Z`, Secure Boot status (`SB:enforcing` / `SB:disabled` / `SB:unknown`), and TPM status (`TPM:available` / `TPM:none`). Color-coded AND text-labeled so monochrome themes still convey the protection state. SB detected from `/sys/firmware/efi/efivars/SecureBoot`; TPM from `/dev/tpm[0|rm0]`.
+- **Persistent footer** with screen-specific keybind hints, replacing inline per-screen help text. One source of truth for what every key does, always visible.
+- **`?` opens a help overlay** modal with the full keybind list and status-glyph legend. Esc / `?` to dismiss. lazygit / k9s pattern.
+- **`q` now opens a quit-confirmation overlay** instead of exiting immediately. Accidental `q` during navigation no longer reboots the machine.
+
+### Headline — list navigation
+
+- **Vim navigation aliases** on the List screen: `j/k` (down/up), `g/G` (first/last), `l` (confirm), `h` (back). Arrow keys still work.
+- **`/` opens an incremental substring filter**. Matches against ISO label + path, case-insensitive. Cursor pins to the first match while typing; Enter commits, Esc clears. Becomes essential at 20+ entries.
+- **`s` cycles sort order**: name → size↓ → distro. Default is name (alphabetical). SizeDesc surfaces the largest ("main") install media first.
+- **Info bar above the list** shows current filter + sort state with inline reminders.
+- **Status glyphs on every list row**, visible in monochrome:
+  - `[+]` verified signature
+  - `[~]` hash verified, no signature
+  - `[ ]` no verification material present
+  - `[!]` hash mismatch OR forged signature (kexec-blocked)
+  - `[X]` not kexec-bootable (Windows ISO etc.)
+
+  Operators scanning the list now see security state at a glance, not just on the Confirm screen.
+
+### Smaller fixes
+
+- **Error screen returns to the failed-ISO selection** instead of snapping to row 0. The cursor preservation bug surfaced by the gap analysis.
+- **Empty-list state** now suggests checking `AEGIS_ISO_ROOTS` instead of just saying "press q."
+- **Empty-filter-result state** distinguishes "no ISOs at all" from "no matches for current filter" with recovery hints.
+
+### State machine additions
+
+- `Screen::Help { prior: Box<Screen> }` — overlay over any screen
+- `Screen::ConfirmQuit { prior: Box<Screen> }` — quit prompt
+- `Screen::Error` gains `return_to: usize` so cursor preservation is type-safe
+- `AppState` gains `secure_boot`, `tpm`, `filter`, `filter_editing`, `sort_order`
+- `SortOrder` enum (Name / SizeDesc / Distro) with `cycle` + `summary`
+
+### Tests
+
+- v0.7.1: 108 unit tests
+- v0.8.0: 121 unit tests (+13: 7 Tier-1 transitions, 6 Tier-2 filter/sort)
+
+### Deferred to v0.8.x
+
+- Tier 3: `v` verify-now action with progress bar, distro grouping/submenus, always-present rescue-shell entry. Filed under #85; tracked separately.
+
+### Verified
+
+- Workspace tests green (121 / 121).
+- `cargo clippy --workspace --all-targets -- -D warnings` clean.
+- `qemu-loaded-stick.sh -d ./test-isos` boots through the new chrome with Alpine 3.20 (4 ISOs discovered, list/filter/sort all functional).
+
 ## [0.7.1] — 2026-04-15
 
 **Documentation accuracy patch** ([#78](https://github.com/williamzujkowski/aegis-boot/issues/78)). No code changes.
