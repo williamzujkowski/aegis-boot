@@ -30,3 +30,4 @@ out/
 # seed corpora explicitly if needed).
 crates/*/fuzz/corpus/
 crates/*/fuzz/artifacts/
+*.cdx.json
