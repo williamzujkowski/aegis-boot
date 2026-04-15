@@ -1,8 +1,31 @@
+<div align="center">
+
+```
+    ╔═══════════════╗
+    ║   ▄███████▄   ║
+    ║  ███████████  ║
+    ║  ███┌───┐███  ║
+    ║  ███│ ◆ │███  ║
+    ║  ███│   │███  ║
+    ║  ███└─▲─┘███  ║
+    ║  ▀█████████▀  ║
+    ║    ▀█████▀    ║
+    ╚═══════════════╝
+```
+
 # aegis-boot
+
+**Signed boot. Any ISO. Your keys.**
 
 A signed UEFI Secure Boot rescue environment that lets operators pick any ISO from a USB stick's data partition and `kexec` into it — without leaving the chain of trust.
 
-**Status:** v0.7.0 — feature-complete under QEMU simulation; real-hardware shakedown gates v1.0.0 ([#51](https://github.com/williamzujkowski/aegis-boot/issues/51)).
+[![License](https://img.shields.io/github/license/williamzujkowski/aegis-boot)](LICENSE-APACHE)
+[![Latest Release](https://img.shields.io/github/v/release/williamzujkowski/aegis-boot)](https://github.com/williamzujkowski/aegis-boot/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/williamzujkowski/aegis-boot/ci.yml?label=ci)](https://github.com/williamzujkowski/aegis-boot/actions)
+
+</div>
+
+**Status:** v0.10.0 — feature-complete under QEMU simulation; real-hardware shakedown gates v1.0.0 ([#51](https://github.com/williamzujkowski/aegis-boot/issues/51)).
 
 ## What it does
 

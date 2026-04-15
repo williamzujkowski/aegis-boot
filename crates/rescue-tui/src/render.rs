@@ -239,9 +239,17 @@ fn draw_header(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         SecureBootStatus::Disabled => state.theme.error,
         SecureBootStatus::Unknown => state.theme.warning,
     };
+    // Brand primary (steel blue) for the shield mark if the theme has
+    // one worth spending; fall back to default fg otherwise. Uses the
+    // aegis brand colour directly — renders across every theme.
+    let brand = ratatui::style::Color::Rgb(0x3B, 0x82, 0xF6);
     let header = Line::from(vec![
         Span::styled(
-            format!(" aegis-boot v{version} "),
+            "◆ ",
+            Style::default().fg(brand).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("aegis-boot v{version}"),
             Style::default().add_modifier(Modifier::BOLD),
         ),
         Span::raw("  "),
@@ -250,6 +258,13 @@ fn draw_header(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         Span::styled(
             state.tpm.summary(),
             Style::default().fg(state.theme.success),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            "Signed boot. Any ISO. Your keys.",
+            Style::default()
+                .fg(state.theme.success)
+                .add_modifier(Modifier::ITALIC | Modifier::DIM),
         ),
     ]);
     frame.render_widget(Paragraph::new(header), area);
@@ -406,7 +421,7 @@ fn draw_help_overlay(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         Line::from("   [!] tampered/forged  [X] not kexec-bootable"),
         Line::from(""),
         Line::from(" Themes (AEGIS_THEME env var)"),
-        Line::from("   default · monochrome · high-contrast · okabe-ito"),
+        Line::from("   default · monochrome · high-contrast · okabe-ito · aegis"),
         Line::from(""),
         Line::from(" Emergency escape hatches (kernel SysRq)"),
         Line::from("   Alt+SysRq+b   reboot now"),

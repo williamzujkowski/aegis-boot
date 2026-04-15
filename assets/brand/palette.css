@@ -1,0 +1,25 @@
+/* aegis-boot brand palette — CSS custom properties. */
+/* oklch() values are authoritative; hex is the fallback. */
+
+:root {
+    /* Brand */
+    --aegis-primary-hex: #3B82F6;
+    --aegis-primary: oklch(0.63 0.18 260);
+
+    --aegis-secondary-hex: #94A3B8;
+    --aegis-secondary: oklch(0.70 0.03 250);
+
+    /* Verdict colors — colorblind-safe (see BRAND.md) */
+    --aegis-success-hex: #22C55E;
+    --aegis-success: oklch(0.72 0.19 145);
+
+    --aegis-warning-hex: #EAB308;
+    --aegis-warning: oklch(0.80 0.18 85);
+
+    --aegis-error-hex: #EF4444;
+    --aegis-error: oklch(0.63 0.22 25);
+
+    /* Background (only if overriding a theme) */
+    --aegis-bg-hex: #0d1117;
+    --aegis-fg-hex: #E6EDF3;
+}

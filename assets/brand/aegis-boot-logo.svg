@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <title>aegis-boot</title>
+  <desc>Shield with keyhole and upward boot arrow. Brand primary color #3B82F6.</desc>
+  <!-- Shield body -->
+  <path d="M64 8 L112 24 L112 68 C112 92 88 112 64 120 C40 112 16 92 16 68 L16 24 Z"
+        fill="#3B82F6" stroke="#1E3A8A" stroke-width="3" stroke-linejoin="round"/>
+  <!-- Keyhole: circular head over a tapered slot, boot arrow at bottom -->
+  <circle cx="64" cy="54" r="10" fill="#0d1117"/>
+  <rect x="58" y="58" width="12" height="28" fill="#0d1117"/>
+  <!-- Upward boot arrow at base of keyhole slot -->
+  <polygon points="64,68 54,82 74,82" fill="#3B82F6"/>
+</svg>

@@ -67,6 +67,19 @@ impl Theme {
         }
     }
 
+    /// aegis brand palette (#76). Matches assets/brand/BRAND.md — steel
+    /// blue primary, emerald success, amber warning, vermillion error.
+    /// All five tested against deuteranopia/protanopia and distinct
+    /// from Ubuntu/Fedora/Arch distro palettes.
+    #[must_use]
+    pub const fn aegis() -> Self {
+        Self {
+            success: Color::Rgb(0x22, 0xC5, 0x5E),
+            warning: Color::Rgb(0xEA, 0xB3, 0x08),
+            error: Color::Rgb(0xEF, 0x44, 0x44),
+        }
+    }
+
     /// Resolve a theme name (case-insensitive). Unknown names fall back
     /// to the default palette so a typo never bricks the TUI.
     #[must_use]
@@ -75,6 +88,7 @@ impl Theme {
             "monochrome" | "mono" | "none" => Self::monochrome(),
             "high-contrast" | "high_contrast" | "hc" => Self::high_contrast(),
             "okabe-ito" | "okabe_ito" | "okabeito" | "cb" | "colorblind" => Self::okabe_ito(),
+            "aegis" | "brand" => Self::aegis(),
             _ => Self::default_theme(),
         }
     }
@@ -116,6 +130,20 @@ mod tests {
         assert_eq!(Theme::from_name("okabe-ito"), Theme::okabe_ito());
         assert_eq!(Theme::from_name("colorblind"), Theme::okabe_ito());
         assert_eq!(Theme::from_name("cb"), Theme::okabe_ito());
+        assert_eq!(Theme::from_name("aegis"), Theme::aegis());
+        assert_eq!(Theme::from_name("BRAND"), Theme::aegis());
+    }
+
+    #[test]
+    fn aegis_theme_uses_brand_hex_values() {
+        use ratatui::style::Color;
+        let t = Theme::aegis();
+        // Steel-blue brand colour lives on the widget border, not the
+        // Theme struct (Theme holds verdict colours). These three are
+        // the verdict trio from assets/brand/BRAND.md.
+        assert_eq!(t.success, Color::Rgb(0x22, 0xC5, 0x5E));
+        assert_eq!(t.warning, Color::Rgb(0xEA, 0xB3, 0x08));
+        assert_eq!(t.error, Color::Rgb(0xEF, 0x44, 0x44));
     }
 
     #[test]

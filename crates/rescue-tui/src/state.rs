@@ -768,7 +768,11 @@ impl AppState {
             let _ = writeln!(body, "Remedy:     {r}");
         }
         body.push('\n');
-        let _ = writeln!(body, "Version:    aegis-boot v{}", env!("CARGO_PKG_VERSION"));
+        let _ = writeln!(
+            body,
+            "Version:    aegis-boot v{}",
+            env!("CARGO_PKG_VERSION")
+        );
         let _ = writeln!(
             body,
             "SB / TPM:   {}  ·  {}",
