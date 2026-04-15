@@ -64,7 +64,14 @@ log "kernel: $KERNEL"
 log "initrd: ${INITRD:-(none)}"
 
 WORK="$(mktemp -d --tmpdir aegis-kexec-e2e-XXXXXX)"
-trap 'rm -rf -- "$WORK"' EXIT
+cleanup() {
+    if [[ -n "${KEEP_WORK:-}" ]]; then
+        echo "[kexec-e2e] WORK preserved: $WORK"
+    else
+        rm -rf -- "$WORK"
+    fi
+}
+trap cleanup EXIT
 
 # Build fixture ISO. casper/ layout so iso-parser detects Debian; reuse
 # the same kernel so kexec_file_load (if lockdown ever flips on) has no
@@ -217,7 +224,7 @@ fi
 # debug output). If kexec_file_load succeeded, serial is typically
 # lost during the reboot — we still get the syscall-level proof.
 if grep -q 'AEGIS_AUTO_KEXEC: matched ISO' "$OUTPUT" \
-   && grep -q 'Mounted .* mount_fixture' "$OUTPUT"; then
+   && grep -qE 'Mounted.*mount_fixture' "$OUTPUT"; then
     log "kexec E2E: PASS-partial (rescue-tui matched+mounted+kexec'd; target"
     log "  banner not observed — kexec reboot typically resets serial)"
     exit 0

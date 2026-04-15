@@ -142,31 +142,46 @@ if [[ -n "$KMOD_SRC" && -d "$KMOD_SRC" ]]; then
     install -d "$MOD_DEST/kernel/drivers/block"
     # Each module may be .ko or .ko.zst depending on compression. Ship
     # whatever the source kernel has.
-    for mod in isofs/isofs udf/udf; do
-        for ext in ko ko.zst ko.xz; do
-            src="$KMOD_SRC/kernel/fs/$mod.$ext"
-            if [[ -f "$src" ]]; then
-                install -m 0644 "$src" "$MOD_DEST/kernel/fs/$mod.$ext"
-                break
-            fi
+    # Each module may be .ko, .ko.zst, .ko.xz, or .ko.gz depending on the
+    # kernel's CONFIG_MODULE_COMPRESS_* setting. Busybox's modprobe applet
+    # handles .ko.gz natively but NOT .ko.zst — Ubuntu's stock kernel
+    # compiles as zstd. Decompress on the fly at build time so the shipped
+    # module is always plain .ko (works with every known module loader).
+    copy_module() {
+        local rel_path="$1" dest_dir="$2"
+        local src_dir="$KMOD_SRC/$(dirname "$rel_path" | sed 's|^\./||')"
+        local base
+        base="$(basename "$rel_path")"
+        for ext in ko ko.zst ko.xz ko.gz; do
+            local src="$src_dir/$base.$ext"
+            [[ -f "$src" ]] || continue
+            local dest="$dest_dir/$base.ko"
+            mkdir -p "$(dirname "$dest")"
+            case "$ext" in
+                ko)     install -m 0644 "$src" "$dest" ;;
+                ko.zst) zstd -d -q -c "$src" > "$dest" && chmod 0644 "$dest" ;;
+                ko.xz)  xz -d -c "$src" > "$dest" && chmod 0644 "$dest" ;;
+                ko.gz)  gzip -d -c "$src" > "$dest" && chmod 0644 "$dest" ;;
+            esac
+            return 0
         done
-    done
-    for mod in loop; do
-        for ext in ko ko.zst ko.xz; do
-            src="$KMOD_SRC/kernel/drivers/block/$mod.$ext"
-            if [[ -f "$src" ]]; then
-                install -m 0644 "$src" "$MOD_DEST/kernel/drivers/block/$mod.$ext"
-                break
-            fi
-        done
-    done
-    # modules.dep, modules.builtin, modules.order, modules.symbols are
-    # needed by modprobe to resolve deps. Ship the files; they're small.
-    for metafile in modules.dep modules.dep.bin modules.alias modules.alias.bin \
-                    modules.builtin modules.builtin.alias.bin modules.order; do
-        [[ -f "$KMOD_SRC/$metafile" ]] && \
-            install -m 0644 "$KMOD_SRC/$metafile" "$MOD_DEST/$metafile"
-    done
+        return 1
+    }
+    copy_module "kernel/fs/isofs/isofs" "$MOD_DEST/kernel/fs/isofs" \
+        || log "WARNING: isofs module not found"
+    copy_module "kernel/fs/udf/udf" "$MOD_DEST/kernel/fs/udf" \
+        || log "WARNING: udf module not found"
+    copy_module "kernel/drivers/block/loop" "$MOD_DEST/kernel/drivers/block" \
+        || log "WARNING: loop module not found"
+    # Regenerate modules.dep so it references our decompressed .ko paths
+    # (source kernel's modules.dep points at .ko.zst). depmod -b rebuilds
+    # into the staged tree; no runtime kernel match needed.
+    if command -v depmod >/dev/null 2>&1; then
+        depmod -b "$STAGE_DIR" "$KVER" 2>/dev/null || \
+            log "WARNING: depmod failed; busybox modprobe may miss deps"
+    else
+        log "WARNING: depmod not on PATH; modules will load only with explicit paths"
+    fi
 else
     log "WARNING: no kernel modules source found; iso9660 mounts will fail"
     log "  set AEGIS_KMOD_SRC=/lib/modules/<kver> if your target kernel needs modules"
