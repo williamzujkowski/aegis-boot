@@ -54,6 +54,19 @@ impl Theme {
         }
     }
 
+    /// Okabe-Ito colorblind-safe palette — no red-on-green status pairs
+    /// that trip deuteranopia/protanopia. Green → bluish-green (#009E73),
+    /// warning → orange (#E69F00), error → vermillion (#D55E00). See
+    /// jfly.uni-koeln.de/color. (#93)
+    #[must_use]
+    pub const fn okabe_ito() -> Self {
+        Self {
+            success: Color::Rgb(0x00, 0x9E, 0x73),
+            warning: Color::Rgb(0xE6, 0x9F, 0x00),
+            error: Color::Rgb(0xD5, 0x5E, 0x00),
+        }
+    }
+
     /// Resolve a theme name (case-insensitive). Unknown names fall back
     /// to the default palette so a typo never bricks the TUI.
     #[must_use]
@@ -61,6 +74,7 @@ impl Theme {
         match name.trim().to_ascii_lowercase().as_str() {
             "monochrome" | "mono" | "none" => Self::monochrome(),
             "high-contrast" | "high_contrast" | "hc" => Self::high_contrast(),
+            "okabe-ito" | "okabe_ito" | "okabeito" | "cb" | "colorblind" => Self::okabe_ito(),
             _ => Self::default_theme(),
         }
     }
@@ -99,6 +113,21 @@ mod tests {
         assert_eq!(Theme::from_name("none"), Theme::monochrome());
         assert_eq!(Theme::from_name("high-contrast"), Theme::high_contrast());
         assert_eq!(Theme::from_name("HC"), Theme::high_contrast());
+        assert_eq!(Theme::from_name("okabe-ito"), Theme::okabe_ito());
+        assert_eq!(Theme::from_name("colorblind"), Theme::okabe_ito());
+        assert_eq!(Theme::from_name("cb"), Theme::okabe_ito());
+    }
+
+    #[test]
+    fn okabe_ito_uses_colorblind_safe_rgb() {
+        use ratatui::style::Color;
+        let t = Theme::okabe_ito();
+        // Bluish-green, orange, vermillion — the three non-primary
+        // Okabe-Ito colors that remain distinguishable under
+        // deuteranopia / protanopia.
+        assert_eq!(t.success, Color::Rgb(0x00, 0x9E, 0x73));
+        assert_eq!(t.warning, Color::Rgb(0xE6, 0x9F, 0x00));
+        assert_eq!(t.error, Color::Rgb(0xD5, 0x5E, 0x00));
     }
 
     #[test]

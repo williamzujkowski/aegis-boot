@@ -123,6 +123,69 @@ fn draw_footer(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     frame.render_widget(Paragraph::new(hint), area);
 }
 
+/// Android Verified Boot-style coarse verdict for a single ISO. One of
+/// four states drives a colored banner on the Confirm screen. (#93)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrustVerdict {
+    /// Hash OR signature verified (strongest signal that sig exists).
+    Green,
+    /// Signature parsed but signer not in trust store (YELLOW on Android VB).
+    Yellow,
+    /// Bytes tampered / forged signature / not kexec-bootable.
+    Red,
+    /// No verification material at all.
+    Gray,
+}
+
+impl TrustVerdict {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Green => "GREEN  VERIFIED",
+            Self::Yellow => "YELLOW UNTRUSTED SIGNER",
+            Self::Red => "RED    DO NOT BOOT",
+            Self::Gray => "GRAY   NO VERIFICATION",
+        }
+    }
+
+    fn reason(self) -> &'static str {
+        match self {
+            Self::Green => "hash + signature checked against trusted key",
+            Self::Yellow => "signature parsed but key is not in AEGIS_TRUSTED_KEYS",
+            Self::Red => "integrity failure — kexec will be refused",
+            Self::Gray => "no sibling .sha256 or .minisig found",
+        }
+    }
+
+    fn color(self, theme: &Theme) -> ratatui::style::Color {
+        use ratatui::style::Color;
+        match self {
+            Self::Green => theme.success,
+            Self::Yellow => theme.warning,
+            Self::Red => theme.error,
+            Self::Gray => Color::Gray,
+        }
+    }
+}
+
+fn trust_verdict(iso: &iso_probe::DiscoveredIso) -> TrustVerdict {
+    use iso_probe::{HashVerification as H, Quirk, SignatureVerification as S};
+    if iso.quirks.contains(&Quirk::NotKexecBootable)
+        || matches!(iso.hash_verification, H::Mismatch { .. })
+        || matches!(iso.signature_verification, S::Forged { .. })
+    {
+        return TrustVerdict::Red;
+    }
+    if matches!(iso.signature_verification, S::Verified { .. })
+        || matches!(iso.hash_verification, H::Verified { .. })
+    {
+        return TrustVerdict::Green;
+    }
+    if matches!(iso.signature_verification, S::KeyNotTrusted { .. }) {
+        return TrustVerdict::Yellow;
+    }
+    TrustVerdict::Gray
+}
+
 /// Single-character status glyph for a list row, encoding the worst
 /// security state. Visible in monochrome themes (no color reliance).
 /// (#85, k9s/dialog pattern.)
@@ -178,6 +241,14 @@ fn draw_help_overlay(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         Line::from(" Status glyphs on list rows"),
         Line::from("   [+] verified  [~] hash-only  [ ] unknown"),
         Line::from("   [!] tampered/forged  [X] not kexec-bootable"),
+        Line::from(""),
+        Line::from(" Themes (AEGIS_THEME env var)"),
+        Line::from("   default · monochrome · high-contrast · okabe-ito"),
+        Line::from(""),
+        Line::from(" Emergency escape hatches (kernel SysRq)"),
+        Line::from("   Alt+SysRq+b   reboot now"),
+        Line::from("   Alt+SysRq+s   sync disks"),
+        Line::from("   Alt+SysRq+e   SIGTERM all userspace"),
         Line::from(""),
         Line::from(Span::styled(
             " Esc or ? to dismiss",
@@ -304,6 +375,10 @@ fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usiz
     frame.render_stateful_widget(list, list_area, &mut list_state);
 }
 
+// Intentionally over the 100-line threshold: the Confirm screen is the
+// one place where verdict + digest + metadata + verification + hints all
+// have to land together, and splitting it hurts more than the length.
+#[allow(clippy::too_many_lines)]
 fn draw_confirm(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usize) {
     let Some(iso) = state.isos.get(selected) else {
         return;
@@ -313,14 +388,46 @@ fn draw_confirm(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: u
     let cmdline_display = if effective_cmdline.is_empty() {
         "(none)".to_string()
     } else {
-        effective_cmdline
+        effective_cmdline.clone()
     };
     let cmdline_label = if override_active {
         "Cmdline*: "
     } else {
         "Cmdline:  "
     };
+
+    // Android VB-style verdict line (#93). One coarse GREEN / YELLOW /
+    // RED / GRAY state derived from hash + signature + quirk results.
+    let verdict = trust_verdict(iso);
+    let verdict_line = Line::from(vec![
+        Span::styled("Verdict:  ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(
+            verdict.label(),
+            Style::default()
+                .fg(verdict.color(&state.theme))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::raw(verdict.reason()),
+    ]);
+
+    // TPM PCR 12 measurement preview (#93). Shows exactly what bytes
+    // will be extended into PCR 12 before kexec. Truncated to 16 hex
+    // chars (8 bytes) by default — full 64-char hash available in log
+    // stream and audit line.
+    let measurement = crate::tpm::compute_measurement(&iso.iso_path, &effective_cmdline);
+    let digest_hex = hex::encode(measurement);
+    let digest_line = Line::from(vec![
+        Span::styled("Measures: ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw(format!("sha256:{}…", &digest_hex[..16])),
+        Span::raw("  "),
+        Span::styled("→ PCR 12", Style::default().add_modifier(Modifier::DIM)),
+    ]);
+
     let lines: Vec<Line> = vec![
+        verdict_line,
+        digest_line,
+        Line::from(""),
         Line::from(vec![
             Span::styled("Label:    ", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(&iso.label),

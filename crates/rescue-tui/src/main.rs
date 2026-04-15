@@ -399,8 +399,19 @@ fn attempt_kexec(state: &mut AppState, idx: usize) {
     // TPM PCR measurement: extend sha256(iso_path || 0x00 || cmdline)
     // into PCR 12 before kexec. Failure is logged but doesn't block —
     // rescue-tui may run on TPM-less hardware during physical-access
-    // recovery.
+    // recovery. Full eventlog-style audit line emitted here so
+    // downstream attestation can cross-reference the chosen boot with
+    // the observed PCR change. (#93)
     let measurement = tpm::compute_measurement(&iso.iso_path, &req.cmdline);
+    let measurement_hex = hex::encode(measurement);
+    tracing::info!(
+        event_type = "kexec_pre_measurement",
+        pcr = tpm::DEFAULT_PCR,
+        iso_path = %iso.iso_path.display(),
+        cmdline = %req.cmdline,
+        measurement = %measurement_hex,
+        "audit: computed pre-kexec PCR 12 measurement (eventlog form)"
+    );
     match tpm::extend_pcr(tpm::DEFAULT_PCR, &measurement) {
         Ok(hex) => tracing::info!(
             pcr = tpm::DEFAULT_PCR,
