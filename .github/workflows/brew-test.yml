@@ -46,22 +46,26 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up Homebrew
-        uses: Homebrew/actions/setup-homebrew@master
+        uses: Homebrew/actions/setup-homebrew@main
 
-      # Style + audit on the formula. We pass the file directly rather
-      # than tapping, so breakage is caught without a full tap install.
-      # `--strict --online` matches what a homebrew-core submission
-      # would see, minus the core-specific rules we don't need.
-      - name: brew audit
-        run: brew audit --strict --online Formula/aegis-boot.rb
+      # Tap this repo first — `brew audit` no longer accepts paths;
+      # it requires a tapped name. The first `brew tap <user>/<name>
+      # <local-path>` also exercises what operators will type
+      # (modulo the local path being a URL in production).
+      - name: Tap this repo
+        run: brew tap williamzujkowski/aegis-boot "$(pwd)"
 
+      # Style check on the formula file (still accepts a path). Catches
+      # ruby/formula convention issues before install.
       - name: brew style
         run: brew style Formula/aegis-boot.rb
 
-      # Tap this repo and install from it. This exercises the real
-      # path operators will use: `brew tap` + `brew install <name>`.
-      - name: Tap this repo
-        run: brew tap williamzujkowski/aegis-boot "$(pwd)"
+      # Audit the tapped formula by name. `--strict --online` matches
+      # what a homebrew-core submission would see; some cask-specific
+      # rules don't apply to a tap formula, so we run without the
+      # `--new-formula` flag.
+      - name: brew audit
+        run: brew audit --strict --online aegis-boot
 
       - name: brew install aegis-boot
         run: brew install --verbose aegis-boot
