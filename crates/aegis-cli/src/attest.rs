@@ -88,6 +88,175 @@ pub struct IsoRecord {
     pub added_at: String,
 }
 
+/// Append an `IsoRecord` to the most recent attestation matching the
+/// destination stick. Used by `aegis-boot add`. Returns the manifest
+/// path on success.
+///
+/// Lookup: derive the stick's disk GUID from `mount_path → /dev/sdXn
+/// → /dev/sdX → sgdisk -p`, then find the newest `<guid>-*.json`
+/// in `$XDG_DATA_HOME/aegis-boot/attestations/`. If no GUID can be
+/// captured, falls back to the most recent attestation overall — which
+/// is correct for the common single-stick workflow but ambiguous in
+/// multi-stick sessions; that case prints a warning.
+///
+/// Failure to update an attestation must NOT fail the add — the ISO
+/// is on the stick regardless. Caller (`inventory::run_add`) prints
+/// a warning on Err and proceeds.
+pub fn record_iso_added(
+    mount_path: &Path,
+    iso_path: &Path,
+    sidecars: Vec<String>,
+) -> Result<PathBuf, String> {
+    let iso_filename = iso_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| format!("ISO path has no filename: {}", iso_path.display()))?
+        .to_string();
+    let iso_size = fs::metadata(iso_path)
+        .map_err(|e| format!("stat {}: {e}", iso_path.display()))?
+        .len();
+    let iso_sha = sha256_file(iso_path)?;
+    let added_at = current_iso_timestamp();
+
+    // Locate the matching attestation file.
+    let dest_dir = data_dir().join("attestations");
+    let manifest_path = locate_attestation_for_mount(&dest_dir, mount_path)?;
+
+    let mut manifest = read_attestation(&manifest_path)?;
+    manifest.isos.push(IsoRecord {
+        filename: iso_filename,
+        sha256: iso_sha,
+        size_bytes: iso_size,
+        sidecars,
+        added_at,
+    });
+    let json = serde_json::to_string_pretty(&manifest)
+        .map_err(|e| format!("serialize manifest: {e}"))?;
+    fs::write(&manifest_path, json)
+        .map_err(|e| format!("write {}: {e}", manifest_path.display()))?;
+    Ok(manifest_path)
+}
+
+/// Locate the attestation manifest for a stick mounted at `mount_path`.
+/// Resolution: read /proc/mounts → owning device (e.g. /dev/sdc2) →
+/// strip partition suffix → disk GUID → newest matching manifest.
+/// Falls back to "most recent overall" when GUID can't be resolved.
+fn locate_attestation_for_mount(dir: &Path, mount_path: &Path) -> Result<PathBuf, String> {
+    if !dir.is_dir() {
+        return Err(format!("no attestations dir at {}", dir.display()));
+    }
+    let entries: Vec<PathBuf> = fs::read_dir(dir)
+        .map_err(|e| format!("read_dir {}: {e}", dir.display()))?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .collect();
+    if entries.is_empty() {
+        return Err(format!("no attestation files in {}", dir.display()));
+    }
+
+    if let Some(guid) = device_for_mount(mount_path)
+        .and_then(|p| disk_for_partition(&p))
+        .and_then(|d| read_disk_guid(&d))
+    {
+        let lower = guid.to_lowercase();
+        // Match files whose stem starts with the GUID, take the newest by mtime.
+        let mut matching: Vec<_> = entries
+            .iter()
+            .filter(|p| {
+                p.file_stem()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|s| s.to_lowercase().starts_with(&lower))
+            })
+            .collect();
+        matching.sort_by_key(|p| fs::metadata(p).and_then(|m| m.modified()).ok());
+        if let Some(newest) = matching.last() {
+            return Ok((*newest).clone());
+        }
+        eprintln!(
+            "attest: no attestation matched disk GUID {guid}; falling back to most recent overall"
+        );
+    } else {
+        eprintln!("attest: could not resolve disk GUID for {} — falling back to most recent attestation", mount_path.display());
+    }
+
+    // Fallback: most recent file by mtime.
+    let mut all = entries;
+    all.sort_by_key(|p| fs::metadata(p).and_then(|m| m.modified()).ok());
+    all.last()
+        .cloned()
+        .ok_or_else(|| "no attestation files found".to_string())
+}
+
+/// Read /proc/mounts and find the device backing the given mount path.
+/// Returns the longest-prefix-matching mount source (so /run/media/X
+/// resolves to /dev/sdc2 rather than the underlying / mount).
+fn device_for_mount(target: &Path) -> Option<PathBuf> {
+    let mounts = fs::read_to_string("/proc/mounts").ok()?;
+    let target_s = target.canonicalize().ok().unwrap_or_else(|| target.to_path_buf());
+    let target_str = target_s.to_string_lossy();
+    let mut best: Option<(usize, PathBuf)> = None;
+    for line in mounts.lines() {
+        let f: Vec<&str> = line.split_whitespace().collect();
+        if f.len() < 2 {
+            continue;
+        }
+        let dev = f[0];
+        let mp = f[1];
+        if !dev.starts_with("/dev/") {
+            continue;
+        }
+        if target_str == mp || target_str.starts_with(&format!("{mp}/")) {
+            let len = mp.len();
+            if best.as_ref().is_none_or(|(b, _)| len > *b) {
+                best = Some((len, PathBuf::from(dev)));
+            }
+        }
+    }
+    best.map(|(_, dev)| dev)
+}
+
+/// Strip a partition suffix from a block device path so /dev/sdc2 →
+/// /dev/sdc, /dev/nvme0n1p3 → /dev/nvme0n1, /dev/mmcblk0p1 →
+/// /dev/mmcblk0. Returns None for paths that don't match a known
+/// pattern (we don't want to over-aggressively strip digits from
+/// something like /dev/loop12 — pass that through unchanged via None).
+fn disk_for_partition(part: &Path) -> Option<PathBuf> {
+    let name = part.file_name()?.to_str()?;
+    let stripped = if name.starts_with("sd") || name.starts_with("vd") || name.starts_with("hd") {
+        // /dev/sda1 → sda
+        name.trim_end_matches(|c: char| c.is_ascii_digit())
+    } else if name.starts_with("nvme") || name.starts_with("mmcblk") || name.starts_with("loop") {
+        // /dev/nvme0n1p3 → nvme0n1, /dev/mmcblk0p1 → mmcblk0,
+        // /dev/loop12p1 → loop12. The 'p' must be preceded by a digit
+        // (the disk number) — otherwise "loop12" would mis-strip as
+        // "loo" because the 'p' inside "loop" itself looks like a
+        // separator. Loop devices without partitions return None
+        // (caller passed a whole disk).
+        if let Some(idx) = name.rfind('p') {
+            let prev_is_digit = idx > 0
+                && name.as_bytes()[idx - 1].is_ascii_digit();
+            let suffix = &name[idx + 1..];
+            let suffix_all_digits =
+                !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit());
+            if prev_is_digit && suffix_all_digits {
+                &name[..idx]
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    } else {
+        return None;
+    };
+    if stripped == name {
+        // No partition suffix to strip — caller passed a whole disk.
+        return None;
+    }
+    Some(PathBuf::from(format!("/dev/{stripped}")))
+}
+
 /// Record a flash operation and return the path of the saved manifest.
 /// On any failure, returns Err — the caller (`flash::flash`) prints
 /// the error and proceeds with the rest of the post-flash output.
@@ -512,5 +681,86 @@ mod tests {
         let long = truncate("0123456789abcdef", 6);
         assert_eq!(long.chars().count(), 6);
         assert!(long.ends_with('\u{2026}'));
+    }
+
+    #[test]
+    fn disk_for_partition_strips_sda_digit() {
+        assert_eq!(
+            disk_for_partition(&PathBuf::from("/dev/sda1")),
+            Some(PathBuf::from("/dev/sda"))
+        );
+        assert_eq!(
+            disk_for_partition(&PathBuf::from("/dev/sdc12")),
+            Some(PathBuf::from("/dev/sdc"))
+        );
+    }
+
+    #[test]
+    fn disk_for_partition_strips_nvme_p_suffix() {
+        assert_eq!(
+            disk_for_partition(&PathBuf::from("/dev/nvme0n1p3")),
+            Some(PathBuf::from("/dev/nvme0n1"))
+        );
+        assert_eq!(
+            disk_for_partition(&PathBuf::from("/dev/mmcblk0p1")),
+            Some(PathBuf::from("/dev/mmcblk0"))
+        );
+    }
+
+    #[test]
+    fn disk_for_partition_returns_none_for_whole_disk() {
+        // Whole disks don't have a partition suffix; we want Some(None)
+        // not "infinite recursion" or wrong stripping.
+        assert_eq!(disk_for_partition(&PathBuf::from("/dev/sda")), None);
+        assert_eq!(disk_for_partition(&PathBuf::from("/dev/nvme0n1")), None);
+    }
+
+    #[test]
+    fn disk_for_partition_does_not_overstrip_loop() {
+        // /dev/loop12 is a whole loop device; we shouldn't strip "12"
+        // off and yield "/dev/loop". The loop branch only matches when
+        // there's a 'p' separator, which loop devices never have.
+        assert_eq!(disk_for_partition(&PathBuf::from("/dev/loop12")), None);
+    }
+
+    #[test]
+    fn disk_for_partition_unknown_kind_returns_none() {
+        assert_eq!(disk_for_partition(&PathBuf::from("/dev/whatever3")), None);
+        assert_eq!(disk_for_partition(&PathBuf::from("not/a/dev/path")), None);
+    }
+
+    #[test]
+    fn iso_record_appends_to_isos_vec() {
+        // Roundtrip with an ISO record to confirm the append shape.
+        let mut m = Attestation {
+            schema_version: 1,
+            tool_version: "0.13.0".to_string(),
+            flashed_at: "2026-04-16T12:34:56Z".to_string(),
+            operator: "x".to_string(),
+            host: HostInfo {
+                kernel: "k".to_string(),
+                secure_boot: "disabled".to_string(),
+            },
+            target: TargetInfo {
+                device: "/dev/sdc".to_string(),
+                model: "M".to_string(),
+                size_bytes: 1,
+                image_sha256: "h".to_string(),
+                image_size_bytes: 1,
+                disk_guid: "g".to_string(),
+            },
+            isos: vec![],
+        };
+        m.isos.push(IsoRecord {
+            filename: "ubuntu.iso".to_string(),
+            sha256: "deadbeef".to_string(),
+            size_bytes: 100,
+            sidecars: vec!["sha256".to_string(), "minisig".to_string()],
+            added_at: "2026-04-16T13:00:00Z".to_string(),
+        });
+        let json = serde_json::to_string(&m).expect("serialize");
+        let back: Attestation = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.isos.len(), 1);
+        assert_eq!(back.isos[0].sidecars, vec!["sha256", "minisig"]);
     }
 }

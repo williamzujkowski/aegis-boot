@@ -130,24 +130,42 @@ pub fn run_add(args: &[String]) -> ExitCode {
         return ExitCode::from(1);
     }
 
-    let mut sidecars_copied = 0;
+    let mut sidecars_copied: Vec<String> = Vec::new();
     for suffix in ["sha256", "SHA256SUMS", "minisig"] {
         let sidecar_src = iso_arg.with_extension(format!("iso.{suffix}"));
         if sidecar_src.is_file() {
             let sidecar_dest = mount.path.join(format!("{iso_filename}.{suffix}"));
             if copy_with_sudo(&sidecar_src, &sidecar_dest).is_ok() {
                 println!("  Copied sidecar: .{suffix}");
-                sidecars_copied += 1;
+                sidecars_copied.push(suffix.to_string());
             }
         }
     }
 
     let _ = Command::new("sync").status();
     println!();
-    println!("Done. {iso_filename} + {sidecars_copied} sidecar(s) on the stick.");
-    if sidecars_copied == 0 {
+    println!(
+        "Done. {iso_filename} + {} sidecar(s) on the stick.",
+        sidecars_copied.len()
+    );
+    if sidecars_copied.is_empty() {
         println!("Note: no sibling .sha256 or .minisig found — rescue-tui will");
         println!("show GRAY (no verification) verdict and require typed 'boot' confirmation.");
+    }
+
+    // Append to the matching attestation receipt — best-effort. Failure
+    // here doesn't fail the add (the ISO is on the stick regardless);
+    // we just print a warning.
+    match crate::attest::record_iso_added(&mount.path, &iso_arg, sidecars_copied) {
+        Ok(att_path) => {
+            println!();
+            println!("Attestation updated: {}", att_path.display());
+        }
+        Err(e) => {
+            eprintln!();
+            eprintln!("warning: attestation could not be updated: {e}");
+            eprintln!("(the ISO is still on the stick; this is a host-side audit-trail miss)");
+        }
     }
 
     if mount.temporary {

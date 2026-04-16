@@ -348,11 +348,26 @@ Forward-compatibility: unknown fields are tolerated by the parser. Future schema
 
 v1 manifests are unsigned. The trust anchor is "you ran this command on this host, the timestamps and hashes are evidence." Cryptographic signing — TPM PCR attestation + minisign — is tracked under [epic #139](https://github.com/williamzujkowski/aegis-boot/issues/139) and will land alongside the TPM measured-boot work as additional fields, not a schema rewrite.
 
-### What's NOT in v0
+### What's NOT in v1 (deferred)
 
 - **On-stick copy** at `/EFI/aegis-attestation.json`: needs an ESP-mount step after `dd`. Tracked.
-- **Append on `aegis-boot add`**: each ISO copy should append an `IsoRecord` to the matching attestation. Needs stick-UUID → manifest matching logic. Tracked.
 - **`aegis-boot attest verify`**: depends on the signing scheme above.
+
+### Append on `aegis-boot add`
+
+When `aegis-boot add` succeeds, it appends an `IsoRecord` to the matching attestation:
+
+```json
+{
+  "filename": "ubuntu-24.04.2-live-server-amd64.iso",
+  "sha256": "abcdef...",
+  "size_bytes": 2724333568,
+  "sidecars": ["sha256", "minisig"],
+  "added_at": "2026-04-16T13:00:00Z"
+}
+```
+
+Matching logic: the destination mount path → owning device (from `/proc/mounts`) → strip partition suffix (`/dev/sdc2 → /dev/sdc`, `/dev/nvme0n1p3 → /dev/nvme0n1`) → disk GUID via `sgdisk -p` → newest manifest in the attestations dir whose filename starts with that GUID. If GUID can't be resolved, falls back to "most recent attestation overall" with a warning (correct for the common single-stick workflow; ambiguous in multi-stick sessions). Failure to update the attestation does NOT fail the add.
 
 ---
 
