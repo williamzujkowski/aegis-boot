@@ -341,7 +341,7 @@ fn print_entry(e: &Entry) {
     println!("which will automate the manual recipe above.");
 }
 
-fn find_entry(slug: &str) -> Option<&'static Entry> {
+pub(crate) fn find_entry(slug: &str) -> Option<&'static Entry> {
     let s = slug.to_ascii_lowercase();
     // Exact match first.
     if let Some(e) = CATALOG.iter().find(|e| e.slug.eq_ignore_ascii_case(&s)) {

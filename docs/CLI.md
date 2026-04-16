@@ -11,6 +11,7 @@ USAGE:
   aegis-boot add <iso> [device] Copy + validate an ISO
   aegis-boot doctor [--stick D] Health check (host + stick)
   aegis-boot recommend [slug]   Curated catalog of known-good ISOs
+  aegis-boot fetch <slug>       Download + verify a catalog ISO
   aegis-boot --version          Print version
   aegis-boot --help             This message
 ```
@@ -245,9 +246,51 @@ For unsigned-kernel entries (Alpine / Arch / NixOS), the recipe also includes th
 
 Distros release point versions on a cadence that doesn't track our commits. Pinning a hash in the catalog would make most entries wrong within weeks of every release. The catalog points at the project's *signed* SHA256SUMS instead — whoever the project trusts to sign their releases is who we trust here. The trust anchor is the project's release-signing key, not aegis-boot's catalog.
 
-### Future: `aegis-boot fetch <slug>`
+### See also: `aegis-boot fetch <slug>`
 
-The recipe is currently manual (curl, gpg, sha256sum, then `aegis-boot add`). A future `aegis-boot fetch <slug>` will automate it end-to-end. Tracked under [epic #136](https://github.com/williamzujkowski/aegis-boot/issues/136).
+The manual recipe (curl, gpg, sha256sum, then `aegis-boot add`) is shipped — but the next section describes `aegis-boot fetch <slug>`, which automates the same recipe end-to-end.
+
+---
+
+## `aegis-boot fetch`
+
+Downloads + verifies a catalog ISO. Resolves a slug from the catalog, downloads the ISO + the project's signed `SHA256SUMS` + the GPG signature on `SHA256SUMS`, runs `sha256sum -c` against the ISO, runs `gpg --verify` on the signature, and reports the verified path.
+
+### Usage
+
+```bash
+aegis-boot fetch ubuntu-24.04-live-server
+aegis-boot fetch --out ~/Downloads alpine-3.20-standard
+aegis-boot fetch --no-gpg ubuntu-24.04-live-server   # SHA-256 only (NOT recommended)
+aegis-boot fetch --help
+```
+
+### What it does
+
+1. **Slug → catalog entry**: same lookup as `recommend` (exact + unique-prefix).
+2. **Download** the ISO, SHA256SUMS, and SHA256SUMS signature into a per-slug cache directory (`$XDG_CACHE_HOME/aegis-boot/<slug>/` by default; `--out` overrides). Skips files already present so re-runs are cheap.
+3. **SHA-256 verification**: runs `sha256sum -c <SHA256SUMS> --ignore-missing` and asserts the line for our specific ISO ends with `: OK`.
+4. **GPG signature verification**: runs `gpg --verify <SHA256SUMS.sig> <SHA256SUMS>` and reports one of:
+   - **OK** — signature valid against a key in your keyring
+   - **Unknown key** — signature present, signer not yet trusted; gpg's full output is shown so you can decide whether to import the key. Non-fatal: `aegis-boot fetch` exits 0 because the SHA-256 itself was valid against the project-published checksum file.
+   - **BAD signature** — fatal; the SHA256SUMS file appears tampered. Exit 1.
+   - **gpg missing** — fatal; install hint shown. Exit 1 (or pass `--no-gpg`).
+5. **Print the `aegis-boot add` line** with the absolute ISO path. Does NOT auto-add — operator may want a specific stick.
+
+For unsigned-kernel entries (Alpine, Arch, NixOS) the success message also reminds the operator to place the distro's signing public key on the stick post-add.
+
+### Why shell out to system tools?
+
+`fetch` calls `curl`, `sha256sum`, and `gpg` via `Command` rather than pulling in `reqwest` + `sha2` + `gpgme` as Rust deps. Trade-offs:
+- **+** Static-musl binary stays small (~855 KiB).
+- **+** Trust boundary is explicit and inspectable — operators see what's invoked; `aegis-boot doctor` reports prerequisite tools.
+- **−** Operators need curl + sha256sum + gpg installed (universal on Linux distros).
+
+### Exit codes
+
+- `0` — verified ISO ready to add (including the unknown-key GPG case)
+- `1` — download / verification failed
+- `2` — usage error
 
 ---
 
