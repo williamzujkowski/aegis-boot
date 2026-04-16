@@ -2,6 +2,48 @@
 
 All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+The **best-in-class push** — what landed after v0.12.0 went out and the repo went public, working through epics #136 (operator + sysadmin reach), #137 (onboarding + discoverability), and #138 (quality gates).
+
+### Operator surface area expansion (epic #136)
+
+Five new `aegis-boot` subcommands. The CLI is now the single tool an operator needs from "I have a stick and an ISO" to "the target machine boots".
+
+- **`aegis-boot doctor [--stick /dev/sdX]`** ([#141](https://github.com/williamzujkowski/aegis-boot/issues/141)) — host + stick health check. Inspects OS, prerequisite tools (`dd`, `sudo`, `sgdisk`, `lsblk`, `curl`, `sha256sum`, `gpg` — [#146](https://github.com/williamzujkowski/aegis-boot/issues/146)), Secure Boot state (mokutil + efivar fallback), removable drive enumeration, partition layout (asserts ESP + AEGIS_ISOS), AEGIS_ISOS contents (counts ISOs + sidecars). Reports a 0-100 score and a single `NEXT ACTION` line. PASS=10 / WARN=7 / FAIL=0; bands: 90+ EXCELLENT, 70+ OK, 40+ DEGRADED, <40 BROKEN.
+- **`aegis-boot recommend [slug]`** ([#142](https://github.com/williamzujkowski/aegis-boot/issues/142)) — curated catalog of 13 known-good ISOs (Ubuntu LTS server + desktop, Fedora 41, Debian 12, Alpine, Arch, NixOS, SystemRescue, GParted, Memtest86+, Clonezilla, Tails, Kali). Each entry carries the project's canonical URL + the URL of the project's signed `SHA256SUMS` (no checksum pinning in our catalog — it'd rot weekly; the project's own signing key is the trust anchor). SB column makes the unsigned-needs-MOK distinction visible up front. Slug resolution is exact-or-unique-prefix.
+- **`aegis-boot fetch <slug>`** ([#145](https://github.com/williamzujkowski/aegis-boot/issues/145)) — automates the recipe `recommend` prints. Downloads the ISO + signed `SHA256SUMS` + signature, runs `sha256sum -c`, runs `gpg --verify`. Four GPG verdicts: OK, UnknownKey (non-fatal — operator can review + import + retry), BadSignature (fatal), GpgMissing (fatal unless `--no-gpg`). Per-slug cache directory (`$XDG_CACHE_HOME/aegis-boot/<slug>/`); skips files already present so re-runs are cheap.
+- **`aegis-boot attest list|show`** ([#147](https://github.com/williamzujkowski/aegis-boot/issues/147)) — attestation receipts. Every `flash` writes a JSON manifest at `$XDG_DATA_HOME/aegis-boot/attestations/<disk-guid>-<ts>.json` capturing tool version, timestamp, operator, host kernel + SB state, target device + model + size + GUID, image SHA-256 + size. Schema v1, additive-evolution-friendly (unknown fields tolerated by parser). Operationalizes the "prove what's on the stick" trust narrative — the differentiator vs every other USB-imaging tool.
+- **Append on `aegis-boot add`** ([#148](https://github.com/williamzujkowski/aegis-boot/issues/148)) — every successful `add` appends an `IsoRecord` (filename, sha256, size, sidecars, timestamp) to the matching attestation. Lookup: mount path → owning device via `/proc/mounts` → strip partition suffix (handles `sda1`, `nvme0n1p3`, `mmcblk0p1`, `loop12p1` correctly) → disk GUID → newest matching manifest. Falls back to "most recent overall" with a warning when GUID can't be resolved.
+- **`aegis-boot list` shows attestation summary** ([#149](https://github.com/williamzujkowski/aegis-boot/issues/149)) — when listing ISOs, prints a header above the table: `flashed at` + `operator` + `ISOs added since flash` + `manifest path`. Closes the attestation loop: flash → add → list all reference the same chain.
+
+### Distribution + onboarding (epic #137)
+
+- **GitHub Releases automation with cosign-signed binaries** ([#143](https://github.com/williamzujkowski/aegis-boot/issues/143)) — each release now ships a static-musl `aegis-boot-x86_64-linux` binary (~855 KiB), the existing `rescue-tui`, `initramfs.cpio.gz`, `sbom.cdx.json`, and an aggregated `SHA256SUMS` — every artifact accompanied by a Sigstore cosign keyless signature (`.sig` + `.pem`). The signing certificate is bound to this repo's `release.yml` workflow at the tag's ref, so verifying confirms the artifact came from *this* repo's release, not a copycat. Backfilled v0.12.0's release with all 16 cosign-signed assets.
+- **`scripts/install.sh` cosign-verified one-liner** ([#144](https://github.com/williamzujkowski/aegis-boot/issues/144)) — `curl -sSL https://raw.githubusercontent.com/williamzujkowski/aegis-boot/main/scripts/install.sh | sh` downloads the latest release's binary, verifies its cosign signature, installs to `/usr/local/bin` (root) or `~/.local/bin` (non-root). POSIX-portable, truncation-safe (wrapped in `main()` called at end-of-file), fails closed if cosign is missing.
+- **Homebrew tap** ([#150](https://github.com/williamzujkowski/aegis-boot/issues/150)) — `Formula/aegis-boot.rb` makes this repo a Brew tap. Operators install with `brew tap williamzujkowski/aegis-boot https://github.com/williamzujkowski/aegis-boot && brew install aegis-boot`. Linux x86_64 only today.
+- **Auto-bump Brew formula on tag push** ([#151](https://github.com/williamzujkowski/aegis-boot/issues/151)) — release workflow now updates `Formula/aegis-boot.rb` automatically after each release. No more manual maintenance.
+- **`docs/HARDWARE_COMPAT.md`** ([#146](https://github.com/williamzujkowski/aegis-boot/issues/146)) — community-curated table of validated machines, seeded with the v0.12.0 [#109](https://github.com/williamzujkowski/aegis-boot/issues/109) shakedown + the QEMU/OVMF reference environment.
+- **`docs/RELEASE_NOTES_FOOTER.md`** — appended to every release's notes; gives operators a copy-pasteable cosign verify-blob recipe so trust is testable.
+
+### Quality gates (epic #138)
+
+- **`#![forbid(unsafe_code)]` on iso-parser** ([#140](https://github.com/williamzujkowski/aegis-boot/issues/140)) — kexec-loader remains the only crate with `unsafe`, which is its purpose. Tightens the trust surface for the upcoming crates.io publish ([#51](https://github.com/williamzujkowski/aegis-boot/issues/51)).
+
+### Roadmap + governance
+
+- 4 epics filed: [#136](https://github.com/williamzujkowski/aegis-boot/issues/136), [#137](https://github.com/williamzujkowski/aegis-boot/issues/137), [#138](https://github.com/williamzujkowski/aegis-boot/issues/138), [#139](https://github.com/williamzujkowski/aegis-boot/issues/139) (post-v1.0 fleet+trust depth).
+- 2 milestones: v1.0.0 + v1.1.0.
+- Cleanup: closed [#40](https://github.com/williamzujkowski/aegis-boot/issues/40) (superseded by [#123](https://github.com/williamzujkowski/aegis-boot/issues/123)), and 4 already-fixed bugs ([#113](https://github.com/williamzujkowski/aegis-boot/issues/113), [#115](https://github.com/williamzujkowski/aegis-boot/issues/115), [#116](https://github.com/williamzujkowski/aegis-boot/issues/116), [#117](https://github.com/williamzujkowski/aegis-boot/issues/117)).
+
+### Tests
+
+186 workspace tests, clippy clean (was 140 at v0.12.0). +46 in aegis-cli covering the new modules (catalog invariants, fetch helpers, doctor scoring, attestation roundtrip + lookup arithmetic, partition-suffix stripping incl. the `loop12` regression case).
+
+### Repo went public
+
+`gh repo edit --visibility public` after a clean 194-commit gitleaks scan. `https://github.com/williamzujkowski/aegis-boot` is now indexable, taggable, forkable, contributable.
+
 ## [0.12.0] — 2026-04-16
 
 **The operator-journey release.** Transforms aegis-boot from a developer tool to an operator tool. Synthesis of two full shakedowns on real USB hardware (Alpine refusal + Ubuntu success) and a `nexus-agents ux_expert` alignment review that surfaced #131 as a v1.0 blocker.
