@@ -88,6 +88,37 @@ pub struct IsoRecord {
     pub added_at: String,
 }
 
+/// One-line summary of the attestation matching a mounted stick. Used
+/// by `aegis-boot list` to surface chain-of-custody info above the ISO
+/// table. Returns None if no matching attestation is on disk — the
+/// operator may have flashed this stick on a different host, or
+/// attestation recording failed.
+#[derive(Debug, Clone)]
+pub struct AttestSummary {
+    pub flashed_at: String,
+    pub operator: String,
+    pub isos_recorded: usize,
+    pub manifest_path: PathBuf,
+}
+
+/// Look up + summarize the attestation matching the stick mounted at
+/// `mount_path`. Silent on miss — the caller decides whether to
+/// surface that to the operator.
+pub fn summary_for_mount(mount_path: &Path) -> Option<AttestSummary> {
+    let dir = data_dir().join("attestations");
+    if !dir.is_dir() {
+        return None;
+    }
+    let (manifest_path, _source) = locate_attestation_for_mount(&dir, mount_path).ok()?;
+    let manifest = read_attestation(&manifest_path).ok()?;
+    Some(AttestSummary {
+        flashed_at: manifest.flashed_at,
+        operator: manifest.operator,
+        isos_recorded: manifest.isos.len(),
+        manifest_path,
+    })
+}
+
 /// Append an `IsoRecord` to the most recent attestation matching the
 /// destination stick. Used by `aegis-boot add`. Returns the manifest
 /// path on success.
@@ -120,7 +151,14 @@ pub fn record_iso_added(
 
     // Locate the matching attestation file.
     let dest_dir = data_dir().join("attestations");
-    let manifest_path = locate_attestation_for_mount(&dest_dir, mount_path)?;
+    let (manifest_path, source) = locate_attestation_for_mount(&dest_dir, mount_path)?;
+    if matches!(source, LookupSource::FallbackNewest) {
+        eprintln!(
+            "attest: could not match disk GUID for {} — appended to most recent attestation: {}",
+            mount_path.display(),
+            manifest_path.display()
+        );
+    }
 
     let mut manifest = read_attestation(&manifest_path)?;
     manifest.isos.push(IsoRecord {
@@ -137,11 +175,26 @@ pub fn record_iso_added(
     Ok(manifest_path)
 }
 
+/// Where the lookup actually found a result, for the caller to decide
+/// whether to warn the operator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LookupSource {
+    /// Disk GUID matched a manifest filename prefix.
+    GuidMatch,
+    /// GUID couldn't be resolved or didn't match; picked most recent.
+    FallbackNewest,
+}
+
 /// Locate the attestation manifest for a stick mounted at `mount_path`.
-/// Resolution: read /proc/mounts → owning device (e.g. /dev/sdc2) →
+/// Resolution: read `/proc/mounts` → owning device (e.g. /dev/sdc2) →
 /// strip partition suffix → disk GUID → newest matching manifest.
 /// Falls back to "most recent overall" when GUID can't be resolved.
-fn locate_attestation_for_mount(dir: &Path, mount_path: &Path) -> Result<PathBuf, String> {
+/// Silent — the returned `LookupSource` lets callers print whatever
+/// context they want.
+fn locate_attestation_for_mount(
+    dir: &Path,
+    mount_path: &Path,
+) -> Result<(PathBuf, LookupSource), String> {
     if !dir.is_dir() {
         return Err(format!("no attestations dir at {}", dir.display()));
     }
@@ -160,7 +213,7 @@ fn locate_attestation_for_mount(dir: &Path, mount_path: &Path) -> Result<PathBuf
         .and_then(|d| read_disk_guid(&d))
     {
         let lower = guid.to_lowercase();
-        // Match files whose stem starts with the GUID, take the newest by mtime.
+        // Match files whose stem starts with the GUID, take newest by mtime.
         let mut matching: Vec<_> = entries
             .iter()
             .filter(|p| {
@@ -171,13 +224,8 @@ fn locate_attestation_for_mount(dir: &Path, mount_path: &Path) -> Result<PathBuf
             .collect();
         matching.sort_by_key(|p| fs::metadata(p).and_then(|m| m.modified()).ok());
         if let Some(newest) = matching.last() {
-            return Ok((*newest).clone());
+            return Ok(((*newest).clone(), LookupSource::GuidMatch));
         }
-        eprintln!(
-            "attest: no attestation matched disk GUID {guid}; falling back to most recent overall"
-        );
-    } else {
-        eprintln!("attest: could not resolve disk GUID for {} — falling back to most recent attestation", mount_path.display());
     }
 
     // Fallback: most recent file by mtime.
@@ -185,6 +233,7 @@ fn locate_attestation_for_mount(dir: &Path, mount_path: &Path) -> Result<PathBuf
     all.sort_by_key(|p| fs::metadata(p).and_then(|m| m.modified()).ok());
     all.last()
         .cloned()
+        .map(|p| (p, LookupSource::FallbackNewest))
         .ok_or_else(|| "no attestation files found".to_string())
 }
 

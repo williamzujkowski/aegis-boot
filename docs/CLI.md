@@ -82,6 +82,11 @@ If the CLI mounted the partition itself (`temporary: true`), it unmounts on exit
 ### Output sample
 
 ```
+Attestation:
+  flashed   : 2026-04-16T13:30:00Z by william
+  ISOs added: 1 recorded since flash
+  manifest  : /home/william/.local/share/aegis-boot/attestations/e1ae0864-...-2026-04-16T13-30-00Z.json
+
 ISOs on /mnt/aegis-isos:
 
   [✓ sha256] [✓ minisig]    1.6 GiB  ubuntu-24.04.2-live-server-amd64.iso
@@ -92,6 +97,8 @@ ISOs on /mnt/aegis-isos:
   ✓ minisig  sibling <iso>.minisig present
   (missing sidecars mean the ISO will show GRAY verdict in rescue-tui)
 ```
+
+The attestation header is shown only when an attestation matching this stick is on disk (matched by GPT disk GUID). Silent on miss — operators may have flashed the stick on a different host.
 
 ---
 
