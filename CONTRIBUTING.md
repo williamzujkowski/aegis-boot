@@ -7,17 +7,19 @@ Thanks for your interest. This is a small project with a sharp focus — a signe
 ```bash
 git clone git@github.com:williamzujkowski/aegis-boot.git
 cd aegis-boot
-cargo test --workspace               # 108 tests as of v0.7.1
+cargo test --workspace               # 140 tests as of v0.12.0
 ./scripts/dev-test.sh                # full 8-stage local CI
 ```
 
 Prereqs are listed at the top of [`scripts/dev-test.sh`](./scripts/dev-test.sh) and in [`docs/LOCAL_TESTING.md`](./docs/LOCAL_TESTING.md).
 
+The operator-facing CLI lives in [`crates/aegis-cli`](./crates/aegis-cli) (binary `aegis-boot`). When working on the operator surface, exercise it directly: `cargo run -p aegis-cli -- flash --help`. Don't add operator-facing flags without updating [`docs/CLI.md`](./docs/CLI.md).
+
 ## Workflow
 
 1. **Open an issue first** for anything bigger than a typo — alignment beats rework.
 2. **Branch off `main`**: `feat/<issue>-short-description`, `fix/<issue>-...`, `docs/<topic>`, `chore/<topic>`.
-3. **Conventional commits** (enforced manually, no commitlint hook yet):
+3. **Conventional commits** (validated in PR review; no commitlint hook yet):
    ```
    feat(rescue-tui): add high-contrast theme
    fix(security): block kexec on hash mismatch (#55)

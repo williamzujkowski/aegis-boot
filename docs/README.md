@@ -2,8 +2,13 @@
 
 | Audience | Doc | What's in it |
 |---|---|---|
-| **Operator** (deploying aegis-boot) | [`USB_LAYOUT.md`](./USB_LAYOUT.md) | GPT + ESP + AEGIS_ISOS scheme; how to dd to a stick; how to drop ISOs onto the data partition |
+| **Operator** | [`INSTALL.md`](./INSTALL.md) | End-to-end: flash → add ISOs → boot → select. The first thing to read. |
+| **Operator** | [`CLI.md`](./CLI.md) | `aegis-boot` CLI reference — `flash`, `list`, `add` subcommand details |
+| **Operator** | [`TROUBLESHOOTING.md`](./TROUBLESHOOTING.md) | Common errors and fixes (errno 61, won't-boot, mount issues, MOK pitfalls) |
+| **Operator** | [`UNSIGNED_KERNEL.md`](./UNSIGNED_KERNEL.md) | What to do when an ISO ships an unsigned kernel (Alpine, Arch, NixOS) |
+| **Operator** | [`USB_LAYOUT.md`](./USB_LAYOUT.md) | GPT + ESP + AEGIS_ISOS scheme; manual loop-mount workflow; FAT32 vs ext4 trade-off |
 | **Operator** | [`compatibility/iso-matrix.md`](./compatibility/iso-matrix.md) | Per-distro kexec compatibility — what works, what surfaces a quirk |
+| **Developer** | [`ARCHITECTURE.md`](./ARCHITECTURE.md) | One-page mental model — boot chain, crate dependencies, trust boundaries |
 | **Developer** | [`LOCAL_TESTING.md`](./LOCAL_TESTING.md) | 8-stage local CI equivalent; `qemu-loaded-stick.sh --attach` modes; iteration recipes |
 | **Developer** | [`../BUILDING.md`](../BUILDING.md) | Reproducible build setup (Docker `Dockerfile.locked` + Nix `flake.nix`) |
 | **Developer** | [`../scripts/README.md`](../scripts/README.md) | What each script does and when to run it |

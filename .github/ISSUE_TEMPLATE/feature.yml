@@ -1,0 +1,68 @@
+name: Feature request
+description: Propose a new capability, behavior, or change in scope.
+title: "feat: <one-line description>"
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for thinking about this. Concrete proposals beat abstract ones — say what you'd do, not just what's wrong with today.
+
+        Before filing: skim [ROADMAP.md](../blob/main/ROADMAP.md) and the [Non-goals](../blob/main/ROADMAP.md#non-goals-probably-forever) section. If your idea is in non-goals, the answer is probably no, but the reasoning is worth reading.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Who hits this, when, and what's the cost today?
+      placeholder: |
+        Operators flashing aegis-boot from macOS can't use `aegis-boot flash`
+        because the CLI is Linux-only. They have to fall back to `dd` by hand
+        (which loses the safety prompts) or boot a Linux VM just to flash.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should happen instead? Be specific — names, commands, screens.
+      placeholder: |
+        `aegis-boot flash` detects the host OS. On macOS it uses `diskutil
+        list -plist` for drive enumeration and `sudo dd` with the macOS-style
+        bs= argument. The typed-confirmation step stays the same.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What else did you think about? Why is your proposal better?
+      placeholder: |
+        - Document the manual `dd` path on macOS (rejected: loses safety
+          prompts).
+        - Ship a separate `aegis-boot-mac` binary (rejected: split surface,
+          versioning drift).
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and trade-offs
+      description: What's the cost? What new things would maintainers have to test forever?
+      placeholder: |
+        - New CI job: macOS runner running `aegis-boot flash --dry-run`.
+        - Vendoring `diskutil` parsing logic; adds ~150 LOC.
+        - Doesn't add a new attack surface (we already shell to `dd`).
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: How urgent is this for you?
+      options:
+        - Blocker — I can't use aegis-boot without it
+        - High — I have a workaround but it's painful
+        - Medium — Would be nice
+        - Low — Filing for visibility
+    validations:
+      required: true

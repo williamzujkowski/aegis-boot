@@ -18,7 +18,7 @@ use crate::theme::Theme;
 ///
 /// ```text
 /// ┌──────────────────────────────────────────────────────┐
-/// │  aegis-boot v0.7.1     SB:enforcing  TPM:available   │ <- header
+/// │  aegis-boot v0.12.0    SB:enforcing  TPM:available   │ <- header
 /// ├──────────────────────────────────────────────────────┤
 /// │                                                      │
 /// │              (current screen body)                   │ <- body

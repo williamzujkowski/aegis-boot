@@ -1,0 +1,88 @@
+name: Bug report
+description: aegis-boot did something wrong, refused something it should have accepted, or crashed.
+title: "bug: <one-line description>"
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing. The more we can reproduce, the faster we can fix.
+
+        **Security-sensitive findings (key handling, signature bypass, supply-chain) → DO NOT file here.**
+        Use the private path in [SECURITY.md](../blob/main/SECURITY.md).
+
+  - type: input
+    id: version
+    attributes:
+      label: aegis-boot version
+      description: Output of `aegis-boot --version` (or commit SHA if built from source).
+      placeholder: "v0.12.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where did it happen?
+      options:
+        - Workstation (writing the stick — `aegis-boot flash` / `add` / `list`)
+        - Firmware boot (stick won't appear, Secure Boot violation, etc.)
+        - rescue-tui (TUI shows wrong info, won't navigate, no ISOs found)
+        - kexec hand-off (errno from kexec_file_load, target kernel won't start)
+        - Build (cargo build, mkusb.sh, build-initramfs.sh)
+        - Other / not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you see, and what did you expect to see?
+      placeholder: |
+        I ran `sudo aegis-boot flash /dev/sdc` on Ubuntu 24.04. The build step
+        succeeded but `dd` exited with status 1. I expected it to write
+        cleanly.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Exact commands and inputs. If a specific ISO triggers it, link to the ISO.
+      placeholder: |
+        1. `git clone ... && cd aegis-boot`
+        2. `cargo build --release`
+        3. `sudo aegis-boot flash /dev/sdc`
+        4. <see error>
+    validations:
+      required: true
+
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: Workstation distro + kernel; target firmware + SB state if relevant.
+      placeholder: |
+        Workstation: Ubuntu 24.04, kernel 6.8.0-31-generic
+        Target: Framework Laptop 13, firmware 3.05, Secure Boot enforcing
+        ISO: ubuntu-24.04.2-live-server-amd64.iso (Canonical)
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Paste relevant output (rescue-tui stderr, journalctl, dmesg, dd error, etc.). Use a code fence.
+      render: shell
+      placeholder: |
+        $ sudo aegis-boot flash /dev/sdc
+        ...
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else?
+      description: Optional. Workarounds tried, hypotheses, related issues.

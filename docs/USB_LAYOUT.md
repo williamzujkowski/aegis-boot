@@ -67,7 +67,8 @@ sudo apt-get install -y \
     mtools dosfstools gdisk
 
 # Kernel reads require root (kernels are mode 0600 by default on modern Ubuntu).
-sudo chmod 0644 /boot/vmlinuz-*-virtual /boot/initrd.img-*-virtual
+# Catches both -virtual and -generic suffixes.
+sudo chmod 0644 /boot/vmlinuz-* /boot/initrd.img-*
 
 ./scripts/build-initramfs.sh   # produces out/initramfs.cpio.gz
 ./scripts/mkusb.sh             # produces out/aegis-boot.img
@@ -117,7 +118,7 @@ sudo umount /mnt/aegis-isos
 
 ## Storage modules shipped in the initramfs
 
-For rescue-tui to see the AEGIS_ISOS partition (or any internal disk the operator might want to scan), the initramfs has to include the kernel modules for the storage controller. Most modern Ubuntu generic kernels (6.8+) compile these as modules, not built-in. As of v0.7.0 (#72), `build-initramfs.sh` ships:
+For rescue-tui to see the AEGIS_ISOS partition (or any internal disk the operator might want to scan), the initramfs has to include the kernel modules for the storage controller. Most modern Ubuntu generic kernels (6.8+) compile these as modules, not built-in. As of v0.7.0 (#72), `build-initramfs.sh` ships (current as of v0.12.0):
 
 - `libahci`, `ahci` — SATA AHCI controllers (most desktops + older laptops)
 - `nvme-core`, `nvme` — NVMe SSDs (most modern laptops)
@@ -126,7 +127,7 @@ For rescue-tui to see the AEGIS_ISOS partition (or any internal disk the operato
 
 `scsi_mod`, `sd_mod`, `usbcore`, `xhci-hcd/pci`, `ehci-hcd/pci`, and `loop`/`isofs`/`udf` are typically built-in on Ubuntu kernels and skipped at build time with an INFO log. `/init` modprobes the full set early; built-in modules return successfully without doing anything.
 
-Real-hardware boot has been validated only in QEMU simulation as of v0.7.0 (`scripts/qemu-loaded-stick.sh --attach {virtio,sata,usb}`). A Framework / ThinkPad / Dell shakedown is tracked in [#51](https://github.com/williamzujkowski/aegis-boot/issues/51).
+Real-hardware shakedown was completed in v0.12.0 ([#109](https://github.com/williamzujkowski/aegis-boot/issues/109)) on a SanDisk Cruzer 32 GB stick via QEMU USB-passthrough: Alpine 3.20.3 returned the expected `errno 61` refusal under enforcing Secure Boot, and Ubuntu 24.04.2 successfully kexec'd through (`kexec_core: Starting new kernel`). Multi-vendor real-hardware sweep (Framework / ThinkPad / Dell direct boot) is tracked in [#51](https://github.com/williamzujkowski/aegis-boot/issues/51) for v1.0.0.
 
 ## Chain of trust recap
 

@@ -2,9 +2,9 @@
 
 While GitHub Actions CI is the primary validation gate, you can run the full matrix locally in ~8-15 minutes using KVM + libvirt (varies by hardware — fast NVMe + warm cargo cache hits the low end; cold cache or slower disks land closer to the high end). This is the right dev loop when:
 
-- GHA billing is constrained or paused.
 - You want instant feedback before pushing.
 - You're iterating on the QEMU-adjacent jobs (`mkusb`, `OVMF SecBoot E2E`, `kexec E2E`) that take several minutes to hit on CI.
+- CI is unavailable (rare; outage or quota issue).
 
 ## One-time setup
 
@@ -39,7 +39,7 @@ Steps it runs, in order (short-circuits on first failure):
 5. `scripts/mkusb.sh` — produces `out/aegis-boot.img`
 6. QEMU boot of the mkusb image under OVMF SecBoot — asserts SB enforcing + rescue-tui starts
 7. `scripts/qemu-kexec-e2e.sh` — asserts the rescue-tui → target-kernel kexec handoff
-8. `cargo run --release -p aegis-fitness` — repo / build / artifact health audit (added in v0.6.0)
+8. `cargo run --release -p aegis-fitness` — repo / build / artifact health audit
 
 Total runtime on a Framework laptop with warm cargo cache: ~8-10 min. Most of that is step 6 (QEMU cold boot) and step 7 (second QEMU cold boot + initramfs customization + ISO build). Cold cargo cache adds 2-5 min on top.
 
@@ -107,7 +107,7 @@ source dir, and boots under OVMF SecBoot. Image size auto-scales to
 | `sata` | AHCI module path (`ahci.ko`) | matches most desktops + older laptops |
 | `usb` | `qemu-xhci` + `usb-storage` | closest to a real USB stick plugged into a host |
 
-All three modes were verified end-to-end in v0.7.0 with Alpine 3.20 (4 ISO entries discovered).
+All three modes were verified end-to-end starting in v0.7.0 with Alpine 3.20 (4 ISO entries discovered); v0.12.0 added real-hardware shakedown via USB-passthrough on a SanDisk Cruzer 32 GB stick (Alpine refusal + Ubuntu boot, [#109](https://github.com/williamzujkowski/aegis-boot/issues/109)).
 
 ### Manual, if you want to inspect the partition
 
@@ -134,6 +134,4 @@ Then boot via `qemu-try.sh` — the TUI should list your ISOs.
 
 The scripts are deliberately identical to what CI invokes. If `dev-test.sh` passes locally, CI should too. If they diverge (different kernel, different OVMF version, different runner arch), file an issue — we want local to match the reference CI environment.
 
-## When billing is resolved
-
-Re-enable CI as the merge gate. Local testing becomes the pre-push sanity check rather than the primary validator.
+CI status is the merge gate; local testing is the pre-push sanity check. CI runs are visible at the [Actions tab](https://github.com/williamzujkowski/aegis-boot/actions).

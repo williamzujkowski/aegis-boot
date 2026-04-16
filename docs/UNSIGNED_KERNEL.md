@@ -14,9 +14,9 @@ Under aegis-boot, **the operator chooses per-ISO** whether to trust an unsigned 
 
 The simplest path. These distros ship kernels signed by a UEFI CA that shim's built-in keyring trusts:
 
-| Distro | Verified under aegis-boot v0.11.0 |
+| Distro | Verified under aegis-boot v0.12.0 |
 |---|---|
-| Ubuntu 24.04+ | ✅ `kexec_core: Starting new kernel` (Canonical CA) |
+| Ubuntu 24.04+ | ✅ `kexec_core: Starting new kernel` (Canonical CA, real-hardware shakedown #109) |
 | Fedora 39+ | likely (Fedora CA, unverified) |
 | Debian 12+ | likely (Debian CA, unverified) |
 | RHEL / Rocky / AlmaLinux | likely (Red Hat CA); may hit `CrossDistroKexecRefused` quirk |
@@ -45,7 +45,7 @@ For distros that ship unsigned kernels — **Alpine, Arch, NixOS** — you need 
      sudo mokutil --import /run/media/aegis-isos/alpine-3.20.3-x86_64.iso.pub
    ```
 
-4. Drop to the rescue shell (press `[#]` from the List), copy that `mokutil` command, reboot to your normal system, and run it there. `mokutil` will prompt for a one-time password.
+4. Drop to the rescue shell (from the List screen, navigate to the `[#] rescue shell` entry and press Enter), copy that `mokutil` command, reboot to your normal system, and run it there. `mokutil` will prompt for a one-time password.
 
 5. Reboot — shim's MOK Manager intercepts at firmware stage, asks for the password, enrolls the key permanently.
 
@@ -65,7 +65,7 @@ Initially scoped (#126) as a `aegis.relaxed=1` cmdline opt-in that would fall ba
 
 ## Validation
 
-As of v0.11.0:
+As of v0.12.0 (real-hardware shakedown, [#109](https://github.com/williamzujkowski/aegis-boot/issues/109)):
 
 - Alpine 3.20.3 (unsigned kernel) → `errno 61 (ENODATA)` with the guidance above. ✅ expected, correct.
 - Ubuntu 24.04.2 (Canonical-signed) → `kexec_core: Starting new kernel`. ✅ boots through.

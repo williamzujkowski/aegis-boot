@@ -2,7 +2,7 @@
 
 **Version:** 2.0
 **Scope:** Option B runtime (signed Linux rescue + ratatui TUI + kexec) per [ADR 0001](./docs/adr/0001-runtime-architecture.md)
-**Last reviewed:** 2026-04-14
+**Last reviewed:** 2026-04-16 (re-confirmed for v0.12.0 release; no model changes — the operator CLI sits below the trust boundary and cannot influence kernel verification)
 
 This document replaces the v1.0 threat model, which assumed a systemd-boot + custom-signed-orchestrator chain. That assumption no longer matches the chosen runtime and has been removed rather than patched.
 
