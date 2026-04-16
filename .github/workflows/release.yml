@@ -163,7 +163,12 @@ jobs:
           fi
           # Append the verification footer (kept in docs/ to avoid
           # heredoc-vs-YAML indentation hazards in this workflow file).
-          cat docs/RELEASE_NOTES_FOOTER.md >> out/release-notes.md
+          # Optional: older tags pre-dating the footer file just skip it.
+          if [ -f docs/RELEASE_NOTES_FOOTER.md ]; then
+            cat docs/RELEASE_NOTES_FOOTER.md >> out/release-notes.md
+          else
+            echo "(no docs/RELEASE_NOTES_FOOTER.md at this ref — skipping verification footer)" >&2
+          fi
           echo "path=out/release-notes.md" >> "$GITHUB_OUTPUT"
 
       # ---------- Create release if missing, then upload assets ------

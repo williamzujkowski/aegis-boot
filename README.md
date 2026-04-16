@@ -50,17 +50,37 @@ aegis-boot is the right pick when you need to boot operator-supplied ISOs **with
 
 ## Quickstart — operators
 
-Pre-built binaries are published per release; build from source per [BUILDING.md](./BUILDING.md) if needed.
+Install the operator CLI (Linux x86_64 today; cross-platform tracked in [#123](https://github.com/williamzujkowski/aegis-boot/issues/123)):
 
 ```bash
-# 1. write aegis-boot to a USB stick (3-step guided; auto-detects removable drives)
+# Cosign-verified install from the latest GitHub release.
+curl -sSL https://raw.githubusercontent.com/williamzujkowski/aegis-boot/main/scripts/install.sh | sh
+
+# Or pin a version: sh install.sh --version v0.12.0
+# Or skip cosign (NOT recommended): sh install.sh --no-verify
+# Build from source: see BUILDING.md.
+```
+
+Each release ships a static-musl `aegis-boot-x86_64-linux` binary plus its Sigstore cosign signature + certificate; the installer checks the cert is bound to *this* repo's `release.yml` workflow before installing. See `docs/RELEASE_NOTES_FOOTER.md` for the manual `cosign verify-blob` recipe.
+
+Then the operator flow:
+
+```bash
+# 0. (recommended) check host + stick health before doing anything destructive
+aegis-boot doctor
+
+# 1. browse the curated catalog — known-good signed-or-MOK-needed ISOs
+aegis-boot recommend
+aegis-boot recommend ubuntu-24.04-live-server   # one entry's download recipe
+
+# 2. write aegis-boot to a USB stick (3-step guided; auto-detects removable drives)
 sudo aegis-boot flash             # or: sudo aegis-boot flash /dev/sdc
 
-# 2. add ISOs to the stick (auto-detects mount; copies sidecars too)
+# 3. add ISOs to the stick (auto-detects mount; copies sidecars too)
 aegis-boot add ~/Downloads/ubuntu-24.04.2-live-server-amd64.iso
 aegis-boot list                   # show what's on the stick
 
-# 3. plug the stick into a target machine, boot from it (UEFI + SB enabled)
+# 4. plug the stick into a target machine, boot from it (UEFI + SB enabled)
 #    The TUI discovers ISOs, shows verification status, and kexecs on Enter.
 ```
 

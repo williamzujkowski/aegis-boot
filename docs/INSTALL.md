@@ -12,6 +12,25 @@ Have on hand:
 - A target machine with UEFI Secure Boot **enforcing** (the whole point of aegis-boot — if you've disabled SB, you're paying for protections you're not getting)
 - `sudo` on your workstation (we shell out to `dd`, `mount`, `umount`)
 
+## Step 0 — install the operator CLI
+
+```bash
+curl -sSL https://raw.githubusercontent.com/williamzujkowski/aegis-boot/main/scripts/install.sh | sh
+```
+
+This downloads the latest release's `aegis-boot-x86_64-linux` static binary, verifies its Sigstore cosign signature against this repo's `release.yml` workflow identity, and installs to `/usr/local/bin` (root) or `~/.local/bin` (non-root).
+
+The installer itself does NOT need root unless you're installing to `/usr/local/bin`. To inspect first: `curl -sSL ... -o install.sh && less install.sh && sh install.sh`.
+
+Sanity check:
+
+```bash
+aegis-boot --version       # → aegis-boot v0.12.0
+aegis-boot doctor          # 0–100 health score for host + stick
+```
+
+If `aegis-boot doctor` reports anything FAIL, fix that first — its NEXT ACTION line tells you exactly what.
+
 ## Step 1 — write aegis-boot to the stick
 
 ```bash
