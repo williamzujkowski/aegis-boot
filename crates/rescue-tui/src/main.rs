@@ -938,6 +938,7 @@ mod tests {
             hash_verification: iso_probe::HashVerification::NotPresent,
             signature_verification: iso_probe::SignatureVerification::NotPresent,
             size_bytes: None,
+            contains_installer: false,
         }
     }
 

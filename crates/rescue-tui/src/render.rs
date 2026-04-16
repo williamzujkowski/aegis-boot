@@ -670,8 +670,37 @@ fn draw_confirm(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: u
         Span::styled("→ PCR 12", Style::default().add_modifier(Modifier::DIM)),
     ]);
 
-    let lines: Vec<Line> = vec![
-        verdict_line,
+    // #131: installer-vs-live warning. A distro-signed ISO has a
+    // GREEN verdict; the operator might read that as "safe" and hit
+    // Enter without realizing the ISO contains an installer that can
+    // erase disks on this machine when the WRONG entry is picked
+    // from the ISO's own boot menu. One visual warning line — no
+    // extra typed challenge.
+    let mut lines: Vec<Line> = vec![verdict_line];
+    if iso.contains_installer {
+        lines.push(Line::from(vec![
+            Span::styled(
+                "Warning:  ",
+                Style::default()
+                    .fg(state.theme.warning)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "This ISO contains an installer. If the ISO's own boot menu",
+                Style::default().fg(state.theme.warning),
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::raw("          "),
+            Span::styled(
+                "default is 'Install', DISKS ON THIS MACHINE MAY BE ERASED.",
+                Style::default()
+                    .fg(state.theme.warning)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+    }
+    lines.extend([
         digest_line,
         Line::from(""),
         Line::from(vec![
@@ -729,7 +758,7 @@ fn draw_confirm(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: u
         } else {
             Span::raw("Enter: kexec   ·   e: edit kernel cmdline   ·   Esc: back to list")
         }),
-    ];
+    ]);
     let title = if state.is_kexec_blocked(selected) {
         "Confirm kexec — BLOCKED"
     } else if override_active {
@@ -1022,6 +1051,7 @@ mod tests {
             hash_verification: iso_probe::HashVerification::NotPresent,
             signature_verification: iso_probe::SignatureVerification::NotPresent,
             size_bytes: Some(1_500_000_000),
+            contains_installer: false,
         }
     }
 

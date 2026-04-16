@@ -53,6 +53,11 @@ pub struct DiscoveredIso {
     /// File size in bytes from `stat(2)` on `iso_path`. `None` if stat failed.
     /// Rendered as a human-readable value in the Confirm preview pane.
     pub size_bytes: Option<u64>,
+    /// True if this ISO is known to contain an installer that can
+    /// write to disk when the user picks the wrong boot-menu entry.
+    /// Determined heuristically from filename patterns. rescue-tui
+    /// surfaces a yellow warning strip on the Confirm screen. (#131)
+    pub contains_installer: bool,
 }
 
 /// Compatibility quirks the TUI should surface to the user before invoking
@@ -259,6 +264,7 @@ fn boot_entry_to_discovered(entry: &BootEntry, search_root: &Path) -> Discovered
         ),
     }
     let size_bytes = std::fs::metadata(&iso_path).ok().map(|m| m.len());
+    let contains_installer = detect_installer(&iso_path);
     DiscoveredIso {
         iso_path,
         label: entry.label.clone(),
@@ -270,7 +276,55 @@ fn boot_entry_to_discovered(entry: &BootEntry, search_root: &Path) -> Discovered
         hash_verification,
         signature_verification,
         size_bytes,
+        contains_installer,
     }
+}
+
+/// Heuristic detection: does this ISO contain an installer that can
+/// overwrite the host's disks? Based on filename substrings of the
+/// most common installer-bearing images. Intentionally inclusive —
+/// a false-positive (showing a warning on a live-only ISO) is safer
+/// than a false-negative (silently hiding the installer risk). (#131)
+const INSTALLER_MARKERS: &[&str] = &[
+    // Ubuntu / Debian / Mint
+    "live-server",
+    "live-desktop",
+    "desktop-amd64",
+    "server-amd64",
+    "netinst",
+    "netinstall",
+    "xubuntu",
+    "kubuntu",
+    "lubuntu",
+    // Fedora / RHEL family
+    "workstation",
+    "server-",
+    "-boot.iso",
+    "dvd-",
+    "dvd1",
+    "everything",
+    "netboot",
+    // openSUSE
+    "opensuse",
+    "tumbleweed",
+    "leap",
+    // Anaconda-based installers
+    "anaconda",
+    // Windows
+    "windows",
+    "win10",
+    "win11",
+];
+
+/// Heuristic: does this ISO filename indicate an installer image?
+/// See `INSTALLER_MARKERS` for the match list. (#131)
+#[must_use]
+pub fn detect_installer(iso_path: &Path) -> bool {
+    let name = match iso_path.file_name().and_then(|s| s.to_str()) {
+        Some(n) => n.to_ascii_lowercase(),
+        None => return false,
+    };
+    INSTALLER_MARKERS.iter().any(|m| name.contains(m))
 }
 
 /// Look up quirks for a distribution family.
@@ -467,6 +521,7 @@ mod tests {
             hash_verification: HashVerification::NotPresent,
             signature_verification: SignatureVerification::NotPresent,
             size_bytes: None,
+            contains_installer: false,
         };
         // Sanity-check the path-joining we'd perform on a real mount.
         let mount = PathBuf::from("/mnt/test");
