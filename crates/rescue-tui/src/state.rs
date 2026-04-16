@@ -855,11 +855,22 @@ fn build_mokutil_remedy(iso: Option<&DiscoveredIso>) -> String {
              next boot). Then retry. Do NOT disable Secure Boot.",
             key_path.display()
         ),
-        None => "This ISO's signing key isn't in the platform or MOK keyring. \
-                 Place the public key alongside the ISO (as `<iso>.pub`, \
-                 `<iso>.key`, or `<iso>.der`) and aegis-boot will suggest \
-                 the exact `mokutil --import` command on the next attempt. \
-                 Do NOT disable Secure Boot."
+        None => "This ISO's kernel is not signed by any trusted CA. Two paths forward:\n\
+                 \n\
+                 1. DISTRO-SIGNED ISO (preferred): pick an ISO whose kernel is\n\
+                    signed by a CA the firmware trusts (Ubuntu, Fedora, Debian).\n\
+                    Those boot under Secure Boot without any enrollment.\n\
+                 \n\
+                 2. ENROLL A KEY (for distros that ship unsigned — Alpine, Arch,\n\
+                    NixOS): obtain the distro's signing public key, place it\n\
+                    next to the ISO as `<iso>.pub`, `<iso>.key`, or `<iso>.der`,\n\
+                    reboot, and aegis-boot will suggest the exact\n\
+                    `sudo mokutil --import` command.\n\
+                 \n\
+                 Do NOT disable Secure Boot. Do NOT enroll a global MOK (that's\n\
+                 Ventoy's approach and defeats the chain of trust).\n\
+                 \n\
+                 See docs/UNSIGNED_KERNEL.md for the full guide (#126)."
             .to_string(),
     }
 }
