@@ -1,0 +1,36 @@
+name: Catalog URL revalidation
+
+# Runs `scripts/catalog-revalidate.sh` to check every URL in the
+# `aegis-boot recommend` catalog. Catches URL rot (distros moving
+# files, changing mirror paths, etc.) before operators hit a 404.
+#
+# Triggers:
+#   * Weekly cron (Monday 12:00 UTC), matching the CATALOG_POLICY cadence
+#   * workflow_dispatch for ad-hoc checks (e.g. immediately after
+#     merging a PR that adds a new catalog entry, to verify URLs)
+#
+# Deliberately NOT gated on pull_request: the catalog has accumulated
+# URL rot (CDN moves, sig-file pattern drift across distros) and we
+# don't want unrelated PRs to be blocked by pre-existing rot. The
+# scheduled run + dispatch surface the rot to the maintainer, who
+# opens follow-up PRs to fix or remove entries.
+
+on:
+  schedule:
+    - cron: "0 12 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  revalidate:
+    name: Catalog URL health check
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run catalog-revalidate.sh
+        run: bash scripts/catalog-revalidate.sh
