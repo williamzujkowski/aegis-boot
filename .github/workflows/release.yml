@@ -203,3 +203,105 @@ jobs:
             out/SHA256SUMS \
             out/SHA256SUMS.sig \
             out/SHA256SUMS.pem
+
+  # Bumps Formula/aegis-boot.rb on main when a new tag is pushed. Skipped
+  # for workflow_dispatch (which is the manual-backfill path — bumping
+  # would risk regressing the formula to an older release).
+  bump-brew-formula:
+    name: Bump Homebrew formula on main
+    needs: build-and-release
+    if: github.event_name == 'push'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          # Token with write — the default GITHUB_TOKEN suffices because
+          # we set `permissions: contents: write` above.
+
+      - name: Resolve tag
+        id: tag
+        run: echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Wait briefly for release assets to settle
+        # gh release upload above can lag a few seconds before the API
+        # returns assets via `gh release download`. Tiny sleep avoids
+        # the race in practice.
+        run: sleep 10
+
+      - name: Download SHA256SUMS from the new release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.tag.outputs.name }}"
+          gh release download "$tag" --pattern SHA256SUMS --output /tmp/SHA256SUMS
+          echo "--- SHA256SUMS ---"
+          cat /tmp/SHA256SUMS
+
+      - name: Bump Formula/aegis-boot.rb if needed
+        id: bump
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.tag.outputs.name }}"
+          version="${tag#v}"
+          new_sha=$(grep '  aegis-boot-x86_64-linux$' /tmp/SHA256SUMS | awk '{print $1}')
+          if [ -z "$new_sha" ]; then
+            echo "no aegis-boot-x86_64-linux row in SHA256SUMS — aborting bump" >&2
+            exit 1
+          fi
+          echo "new version: $version"
+          echo "new sha256:  $new_sha"
+
+          if [ ! -f Formula/aegis-boot.rb ]; then
+            echo "Formula/aegis-boot.rb missing — nothing to bump" >&2
+            exit 0
+          fi
+
+          # Idempotent edits via sed. The formula's three pinned values:
+          #   version "X.Y.Z"
+          #   url "https://github.com/.../v X.Y.Z /aegis-boot-x86_64-linux"
+          #   sha256 "..."
+          sed -i \
+            -e "s|^  version \".*\"|  version \"${version}\"|" \
+            -e "s|/releases/download/v[^/]*/aegis-boot-x86_64-linux\"|/releases/download/v${version}/aegis-boot-x86_64-linux\"|" \
+            -e "s|^      sha256 \"[a-f0-9]*\"|      sha256 \"${new_sha}\"|" \
+            Formula/aegis-boot.rb
+
+          # Show the diff for the run log.
+          echo "--- formula diff ---"
+          git --no-pager diff Formula/aegis-boot.rb || true
+
+          if git diff --quiet Formula/aegis-boot.rb; then
+            echo "formula already up to date for ${tag} — skipping commit"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit + push the bump
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.tag.outputs.name }}"
+          git config user.name "aegis-boot release bot"
+          git config user.email "noreply@github.com"
+          git add Formula/aegis-boot.rb
+          # Heredoc-built message keeps the multi-line body cleanly
+          # indented inside the YAML literal block scalar.
+          msg_file=$(mktemp)
+          {
+            printf 'chore(brew): bump formula to %s\n' "$tag"
+            printf '\n'
+            printf 'Auto-bump from .github/workflows/release.yml after the %s\n' "$tag"
+            printf 'release artifacts were uploaded. SHA-256 sourced from the\n'
+            printf "release's signed SHA256SUMS file.\n"
+          } > "$msg_file"
+          git commit --file="$msg_file"
+          git push origin main
