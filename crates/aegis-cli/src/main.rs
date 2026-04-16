@@ -19,6 +19,10 @@ use std::env;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    // Standard CLI dispatch. We drop argv[0] (the rule's specific
+    // concern) and use remaining args only as command names + paths
+    // the user already controls. No security decision keys off argv.
+    // nosemgrep: rust.lang.security.args.args
     let args: Vec<String> = env::args().skip(1).collect();
     let subcmd = args.first().map(std::string::String::as_str);
 

@@ -248,6 +248,10 @@ fn unmount_temp(m: &Mount) {
 }
 
 fn tempdir() -> Option<PathBuf> {
+    // Name is unique per process (PID + counter) and `create_dir` is
+    // atomic, returning Err if the path already exists. This rules out
+    // the predictable-name attack the temp-dir rule warns about.
+    // nosemgrep: rust.lang.security.temp-dir.temp-dir
     let base = std::env::temp_dir();
     for i in 0..100 {
         let path = base.join(format!("aegis-cli-{}-{i}", std::process::id()));

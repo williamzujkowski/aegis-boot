@@ -107,7 +107,16 @@ log "  combined: $(stat -c '%s' "$WORK/combined-initrd.img") bytes"
 
 # grub.cfg — serial console redirect for operator visibility on
 # real hardware with a serial port, plus sane defaults for normal boots.
+#
+# `insmod serial` is required before `serial` / `terminal_*` because
+# the signed Canonical grub keeps serial as a loadable module rather
+# than built-in. Without insmod, grub prints
+#   error: can't find command `serial'.
+#   error: terminal `serial' isn't found.
+# and falls back to whatever EFI gave it — which on headless QEMU is
+# nothing, so the boot menu never reaches a working console. (#109)
 cat > "$WORK/grub.cfg" <<'EOF'
+insmod serial
 serial --unit=0 --speed=115200
 terminal_input serial console
 terminal_output serial console
