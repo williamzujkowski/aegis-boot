@@ -270,11 +270,13 @@ if [[ -n "$KMOD_SRC" && -d "$KMOD_SRC" ]]; then
         "$MOD_DEST/kernel/drivers/usb/storage" \
         "uas" "CONFIG_USB_UAS"
 
-    # --- vfat NLS fallback (#68 residual) -------------------------------
-    # CONFIG_NLS_DEFAULT="utf8" on Ubuntu but NLS_UTF8 is a module. Ship
-    # it so `mount -t vfat` works without the explicit codepage/iocharset
-    # options. Defensive — /init also passes iocharset=cp437 which is
-    # built-in on all known Ubuntu generic kernels.
+    # --- vfat NLS fallback (#68, #109) ----------------------------------
+    # CONFIG_NLS_DEFAULT="utf8" on Ubuntu but NLS_UTF8 is a module, and
+    # the kernel's vfat default `iocharset=iso8859-1` needs the
+    # `nls_iso8859-1` module which Ubuntu also keeps loadable. We ship
+    # `nls_utf8` and /init mounts vfat with `iocharset=utf8` explicitly.
+    # (Earlier comments referenced cp437 as an iocharset — wrong; cp437
+    # is a codepage. iocharset must be one of utf8/iso8859-*/koi8/etc.)
     try_module "kernel/fs/nls/nls_utf8" \
         "$MOD_DEST/kernel/fs/nls" \
         "nls_utf8" "CONFIG_NLS_UTF8"
@@ -412,18 +414,21 @@ for resolver in \
 done
 if [ -n "$AEGIS_DEV" ]; then
     # busybox mount type-autodetect is unreliable; explicit types in
-    # fallback order. vfat needs codepage=437 + utf8 because the
-    # default iocharset (iso8859-*) is a module on Ubuntu kernels and
-    # we don't ship it — without these the mount fails silently. ext4
-    # is the right pick for >4 GiB ISOs and needs no nls. (#68)
+    # fallback order. vfat needs `codepage=437,iocharset=utf8` because
+    # the default `iocharset=iso8859-1` is a module (`nls_iso8859-1`)
+    # we don't ship — without overriding it the mount fails with
+    # "FAT-fs: IO charset iso8859-1 not found". `iocharset=cp437` is
+    # NOT a valid value (cp437 is only a codepage / CCS); we ship
+    # `nls_utf8` and use that instead. ext4 is the right pick for
+    # >4 GiB ISOs and needs no nls. (#68, #109)
     # rw so /init can write aegis-boot-<ts>.log and rescue-tui can
     # tee F10 save-log evidence to the partition. ISO bytes
     # themselves are never modified — iso-probe opens .iso files
-    # read-only via loop-mount. (#109)
+    # read-only via loop-mount.
     mount_ok=0
     for spec in \
         "ext4:rw" \
-        "vfat:rw,codepage=437,iocharset=cp437" \
+        "vfat:rw,codepage=437,iocharset=utf8" \
         "vfat:rw" \
         "exfat:rw"; do
         fstype="${spec%%:*}"
@@ -465,14 +470,16 @@ for dev in /dev/sd*[0-9] /dev/nvme*n*p* /dev/vd*[0-9] /dev/mmcblk*p*; do
     name=$(echo "$dev" | /bin/sed 's|.*/||')
     mp="/run/media/$name"
     /bin/mkdir -p "$mp"
-    # (#113) Explicit vfat options when auto-mount without a type
-    # fails — Linux vfat defaults to iocharset=iso8859-1 which is a
-    # module we don't ship. cp437 is built-in on Ubuntu generic
-    # kernels. Try auto first (ext4/ntfs/etc work fine), fall back
-    # to explicit vfat on failure.
+    # (#113, #109) Explicit vfat options when auto-mount without a
+    # type fails — Linux vfat defaults to iocharset=iso8859-1 which
+    # is a module (`nls_iso8859-1`) we don't ship. We ship `nls_utf8`
+    # so iocharset=utf8 works. (cp437 is a codepage, not an iocharset
+    # — using it as iocharset silently falls back to the default and
+    # fails the same way.) Try auto first (ext4/ntfs/etc work fine),
+    # fall back to explicit vfat on failure.
     if /bin/mount -o ro "$dev" "$mp" 2>/dev/null; then
         /bin/echo "init: secondary-mount $dev -> $mp"
-    elif /bin/mount -t vfat -o ro,codepage=437,iocharset=cp437 \
+    elif /bin/mount -t vfat -o ro,codepage=437,iocharset=utf8 \
             "$dev" "$mp" 2>/dev/null; then
         /bin/echo "init: secondary-mount $dev -> $mp (fs=vfat)"
     else

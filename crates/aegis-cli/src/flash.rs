@@ -261,6 +261,10 @@ fn find_repo_root() -> Option<PathBuf> {
 }
 
 fn dirs_from_exe() -> Option<PathBuf> {
+    // Used to locate the developer's repo workspace (walks up to find
+    // `Cargo.toml + crates/`), not for any security decision. A
+    // tampered current_exe just makes us fail to find the repo.
+    // nosemgrep: rust.lang.security.current-exe.current-exe
     std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(Path::to_path_buf))

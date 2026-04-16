@@ -49,6 +49,10 @@ struct Report {
 }
 
 fn main() -> ExitCode {
+    // Standard CLI dispatch. argv[0] is dropped (`.skip(1)`); remaining
+    // args are flag names the user already controls. No security
+    // decision keys off argv.
+    // nosemgrep: rust.lang.security.args.args
     let args: Vec<String> = env::args().skip(1).collect();
     let json_mode = args.iter().any(|a| a == "--json");
     let threshold = args

@@ -105,13 +105,36 @@ log "  distro : $(stat -c '%s' "$INITRD_SRC") bytes"
 log "  aegis  : $(stat -c '%s' "$AEGIS_INITRD") bytes"
 log "  combined: $(stat -c '%s' "$WORK/combined-initrd.img") bytes"
 
-# grub.cfg — serial console redirect for operator visibility on
-# real hardware with a serial port, plus sane defaults for normal boots.
-cat > "$WORK/grub.cfg" <<'EOF'
-serial --unit=0 --speed=115200
-terminal_input serial console
-terminal_output serial console
+# grub.cfg — sane defaults; serial routing is left to the kernel.
+#
+# Why no `serial` / `terminal_input/output serial` block here:
+#
+# Canonical's signed grub locks down `insmod` from disk under Secure
+# Boot ("Secure Boot forbids loading module from .../serial.mod") AND
+# does not ship the serial module built-in. So the only way to drive
+# the grub menu on a serial console under SB would be to ship our own
+# signed grub with serial built-in — explicitly out of scope (we lean
+# on the distro signing chain by design; see ADR 0001).
+#
+# Each menuentry already passes `console=ttyS0,115200 console=tty0`
+# on the kernel cmdline, so the kernel + rescue-tui are visible on
+# serial from the moment the kernel hands off. The trade-off is that
+# grub's own boot-menu UI is invisible on a serial-only console — it
+# auto-selects after `set timeout=3` regardless. Operators with a
+# local monitor see the menu; serial-only operators see kernel output
+# starting from the EFI stub. (#109)
+# MKUSB_GRUB_DEFAULT picks which menuentry boots when grub times out:
+#   0 = aegis-boot rescue              (default; tty0-primary, real HW)
+#   1 = aegis-boot rescue (serial-primary)  (headless / serial-only)
+#   2 = aegis-boot rescue (verbose)    (first-boot debug)
+# The CI smoke test sets it to 1 because it has no local monitor.
+GRUB_DEFAULT_ENTRY="${MKUSB_GRUB_DEFAULT:-0}"
+
+cat > "$WORK/grub.cfg" <<EOF
 set timeout=3
+set default=${GRUB_DEFAULT_ENTRY}
+EOF
+cat >> "$WORK/grub.cfg" <<'EOF'
 
 # Normal boot — concise kernel logs.
 # console= order MATTERS: last one wins as /dev/console for userspace.

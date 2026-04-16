@@ -213,13 +213,16 @@ fn mount_dev(dev: &Path) -> Result<Mount, String> {
         ));
     }
     let tmp = tempdir().ok_or_else(|| "mktemp failed".to_string())?;
+    // iocharset=utf8 (not cp437 — that's a codepage, not an iocharset;
+    // using cp437 as iocharset silently falls back to the default
+    // iso8859-1 and fails on kernels without nls_iso8859-1 loaded).
     let out = Command::new("sudo")
         .args([
             "mount",
             "-t",
             "vfat",
             "-o",
-            "rw,codepage=437,iocharset=cp437",
+            "rw,codepage=437,iocharset=utf8",
             &part.display().to_string(),
             &tmp.display().to_string(),
         ])
@@ -248,6 +251,10 @@ fn unmount_temp(m: &Mount) {
 }
 
 fn tempdir() -> Option<PathBuf> {
+    // Name is unique per process (PID + counter) and `create_dir` is
+    // atomic, returning Err if the path already exists. This rules out
+    // the predictable-name attack the temp-dir rule warns about.
+    // nosemgrep: rust.lang.security.temp-dir.temp-dir
     let base = std::env::temp_dir();
     for i in 0..100 {
         let path = base.join(format!("aegis-cli-{}-{i}", std::process::id()));

@@ -57,14 +57,21 @@ jobs:
 
       - name: Run mkusb
         run: |
-          DISK_SIZE_MB=1024 ./scripts/mkusb.sh
+          # MKUSB_GRUB_DEFAULT=1 selects the serial-primary menuentry
+          # so /init + rescue-tui output goes to ttyS0 (which QEMU
+          # exposes via -serial mon:stdio); the default tty0-primary
+          # entry is invisible on -nographic. (#109)
+          DISK_SIZE_MB=1024 MKUSB_GRUB_DEFAULT=1 ./scripts/mkusb.sh
           ls -lh out/aegis-boot.img out/aegis-boot.img.sha256
           # Verify partition table came out as expected.
           sgdisk -p out/aegis-boot.img
 
       - name: Boot the image under OVMF SecBoot
         env:
-          TIMEOUT_SECONDS: "90"
+          # Matches the proven OVMF SecBoot E2E job; 90s was too tight
+          # for cold OVMF + grub + kernel + rescue-tui startup on a
+          # GHA standard runner (#109).
+          TIMEOUT_SECONDS: "120"
         run: |
           # Reuse the OVMF SB boot setup but point the disk at our mkusb
           # output. Expect kernel+rescue-tui banner in serial.

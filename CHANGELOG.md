@@ -2,6 +2,45 @@
 
 All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.12.0] — 2026-04-16
+
+**The operator-journey release.** Transforms aegis-boot from a developer tool to an operator tool. Synthesis of two full shakedowns on real USB hardware (Alpine refusal + Ubuntu success) and a `nexus-agents ux_expert` alignment review that surfaced #131 as a v1.0 blocker.
+
+### Headline — aegis-boot CLI (#124, #125)
+
+New binary `aegis-boot` (crate `aegis-cli`) with three subcommands:
+
+- **`aegis-boot flash [device]`** — 3-step guided USB writer. Auto-detects removable drives (sysfs-based, shows model + capacity + partition count), typed `flash` confirmation, builds the image + dd's with progress, syncs, partprobes.
+- **`aegis-boot list [device]`** — auto-finds the mounted `AEGIS_ISOS` partition (via `/proc/mounts`) or accepts `/dev/sdX` / path argument. Prints every `.iso` with its sidecar verification status (`✓ sha256`, `✓ minisig`).
+- **`aegis-boot add <iso> [device]`** — copies an ISO onto the stick with free-space check + automatic sidecar detection (`.sha256`, `.SHA256SUMS`, `.minisig`). Warns when no sidecars found.
+
+Verified end-to-end against the live shakedown stick: instantly finds both Alpine and Ubuntu ISOs.
+
+### Operator-journey UX polish
+
+- **Post-kexec handoff banner** (#127) — clear-screen + 9-line "Booting ... screen may go blank briefly" before `kexec_file_load`. No more silent black screen between TUI and new kernel.
+- **Installer-vs-live warning strip** (#131, **v1.0 blocker fix**) — yellow 2-line warning on Confirm when the ISO filename matches one of 23 installer-bearing patterns (`live-server`, `netinst`, Fedora DVD, Anaconda, Windows, etc.). Prevents false confidence from GREEN verdicts on ISOs that can erase the host's disk.
+- **Unsigned kernel guidance** (#126) — `docs/UNSIGNED_KERNEL.md` documents the full operator choice tree (distro-signed ISO vs MOK enrollment vs what NOT to do). Error screen's no-key remedy rewritten from one vague sentence to a concrete two-path guide. Relaxed kexec mode investigated and `not shipping` decision documented — `kexec_load(2)` is blocked by the same SB lockdown that blocks `kexec_file_load`.
+
+### Real-hardware validation (#109 closed)
+
+First real-USB shakedown on a SanDisk Cruzer 32GB via QEMU USB-passthrough with OVMF Secure Boot enforcing:
+
+- **Alpine 3.20.3** (unsigned kernel) → `errno 61 (ENODATA)` — correct refusal per KEXEC_SIG policy
+- **Ubuntu 24.04.2 LTS** (Canonical-signed) → `kexec_core: Starting new kernel` — **successful handoff**
+
+6 bugs found + fixed during shakedown: #112 console order, #113 secondary mount noise, #115 tty0 alt-screen, #116 Alpine misclassification (2 rounds), #117 double-scan, #122 Debian false-match.
+
+### Tests
+
+140 workspace tests, clippy clean. No net-new tests for this release — CLI surface is interactive; render changes are visual; both categories validated manually in shakedown.
+
+### Known v1.0.0 gaps (from ux_expert alignment review)
+
+- [#132](https://github.com/williamzujkowski/aegis-boot/issues/132) Real-HW E2E test of last-booted persistence (currently unit-tested only)
+- [#123](https://github.com/williamzujkowski/aegis-boot/issues/123) Mac/Windows `aegis-boot flash` (Linux-only today)
+- [#51](https://github.com/williamzujkowski/aegis-boot/issues/51) Framework / ThinkPad / Dell real-boot on the hardware itself (today: QEMU passthrough of real USB — close but not full)
+
 ## [0.11.0] — 2026-04-15
 
 **Accessibility + design-review cleanup release.**

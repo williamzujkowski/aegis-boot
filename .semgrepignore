@@ -1,0 +1,19 @@
+# Semgrep exclusions for aegis-boot.
+#
+# Per-file scope reductions for paths where the flagged patterns are
+# the *intentional purpose of the code*. Per-call-site `// nosemgrep:`
+# annotations live in the source for narrower exceptions.
+
+# kexec-loader is the workspace's only `unsafe`-bearing crate. Workspace
+# `unsafe = forbid` exempts it explicitly; the whole point of the crate
+# is wrapping `kexec_file_load(2)` and the Linux syscall ABI. Auditing
+# those `unsafe` blocks is the security review for this crate.
+crates/kexec-loader/
+
+# iso-parser test mocks build a fake `Metadata` value via `temp_dir()`
+# because `std::fs::Metadata` has no public constructor. The mock is
+# behind `#[cfg(test)]` and never compiles into shipped code.
+crates/iso-parser/src/lib.rs
+
+# Standard build artifacts.
+target/
