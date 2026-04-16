@@ -6,6 +6,7 @@ members = [
     "crates/rescue-tui",
     "crates/kexec-loader",
     "crates/aegis-fitness",
+    "crates/aegis-cli",
 ]
 exclude = ["crates/iso-parser/fuzz"]
 
