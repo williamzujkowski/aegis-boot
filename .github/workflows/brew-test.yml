@@ -1,0 +1,78 @@
+name: Homebrew formula test
+
+# Validates Formula/aegis-boot.rb on every change and periodically
+# against brew CLI updates. Catches three classes of breakage:
+#
+#   1. Formula syntax / style errors (`brew audit`, `brew style`)
+#   2. Install failure — URL unreachable, sha256 mismatch, missing
+#      dependency (`brew install`)
+#   3. Binary runtime failure — `test do` block in the formula runs
+#      `aegis-boot --version`, `--help`, and `flash` (expected exit 1
+#      in a runner with no USB drives)
+#
+# Triggers:
+#   * push to main when Formula/ changes — catches the auto-bump
+#     commits from release.yml before users brew upgrade
+#   * pull_request when Formula/ or this workflow changes
+#   * weekly cron (Monday 12:30 UTC, 30 min after catalog-revalidate
+#     so they don't contend) — catches brew-CLI changes that break
+#     the formula even without us touching it
+#   * workflow_dispatch for ad-hoc
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Formula/**"
+      - ".github/workflows/brew-test.yml"
+  pull_request:
+    paths:
+      - "Formula/**"
+      - ".github/workflows/brew-test.yml"
+  schedule:
+    - cron: "30 12 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  brew-test:
+    name: brew audit + install + test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@master
+
+      # Style + audit on the formula. We pass the file directly rather
+      # than tapping, so breakage is caught without a full tap install.
+      # `--strict --online` matches what a homebrew-core submission
+      # would see, minus the core-specific rules we don't need.
+      - name: brew audit
+        run: brew audit --strict --online Formula/aegis-boot.rb
+
+      - name: brew style
+        run: brew style Formula/aegis-boot.rb
+
+      # Tap this repo and install from it. This exercises the real
+      # path operators will use: `brew tap` + `brew install <name>`.
+      - name: Tap this repo
+        run: brew tap williamzujkowski/aegis-boot "$(pwd)"
+
+      - name: brew install aegis-boot
+        run: brew install --verbose aegis-boot
+
+      - name: brew test aegis-boot
+        run: brew test --verbose aegis-boot
+
+      # Final sanity: the installed binary should work from $PATH.
+      - name: Smoke test installed binary
+        run: |
+          aegis-boot --version
+          aegis-boot --help | head -5
+          # `recommend` is a no-network read — always passes.
+          aegis-boot recommend | head -5
