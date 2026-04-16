@@ -105,21 +105,25 @@ log "  distro : $(stat -c '%s' "$INITRD_SRC") bytes"
 log "  aegis  : $(stat -c '%s' "$AEGIS_INITRD") bytes"
 log "  combined: $(stat -c '%s' "$WORK/combined-initrd.img") bytes"
 
-# grub.cfg — serial console redirect for operator visibility on
-# real hardware with a serial port, plus sane defaults for normal boots.
+# grub.cfg — sane defaults; serial routing is left to the kernel.
 #
-# `insmod serial` is required before `serial` / `terminal_*` because
-# the signed Canonical grub keeps serial as a loadable module rather
-# than built-in. Without insmod, grub prints
-#   error: can't find command `serial'.
-#   error: terminal `serial' isn't found.
-# and falls back to whatever EFI gave it — which on headless QEMU is
-# nothing, so the boot menu never reaches a working console. (#109)
+# Why no `serial` / `terminal_input/output serial` block here:
+#
+# Canonical's signed grub locks down `insmod` from disk under Secure
+# Boot ("Secure Boot forbids loading module from .../serial.mod") AND
+# does not ship the serial module built-in. So the only way to drive
+# the grub menu on a serial console under SB would be to ship our own
+# signed grub with serial built-in — explicitly out of scope (we lean
+# on the distro signing chain by design; see ADR 0001).
+#
+# Each menuentry already passes `console=ttyS0,115200 console=tty0`
+# on the kernel cmdline, so the kernel + rescue-tui are visible on
+# serial from the moment the kernel hands off. The trade-off is that
+# grub's own boot-menu UI is invisible on a serial-only console — it
+# auto-selects after `set timeout=3` regardless. Operators with a
+# local monitor see the menu; serial-only operators see kernel output
+# starting from the EFI stub. (#109)
 cat > "$WORK/grub.cfg" <<'EOF'
-insmod serial
-serial --unit=0 --speed=115200
-terminal_input serial console
-terminal_output serial console
 set timeout=3
 
 # Normal boot — concise kernel logs.

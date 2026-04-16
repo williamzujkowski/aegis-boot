@@ -64,7 +64,10 @@ jobs:
 
       - name: Boot the image under OVMF SecBoot
         env:
-          TIMEOUT_SECONDS: "90"
+          # Matches the proven OVMF SecBoot E2E job; 90s was too tight
+          # for cold OVMF + grub + kernel + rescue-tui startup on a
+          # GHA standard runner (#109).
+          TIMEOUT_SECONDS: "120"
         run: |
           # Reuse the OVMF SB boot setup but point the disk at our mkusb
           # output. Expect kernel+rescue-tui banner in serial.
