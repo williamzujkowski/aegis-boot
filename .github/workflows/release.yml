@@ -7,17 +7,21 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to build (e.g. v0.1.0)"
+        description: "Tag to build (e.g. v0.12.0)"
         required: true
 
 permissions:
   contents: write
+  # Required for cosign keyless signing via GitHub OIDC. The token is
+  # used by sigstore/cosign-installer + cosign sign-blob to fetch a
+  # signing certificate bound to this workflow's identity.
+  id-token: write
 
 jobs:
   build-and-release:
-    name: Build + attach release artifacts
+    name: Build + sign + attach release artifacts
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - name: Checkout
@@ -41,12 +45,42 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             busybox-static cpio
 
-      - name: Install Rust toolchain (pinned)
+      - name: Install Rust toolchain (pinned) + musl target
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
             | sh -s -- -y --default-toolchain 1.85.0 --profile minimal
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/rustup" target add x86_64-unknown-linux-musl
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: "v2.4.1"
+
+      # ---------- Operator CLI (static musl) -------------------------
+      # `aegis-boot` shells out to dd / mount / sudo / sgdisk on the
+      # host; static musl just makes the binary itself distro-portable
+      # (no glibc version coupling). Operators still need the system
+      # tools — `aegis-boot doctor` reports missing prerequisites.
+      #
+      # aegis-cli is pure-Rust (no C deps) so we don't need musl-gcc /
+      # musl-tools — rustc handles the static linking via the rust-std
+      # for the musl target. Verified locally: 855 KiB static-pie ELF.
+      - name: Build aegis-boot CLI (static musl, x86_64)
+        env:
+          SOURCE_DATE_EPOCH: "1700000000"
+        run: |
+          cargo build --release --locked \
+            --target x86_64-unknown-linux-musl \
+            -p aegis-cli
+          mkdir -p out
+          cp target/x86_64-unknown-linux-musl/release/aegis-boot \
+            out/aegis-boot-x86_64-linux
+          file out/aegis-boot-x86_64-linux
+          strip out/aegis-boot-x86_64-linux
+          du -h out/aegis-boot-x86_64-linux
+
+      # ---------- rescue-tui + initramfs (existing flow) -------------
       - name: Build rescue-tui (release)
         env:
           SOURCE_DATE_EPOCH: "1700000000"
@@ -57,24 +91,58 @@ jobs:
           SOURCE_DATE_EPOCH: "1700000000"
         run: ./scripts/build-initramfs.sh
 
+      # ---------- SBOM (existing flow) -------------------------------
       - name: Generate CycloneDX SBOM
         run: |
           cargo install --locked cargo-cyclonedx --version 0.5.7
-          # cargo-cyclonedx writes a `<package>.cdx.json` inside each member
-          # crate directory rather than a single workspace-wide file. The
-          # rescue-tui crate is what we actually ship; its SBOM closure
-          # transitively covers iso-probe + kexec-loader + iso-parser since
-          # those are compile-time dependencies.
+          # cargo-cyclonedx writes a `<package>.cdx.json` inside each
+          # member crate directory rather than a single workspace-wide
+          # file. The rescue-tui crate is what we actually ship; its
+          # SBOM closure transitively covers iso-probe + kexec-loader +
+          # iso-parser since those are compile-time dependencies.
           ( cd crates/rescue-tui && cargo cyclonedx --format json )
           cp crates/rescue-tui/rescue-tui.cdx.json out/sbom.cdx.json
 
-      - name: Stage release artifacts
+      # ---------- Stage + checksum --------------------------------------
+      - name: Stage release artifacts + aggregate SHA256SUMS
         run: |
           cp target/release/rescue-tui out/rescue-tui
-          ( cd out && sha256sum rescue-tui > rescue-tui.sha256 )
-          echo "--- Release artifacts ---"
-          ls -l out/
+          ( cd out && sha256sum \
+              aegis-boot-x86_64-linux \
+              rescue-tui \
+              initramfs.cpio.gz \
+              sbom.cdx.json \
+              > SHA256SUMS )
+          echo "--- Staged artifacts ---"
+          ls -lh out/
+          echo "--- SHA256SUMS ---"
+          cat out/SHA256SUMS
 
+      # ---------- Cosign keyless sign --------------------------------
+      # Each artifact gets a .sig (signature) + .pem (certificate)
+      # produced via Sigstore keyless signing. Verifiable later with:
+      #   cosign verify-blob --certificate-identity-regexp \
+      #     "https://github.com/williamzujkowski/aegis-boot/" \
+      #     --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+      #     --signature aegis-boot-x86_64-linux.sig \
+      #     --certificate aegis-boot-x86_64-linux.pem \
+      #     aegis-boot-x86_64-linux
+      - name: Cosign sign artifacts (keyless)
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          cd out
+          for f in aegis-boot-x86_64-linux rescue-tui initramfs.cpio.gz \
+                   sbom.cdx.json SHA256SUMS; do
+            cosign sign-blob --yes \
+              --output-signature  "${f}.sig" \
+              --output-certificate "${f}.pem" \
+              "$f"
+          done
+          echo "--- Signed artifacts ---"
+          ls -1 *.sig *.pem
+
+      # ---------- Release notes (existing flow) ----------------------
       - name: Generate release notes
         id: notes
         run: |
@@ -93,18 +161,40 @@ jobs:
           else
             echo "Release ${tag}" > out/release-notes.md
           fi
+          # Append the verification footer (kept in docs/ to avoid
+          # heredoc-vs-YAML indentation hazards in this workflow file).
+          cat docs/RELEASE_NOTES_FOOTER.md >> out/release-notes.md
           echo "path=out/release-notes.md" >> "$GITHUB_OUTPUT"
 
-      - name: Create GitHub release
+      # ---------- Create release if missing, then upload assets ------
+      # Idempotent: works whether the release already exists (manual
+      # `gh release create` happened first) or not (tag push triggered
+      # this workflow before any human created the release).
+      - name: Create or update release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${{ steps.tag.outputs.name }}"
-          gh release create "$tag" \
-            --title "aegis-boot $tag" \
-            --notes-file "${{ steps.notes.outputs.path }}" \
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --title "aegis-boot $tag" \
+              --notes-file "${{ steps.notes.outputs.path }}"
+          fi
+          # --clobber overwrites if a re-run uploads the same asset name.
+          gh release upload "$tag" --clobber \
+            out/aegis-boot-x86_64-linux \
+            out/aegis-boot-x86_64-linux.sig \
+            out/aegis-boot-x86_64-linux.pem \
+            out/rescue-tui \
+            out/rescue-tui.sig \
+            out/rescue-tui.pem \
             out/initramfs.cpio.gz \
             out/initramfs.cpio.gz.sha256 \
-            out/rescue-tui \
-            out/rescue-tui.sha256 \
-            out/sbom.cdx.json
+            out/initramfs.cpio.gz.sig \
+            out/initramfs.cpio.gz.pem \
+            out/sbom.cdx.json \
+            out/sbom.cdx.json.sig \
+            out/sbom.cdx.json.pem \
+            out/SHA256SUMS \
+            out/SHA256SUMS.sig \
+            out/SHA256SUMS.pem
