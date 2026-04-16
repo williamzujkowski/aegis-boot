@@ -28,6 +28,8 @@ pub fn run_list(args: &[String]) -> ExitCode {
         }
     };
 
+    print_attestation_summary(&mount.path);
+
     let isos = scan_isos(&mount.path);
     if isos.is_empty() {
         println!("No .iso files on {}", mount.path.display());
@@ -175,6 +177,19 @@ pub fn run_add(args: &[String]) -> ExitCode {
 }
 
 // ---- helpers ---------------------------------------------------------------
+
+/// If an attestation matches this stick, print a one-paragraph header.
+/// Silent on miss — operator may have flashed elsewhere, that's fine.
+fn print_attestation_summary(mount_path: &Path) {
+    let Some(s) = crate::attest::summary_for_mount(mount_path) else {
+        return;
+    };
+    println!("Attestation:");
+    println!("  flashed   : {} by {}", s.flashed_at, s.operator);
+    println!("  ISOs added: {} recorded since flash", s.isos_recorded);
+    println!("  manifest  : {}", s.manifest_path.display());
+    println!();
+}
 
 struct Mount {
     path: PathBuf,
