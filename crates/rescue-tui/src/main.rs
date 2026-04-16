@@ -734,6 +734,7 @@ fn run_auto_kexec(state: &AppState, needle: &str) -> Result<(), Box<dyn std::err
         initrd: prepared.initrd.clone(),
         cmdline,
     };
+    print_handoff_banner(&iso.label, &req);
     kexec_loader::load_and_exec(&req)
         .map(|_infallible| ())
         .map_err(|e| format!("kexec failed: {e}").into())
@@ -858,6 +859,14 @@ fn attempt_kexec(state: &mut AppState, idx: usize) {
         cmdline = %req.cmdline,
         "invoking kexec_file_load"
     );
+
+    // #127: post-kexec handoff banner. Print to stderr (which the
+    // terminal still has when the TUI exits alt-screen) so the
+    // operator isn't staring at a black screen wondering if the
+    // kexec fired. Survives in the framebuffer until the new
+    // kernel's own output replaces it.
+    print_handoff_banner(&iso.label, &req);
+
     // Drop guard: prepared lives until kexec_file_load + reboot replace the
     // process. On error, prepared drops here and unmounts.
     match kexec_loader::load_and_exec(&req) {
@@ -867,6 +876,25 @@ fn attempt_kexec(state: &mut AppState, idx: usize) {
             state.record_kexec_error(&e);
         }
     }
+}
+
+/// Clear-screen + banner printed right before `kexec_file_load` so the
+/// operator sees "booting ..." instead of a blank screen. (#127)
+fn print_handoff_banner(label: &str, req: &kexec_loader::KexecRequest) {
+    // ANSI: clear screen + home cursor. Works on tty0, ttyS0, and xterm.
+    eprint!("\x1b[2J\x1b[H");
+    eprintln!("aegis-boot: invoking kexec...");
+    eprintln!();
+    eprintln!("  Booting: {label}");
+    eprintln!("  Kernel:  {}", req.kernel.display());
+    if let Some(ref initrd) = req.initrd {
+        eprintln!("  Initrd:  {}", initrd.display());
+    }
+    eprintln!();
+    eprintln!("The screen may go blank briefly while the new kernel loads.");
+    eprintln!("If boot stalls, a classified error will appear here; otherwise");
+    eprintln!("expect the ISO's own boot output within ~10 seconds.");
+    eprintln!();
 }
 
 #[cfg(test)]

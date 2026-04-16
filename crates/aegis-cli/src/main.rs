@@ -13,6 +13,7 @@
 
 mod detect;
 mod flash;
+mod inventory;
 
 use std::env;
 use std::process::ExitCode;
@@ -23,14 +24,8 @@ fn main() -> ExitCode {
 
     match subcmd {
         Some("flash") => flash::run(&args[1..]),
-        Some("list") => {
-            eprintln!("aegis-boot list: not yet implemented (tracked in #125)");
-            ExitCode::from(1)
-        }
-        Some("add") => {
-            eprintln!("aegis-boot add: not yet implemented (tracked in #125)");
-            ExitCode::from(1)
-        }
+        Some("list") => inventory::run_list(&args[1..]),
+        Some("add") => inventory::run_add(&args[1..]),
         Some("-h" | "--help" | "help") | None => {
             print_help();
             ExitCode::SUCCESS
