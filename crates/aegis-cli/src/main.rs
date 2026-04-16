@@ -4,6 +4,7 @@
 //!   * `flash`  — write aegis-boot to a USB stick (3-step guided)
 //!   * `add`    — copy + validate an ISO onto the stick
 //!   * `list`   — show ISOs on the stick with verification status
+//!   * `doctor` — diagnose host environment + a stick's health
 //!
 //! This replaces the developer workflow of running shell scripts
 //! manually. The binary is named `aegis-boot` so operators type
@@ -12,6 +13,7 @@
 #![forbid(unsafe_code)]
 
 mod detect;
+mod doctor;
 mod flash;
 mod inventory;
 
@@ -30,6 +32,7 @@ fn main() -> ExitCode {
         Some("flash") => flash::run(&args[1..]),
         Some("list") => inventory::run_list(&args[1..]),
         Some("add") => inventory::run_add(&args[1..]),
+        Some("doctor") => doctor::run(&args[1..]),
         Some("-h" | "--help" | "help") | None => {
             print_help();
             ExitCode::SUCCESS
@@ -50,14 +53,16 @@ fn print_help() {
     println!("aegis-boot — Signed boot. Any ISO. Your keys.");
     println!();
     println!("USAGE:");
-    println!("  aegis-boot flash [device]    Write aegis-boot to a USB stick");
-    println!("  aegis-boot list [device]     Show ISOs on the stick");
+    println!("  aegis-boot flash [device]     Write aegis-boot to a USB stick");
+    println!("  aegis-boot list [device]      Show ISOs on the stick");
     println!("  aegis-boot add <iso> [device] Copy + validate an ISO");
-    println!("  aegis-boot --version         Print version");
-    println!("  aegis-boot --help            This message");
+    println!("  aegis-boot doctor [--stick D] Health check (host + stick)");
+    println!("  aegis-boot --version          Print version");
+    println!("  aegis-boot --help             This message");
     println!();
     println!("EXAMPLES:");
-    println!("  aegis-boot flash             # auto-detect removable drive");
-    println!("  aegis-boot flash /dev/sdc    # specific drive");
-    println!("  aegis-boot add ubuntu.iso    # validate + copy to stick");
+    println!("  aegis-boot doctor             # quick environment + stick health");
+    println!("  aegis-boot flash              # auto-detect removable drive");
+    println!("  aegis-boot flash /dev/sdc     # specific drive");
+    println!("  aegis-boot add ubuntu.iso     # validate + copy to stick");
 }

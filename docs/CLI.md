@@ -6,14 +6,15 @@ The `aegis-boot` binary is the operator-facing front end. It wraps the build/fla
 aegis-boot — Signed boot. Any ISO. Your keys.
 
 USAGE:
-  aegis-boot flash [device]    Write aegis-boot to a USB stick
-  aegis-boot list [device]     Show ISOs on the stick
+  aegis-boot flash [device]     Write aegis-boot to a USB stick
+  aegis-boot list [device]      Show ISOs on the stick
   aegis-boot add <iso> [device] Copy + validate an ISO
-  aegis-boot --version         Print version
-  aegis-boot --help            This message
+  aegis-boot doctor [--stick D] Health check (host + stick)
+  aegis-boot --version          Print version
+  aegis-boot --help             This message
 ```
 
-All three subcommands accept `--help` / `-h` for per-command usage.
+All subcommands accept `--help` / `-h` for per-command usage.
 
 The implementation lives in [`crates/aegis-cli`](../crates/aegis-cli) (binary name `aegis-boot`).
 
@@ -137,6 +138,67 @@ Both `list` and `add` use the same logic to figure out where `AEGIS_ISOS` is:
 | `/some/path` (does not exist) | Error. |
 
 Why the explicit `codepage=437,iocharset=cp437`? Because the kernel's default `iocharset=utf8` is a separate module (`nls_utf8`) that we *do* ship in the rescue initramfs but is not always loaded on the operator's host kernel. Using cp437 avoids the dependency on the workstation side. The on-stick filenames are still readable from any modern host.
+
+---
+
+## `aegis-boot doctor`
+
+Diagnostic health check for both the host workstation and (optionally) an aegis-boot stick.
+
+### Usage
+
+```bash
+aegis-boot doctor                       # auto-detect a single removable drive
+aegis-boot doctor --stick /dev/sdc      # inspect a specific drive
+aegis-boot doctor --help
+```
+
+### What it reports
+
+**Host checks:**
+- `operating system` — Linux today (macOS/Windows tracked in [#123](https://github.com/williamzujkowski/aegis-boot/issues/123))
+- `command: dd` / `sudo` / `sgdisk` / `lsblk` — the prerequisites for `flash` and stick inspection
+- `Secure Boot (host)` — `mokutil --sb-state` first, falling back to reading `/sys/firmware/efi/efivars/SecureBoot-*` directly
+- `removable USB drives` — list / count
+
+**Stick checks (when a drive is provided or auto-detected):**
+- `partition table` — runs `sgdisk -p` and verifies the GPT contains both an ESP and an `AEGIS_ISOS` partition
+- `AEGIS_ISOS contents` — if mounted, counts ISOs + sidecars; warns if no sidecars present (TUI verdict will be GRAY)
+
+### Output
+
+```
+aegis-boot doctor — host + stick health check
+
+Host checks:
+  [✓ PASS] operating system                  Linux (supported)
+  [✓ PASS] command: dd                       /usr/bin/dd (required to write the stick)
+  [✓ PASS] command: sudo                     /usr/bin/sudo (required for dd / mount)
+  [✓ PASS] command: sgdisk                   /usr/sbin/sgdisk (verifies stick partition table after flash)
+  [✓ PASS] command: lsblk                    /usr/bin/lsblk (lists removable drives for `flash` auto-detect)
+  [! WARN] Secure Boot (host)                disabled on this host (target machine SB state is what matters)
+  [✓ PASS] removable USB drives              /dev/sda (Cruzer, 29.8 GB)
+
+Stick checks:
+  [✓ PASS] partition table: /dev/sda         GPT with ESP + AEGIS_ISOS partitions — looks like an aegis-boot stick
+  [! WARN] AEGIS_ISOS contents               2 ISO(s), no sidecars — TUI will show GRAY verdict
+
+  Health score: 93/100 (EXCELLENT)
+```
+
+### Exit codes
+
+- `0` — healthy (PASS or only WARN items)
+- `1` — at least one FAIL — the report ends with a `NEXT ACTION` line telling the operator what to do
+- `2` — usage error (unknown flag etc.)
+
+### Score weighting
+
+PASS = 10 points / WARN = 7 points / FAIL = 0 points / SKIP = not counted. Final score is `weight * 100 / total`, rounded. Bands: 90+ EXCELLENT, 70+ OK, 40+ DEGRADED, below 40 BROKEN.
+
+The `NEXT ACTION` line is set by the *first* FAIL row that has one — it's the single most important thing to fix before retrying.
+
+---
 
 ## Versioning
 
