@@ -13,6 +13,7 @@ use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
+use crate::attest;
 use crate::detect::{self, Drive};
 
 /// Entry point for `aegis-boot flash [device]`.
@@ -237,6 +238,21 @@ fn flash(drive: &Drive) -> Result<(), String> {
     );
     println!("  Partition 1: ESP (signed boot chain)");
     println!("  Partition 2: AEGIS_ISOS (ready for ISOs)");
+
+    // Attestation: record what was flashed. Failure here must NOT abort
+    // the flash — the data is on the stick regardless. We just print
+    // the failure and proceed.
+    println!();
+    match attest::record_flash(drive, &img_path, img_size) {
+        Ok(att_path) => {
+            println!("Attestation receipt: {}", att_path.display());
+            println!("  Inspect with: aegis-boot attest show {}", att_path.display());
+        }
+        Err(e) => {
+            eprintln!("warning: attestation receipt could not be recorded: {e}");
+            eprintln!("(the stick is still valid; this is a host-side audit-trail miss)");
+        }
+    }
 
     Ok(())
 }

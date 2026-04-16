@@ -12,6 +12,7 @@ USAGE:
   aegis-boot doctor [--stick D] Health check (host + stick)
   aegis-boot recommend [slug]   Curated catalog of known-good ISOs
   aegis-boot fetch <slug>       Download + verify a catalog ISO
+  aegis-boot attest [list|show] Attestation receipts for past flashes
   aegis-boot --version          Print version
   aegis-boot --help             This message
 ```
@@ -292,6 +293,66 @@ For unsigned-kernel entries (Alpine, Arch, NixOS) the success message also remin
 - `0` — verified ISO ready to add (including the unknown-key GPG case)
 - `1` — download / verification failed
 - `2` — usage error
+
+---
+
+---
+
+## `aegis-boot attest`
+
+Attestation receipts for flashed sticks. Every `aegis-boot flash` writes a JSON manifest recording exactly what went onto the stick (image SHA-256, target device + GUID + size + model, image size) and the host environment that wrote it (operator, kernel, Secure Boot state, timestamp). Manifests live in `$XDG_DATA_HOME/aegis-boot/attestations/` (or `~/.local/share/aegis-boot/attestations/`).
+
+### Usage
+
+```bash
+aegis-boot attest list                          # list all stored attestations
+aegis-boot attest show <FILE>                   # pretty-print one
+aegis-boot attest --help
+```
+
+### Why
+
+Every other USB-imaging tool is silent after flash. The attestation receipt is the artifact that operationalizes aegis-boot's "prove what's on the stick" claim:
+
+- **Forensics / IR** gets chain-of-custody. "What was on this stick when it was deployed?" is a cryptographic-grade question, not a vibes question.
+- **Sysadmin fleets** get per-stick inventory. The manifest filename includes the disk GUID, so 200 sticks from a school-district refresh produce 200 retrievable receipts.
+- **Security review** gets an audit trail. Whose user account on which workstation flashed which image with which Secure Boot state when?
+
+### Manifest schema (v1)
+
+```json
+{
+  "schema_version": 1,
+  "tool_version": "0.13.0",
+  "flashed_at": "2026-04-16T12:34:56Z",
+  "operator": "william",
+  "host": {
+    "kernel": "Linux 6.17.0-20-generic",
+    "secure_boot": "disabled"
+  },
+  "target": {
+    "device": "/dev/sdc",
+    "model": "SanDisk Cruzer Blade",
+    "size_bytes": 32010240000,
+    "image_sha256": "abcdef...",
+    "image_size_bytes": 1073741824,
+    "disk_guid": "7DD588C9-3A85-48CF-822F-BFBC4D8DD784"
+  },
+  "isos": []
+}
+```
+
+Forward-compatibility: unknown fields are tolerated by the parser. Future schema versions are additive; breaking changes bump `schema_version`.
+
+### Cryptographic signing
+
+v1 manifests are unsigned. The trust anchor is "you ran this command on this host, the timestamps and hashes are evidence." Cryptographic signing — TPM PCR attestation + minisign — is tracked under [epic #139](https://github.com/williamzujkowski/aegis-boot/issues/139) and will land alongside the TPM measured-boot work as additional fields, not a schema rewrite.
+
+### What's NOT in v0
+
+- **On-stick copy** at `/EFI/aegis-attestation.json`: needs an ESP-mount step after `dd`. Tracked.
+- **Append on `aegis-boot add`**: each ISO copy should append an `IsoRecord` to the matching attestation. Needs stick-UUID → manifest matching logic. Tracked.
+- **`aegis-boot attest verify`**: depends on the signing scheme above.
 
 ---
 

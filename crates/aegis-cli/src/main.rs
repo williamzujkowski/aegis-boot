@@ -7,6 +7,7 @@
 //!   * `doctor`    — diagnose host environment + a stick's health
 //!   * `recommend` — curated catalog of known-good ISOs
 //!   * `fetch`     — download + verify a catalog ISO
+//!   * `attest`    — list / show attestation receipts for past flashes
 //!
 //! This replaces the developer workflow of running shell scripts
 //! manually. The binary is named `aegis-boot` so operators type
@@ -14,6 +15,7 @@
 
 #![forbid(unsafe_code)]
 
+mod attest;
 mod catalog;
 mod detect;
 mod doctor;
@@ -39,6 +41,7 @@ fn main() -> ExitCode {
         Some("doctor") => doctor::run(&args[1..]),
         Some("recommend") => catalog::run(&args[1..]),
         Some("fetch") => fetch::run(&args[1..]),
+        Some("attest") => attest::run(&args[1..]),
         Some("-h" | "--help" | "help") | None => {
             print_help();
             ExitCode::SUCCESS
@@ -65,6 +68,7 @@ fn print_help() {
     println!("  aegis-boot doctor [--stick D] Health check (host + stick)");
     println!("  aegis-boot recommend [slug]   Curated catalog of known-good ISOs");
     println!("  aegis-boot fetch <slug>       Download + verify a catalog ISO");
+    println!("  aegis-boot attest [list|show] Attestation receipts for past flashes");
     println!("  aegis-boot --version          Print version");
     println!("  aegis-boot --help             This message");
     println!();
@@ -75,4 +79,5 @@ fn print_help() {
     println!("  aegis-boot flash              # auto-detect removable drive");
     println!("  aegis-boot flash /dev/sdc     # specific drive");
     println!("  aegis-boot add ubuntu.iso     # validate + copy to stick");
+    println!("  aegis-boot attest list        # show recorded flashes");
 }
