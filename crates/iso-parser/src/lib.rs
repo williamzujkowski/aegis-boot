@@ -3,6 +3,14 @@
 //! Scans directories for ISO files, detects distribution layouts, and extracts
 //! kernel/initrd paths for boot configuration.
 //!
+//! # Safety
+//!
+//! `forbid(unsafe_code)` at the crate level — `iso-parser` ships to crates.io
+//! per [#51](https://github.com/williamzujkowski/aegis-boot/issues/51) and a
+//! library that parses untrusted ISO content has no business calling raw
+//! syscalls. The kexec syscall lives in `kexec-loader`, the only crate in the
+//! workspace that's exempt from this constraint.
+//!
 //! # Supported Distributions
 //! - **Arch Linux**: `/boot/` contains `vmlinuz` and `initrd.img`
 //! - **Debian/Ubuntu**: `/install/` or `/casper/` contains `vmlinuz` and `initrd.gz`
@@ -21,6 +29,8 @@
 //!     }
 //! }
 //! ```
+
+#![forbid(unsafe_code)]
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
