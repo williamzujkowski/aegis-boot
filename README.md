@@ -56,6 +56,10 @@ Install the operator CLI (Linux x86_64 today; cross-platform tracked in [#123](h
 # Cosign-verified install from the latest GitHub release.
 curl -sSL https://raw.githubusercontent.com/williamzujkowski/aegis-boot/main/scripts/install.sh | sh
 
+# OR via Homebrew (Linux):
+brew tap williamzujkowski/aegis-boot https://github.com/williamzujkowski/aegis-boot
+brew install aegis-boot
+
 # Or pin a version: sh install.sh --version v0.12.0
 # Or skip cosign (NOT recommended): sh install.sh --no-verify
 # Build from source: see BUILDING.md.

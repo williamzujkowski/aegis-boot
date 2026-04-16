@@ -14,13 +14,25 @@ Have on hand:
 
 ## Step 0 — install the operator CLI
 
+Pick your channel:
+
 ```bash
+# Option A — cosign-verified install one-liner
 curl -sSL https://raw.githubusercontent.com/williamzujkowski/aegis-boot/main/scripts/install.sh | sh
+
+# Option B — Homebrew (Linux only today)
+brew tap williamzujkowski/aegis-boot https://github.com/williamzujkowski/aegis-boot
+brew install aegis-boot
+
+# Option C — build from source (any platform with Rust 1.85+)
+cargo install --git https://github.com/williamzujkowski/aegis-boot --bin aegis-boot --path crates/aegis-cli
 ```
 
-This downloads the latest release's `aegis-boot-x86_64-linux` static binary, verifies its Sigstore cosign signature against this repo's `release.yml` workflow identity, and installs to `/usr/local/bin` (root) or `~/.local/bin` (non-root).
+Both A and B install the same binary (Linux x86_64 today; cross-platform tracked in [#123](https://github.com/williamzujkowski/aegis-boot/issues/123)).
 
-The installer itself does NOT need root unless you're installing to `/usr/local/bin`. To inspect first: `curl -sSL ... -o install.sh && less install.sh && sh install.sh`.
+Option A downloads the latest release's `aegis-boot-x86_64-linux` static binary, verifies its Sigstore cosign signature against this repo's `release.yml` workflow identity, and installs to `/usr/local/bin` (root) or `~/.local/bin` (non-root). The installer itself does NOT need root unless you're installing to `/usr/local/bin`. To inspect first: `curl -sSL ... -o install.sh && less install.sh && sh install.sh`.
+
+Option B (Homebrew) auto-installs the Brew-tracked runtime deps (`curl`, `gnupg`, `gptfdisk`, `coreutils`). Runs the same cosign-verifiable binary; verify the cosign signature manually if you want to confirm — see [Formula/README.md](../Formula/README.md).
 
 Sanity check:
 
