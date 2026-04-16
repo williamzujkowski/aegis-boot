@@ -123,8 +123,18 @@ log "  combined: $(stat -c '%s' "$WORK/combined-initrd.img") bytes"
 # auto-selects after `set timeout=3` regardless. Operators with a
 # local monitor see the menu; serial-only operators see kernel output
 # starting from the EFI stub. (#109)
-cat > "$WORK/grub.cfg" <<'EOF'
+# MKUSB_GRUB_DEFAULT picks which menuentry boots when grub times out:
+#   0 = aegis-boot rescue              (default; tty0-primary, real HW)
+#   1 = aegis-boot rescue (serial-primary)  (headless / serial-only)
+#   2 = aegis-boot rescue (verbose)    (first-boot debug)
+# The CI smoke test sets it to 1 because it has no local monitor.
+GRUB_DEFAULT_ENTRY="${MKUSB_GRUB_DEFAULT:-0}"
+
+cat > "$WORK/grub.cfg" <<EOF
 set timeout=3
+set default=${GRUB_DEFAULT_ENTRY}
+EOF
+cat >> "$WORK/grub.cfg" <<'EOF'
 
 # Normal boot — concise kernel logs.
 # console= order MATTERS: last one wins as /dev/console for userspace.
