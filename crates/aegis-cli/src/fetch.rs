@@ -363,18 +363,27 @@ mod tests {
         assert_eq!(r, "");
     }
 
+    // Env-mutating tests below must not run in parallel with each other
+    // (they both twiddle XDG_CACHE_HOME / HOME, which is process-global).
+    // `cargo test` runs tests in a module in parallel by default; this
+    // Mutex serializes the pair.
+    use std::sync::Mutex;
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
+
     #[test]
     fn default_cache_uses_xdg_cache_home() {
-        // Save and restore env to avoid leaking into other tests.
-        let prev = std::env::var_os("XDG_CACHE_HOME");
-        // SAFETY: tests run sequentially in this module; mutation is scoped.
+        let _g = ENV_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let prev_xdg = std::env::var_os("XDG_CACHE_HOME");
+        // SAFETY: ENV_MUTEX serializes env-mutating tests in this module.
         std::env::set_var("XDG_CACHE_HOME", "/tmp/aegis-test-xdg");
         let p = default_cache_dir("ubuntu-24.04-live-server");
         assert_eq!(
             p,
             PathBuf::from("/tmp/aegis-test-xdg/aegis-boot/ubuntu-24.04-live-server")
         );
-        match prev {
+        match prev_xdg {
             Some(v) => std::env::set_var("XDG_CACHE_HOME", v),
             None => std::env::remove_var("XDG_CACHE_HOME"),
         }
@@ -382,6 +391,9 @@ mod tests {
 
     #[test]
     fn default_cache_falls_back_to_home_dot_cache() {
+        let _g = ENV_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let prev_xdg = std::env::var_os("XDG_CACHE_HOME");
         let prev_home = std::env::var_os("HOME");
         std::env::remove_var("XDG_CACHE_HOME");
