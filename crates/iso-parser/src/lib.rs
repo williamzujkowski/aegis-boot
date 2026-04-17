@@ -243,15 +243,38 @@ impl OsIsoEnvironment {
         use std::process::Command;
 
         // Attempt A: util-linux `-f --show -r`.
-        if let Ok(out) = Command::new("losetup")
+        match Command::new("losetup")
             .args(["-f", "--show", "-r", &iso_path.to_string_lossy()])
             .output()
         {
-            if out.status.success() {
+            Ok(out) if out.status.success() => {
                 let dev = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 if !dev.is_empty() && dev.starts_with("/dev/") {
                     return Some(dev);
                 }
+                // Success exit but stdout didn't name a loop device —
+                // surface so operators see why "no ISOs found" when
+                // losetup is present. (#138)
+                tracing::warn!(
+                    iso = %iso_path.display(),
+                    stdout = %String::from_utf8_lossy(&out.stdout),
+                    "iso-parser: util-linux losetup succeeded but returned no /dev/loop* device"
+                );
+            }
+            Ok(out) => {
+                tracing::warn!(
+                    iso = %iso_path.display(),
+                    exit = ?out.status.code(),
+                    stderr = %String::from_utf8_lossy(&out.stderr),
+                    "iso-parser: util-linux losetup -f --show failed; falling back to busybox scan"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    iso = %iso_path.display(),
+                    error = %e,
+                    "iso-parser: losetup exec failed (not on PATH?); falling back to busybox scan"
+                );
             }
         }
 
@@ -264,19 +287,50 @@ impl OsIsoEnvironment {
                 continue;
             }
             // Query — if it returns non-zero, device is free.
-            let query = Command::new("losetup").arg(&dev).output().ok()?;
+            let query = match Command::new("losetup").arg(&dev).output() {
+                Ok(q) => q,
+                Err(e) => {
+                    tracing::warn!(
+                        dev = %dev,
+                        error = %e,
+                        "iso-parser: losetup query exec failed; skipping device"
+                    );
+                    continue;
+                }
+            };
             if query.status.success() {
                 continue; // already bound
             }
             // Try to attach.
-            let attach = Command::new("losetup")
+            match Command::new("losetup")
                 .args(["-r", &dev, &iso_path.to_string_lossy()])
                 .output()
-                .ok()?;
-            if attach.status.success() {
-                return Some(dev);
+            {
+                Ok(attach) if attach.status.success() => return Some(dev),
+                Ok(attach) => {
+                    tracing::warn!(
+                        dev = %dev,
+                        iso = %iso_path.display(),
+                        exit = ?attach.status.code(),
+                        stderr = %String::from_utf8_lossy(&attach.stderr),
+                        "iso-parser: losetup attach failed; trying next device"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        dev = %dev,
+                        iso = %iso_path.display(),
+                        error = %e,
+                        "iso-parser: losetup attach exec failed; giving up"
+                    );
+                    return None;
+                }
             }
         }
+        tracing::warn!(
+            iso = %iso_path.display(),
+            "iso-parser: exhausted /dev/loop0..15 without a free device; cannot mount ISO"
+        );
         None
     }
 }
