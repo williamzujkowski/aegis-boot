@@ -39,20 +39,35 @@ use tracing::{debug, instrument};
 
 #[cfg(test)]
 #[path = "detection_tests.rs"]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::too_many_lines,
+    clippy::missing_panics_doc
+)]
 mod detection_tests;
 
 /// Errors that can occur during ISO parsing
 #[derive(Debug, Error)]
 pub enum IsoError {
+    /// Underlying I/O failure — path read, file stat, or directory
+    /// listing. Wraps [`std::io::Error`] transparently.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// Scan completed but no recognized boot entries were found inside
+    /// the ISO. The inner string names the ISO path for context.
     #[error("No boot entries found in ISO: {0}")]
     NoBootEntries(String),
 
+    /// `mount` (or the configured `IsoEnvironment`'s `mount_iso`) failed
+    /// — inner string is the mounter's stderr or a descriptive message.
     #[error("Mount failed: {0}")]
     MountFailed(String),
 
+    /// Requested path escaped the expected base directory (contains
+    /// `..` components or doesn't live under the mount root). Inner
+    /// string is the offending path.
     #[error("Path traversal attempt blocked: {0}")]
     PathTraversal(String),
 }
@@ -60,7 +75,7 @@ pub enum IsoError {
 /// Represents a discovered boot entry from an ISO
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BootEntry {
-    /// Label for the boot menu (e.g., "Arch Linux x86_64")
+    /// Label for the boot menu (e.g., "Arch Linux `x86_64`")
     pub label: String,
     /// Path to kernel (relative to ISO mount point)
     pub kernel: PathBuf,
@@ -86,7 +101,7 @@ pub struct BootEntry {
 /// Supported distribution families.
 ///
 /// Ordering of detection matters: more specific matches (Alpine's
-/// `boot/vmlinuz-lts`, NixOS's `boot/bzImage`, RHEL-family's `images/pxeboot`)
+/// `boot/vmlinuz-lts`, `NixOS`'s `boot/bzImage`, RHEL-family's `images/pxeboot`)
 /// must run before the broader ones (Arch's generic `boot/` heuristic).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Distribution {
@@ -96,12 +111,12 @@ pub enum Distribution {
     Debian,
     /// Fedora install media (`images/pxeboot/`).
     Fedora,
-    /// RHEL / Rocky / AlmaLinux — same `images/pxeboot` layout as Fedora
+    /// RHEL / Rocky / `AlmaLinux` — same `images/pxeboot` layout as Fedora
     /// but a distinct signing CA and stricter lockdown kexec policy.
     RedHat,
     /// Alpine Linux (`boot/vmlinuz-lts`).
     Alpine,
-    /// NixOS install media (`boot/bzImage`).
+    /// `NixOS` install media (`boot/bzImage`).
     NixOS,
     /// Windows installer media. Recognized by `bootmgr`, `sources/boot.wim`,
     /// or `efi/microsoft/boot/`. **Not kexec-bootable**: Windows uses a
@@ -175,19 +190,42 @@ impl Distribution {
 /// This trait enables unit testing without actual mounts by providing
 /// a mockable interface for filesystem access and process execution.
 pub trait IsoEnvironment: Send + Sync {
-    /// List files in a directory
+    /// List files in a directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`std::io::Error`] on any read failure (missing path,
+    /// permission denied, I/O error mid-read).
     fn list_dir(&self, path: &std::path::Path) -> std::io::Result<Vec<std::path::PathBuf>>;
 
-    /// Check if a file exists
+    /// Check if a file exists.
     fn exists(&self, path: &std::path::Path) -> bool;
 
-    /// Read file metadata
+    /// Read file metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`std::io::Error`] when the path can't be stat'd
+    /// (missing, permission denied, I/O error).
     fn metadata(&self, path: &std::path::Path) -> std::io::Result<std::fs::Metadata>;
 
-    /// Mount an ISO file and return the mount point
+    /// Mount an ISO file and return the mount point.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IsoError::MountFailed`] if the underlying mount
+    /// command (or mock handler) returned non-zero, or
+    /// [`IsoError::Io`] if a required helper (mkdir, losetup, mount)
+    /// couldn't be spawned.
     fn mount_iso(&self, iso_path: &std::path::Path) -> Result<PathBuf, IsoError>;
 
-    /// Unmount a previously mounted ISO
+    /// Unmount a previously mounted ISO.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IsoError::MountFailed`] if `umount` returned non-zero
+    /// (busy mount, stale mount point), or [`IsoError::Io`] if the
+    /// unmount helper couldn't be spawned.
     fn unmount(&self, mount_point: &std::path::Path) -> Result<(), IsoError>;
 
     /// Validate that `path` is rooted under `base` and contains no
@@ -204,6 +242,11 @@ pub trait IsoEnvironment: Send + Sync {
     /// Previous implementation silently returned `Ok(path)` when
     /// `strip_prefix(base)` failed, meaning paths outside `base` were
     /// accepted. Fixed in #56.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IsoError::PathTraversal`] on either of the two
+    /// traversal conditions above.
     fn validate_path(
         &self,
         base: &std::path::Path,
@@ -222,12 +265,16 @@ pub trait IsoEnvironment: Send + Sync {
     }
 }
 
-/// OS-specific implementation of IsoEnvironment
+/// OS-specific implementation of `IsoEnvironment`
 pub struct OsIsoEnvironment {
     mount_base: PathBuf,
 }
 
 impl OsIsoEnvironment {
+    /// Construct a default `OsIsoEnvironment` with mount points under
+    /// `/tmp/iso-parser-mounts`. Callers that need a different base
+    /// path should construct the struct directly.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             mount_base: PathBuf::from("/tmp/iso-parser-mounts"),
@@ -367,7 +414,7 @@ impl IsoEnvironment for OsIsoEnvironment {
             .and_then(|s| s.to_str())
             .unwrap_or("iso");
 
-        let mount_point = self.mount_base.join(format!("mount_{}", iso_name));
+        let mount_point = self.mount_base.join(format!("mount_{iso_name}"));
         std::fs::create_dir_all(&mount_point)?;
 
         // Attempt 1: `mount -o loop,ro`. Works with util-linux; may not
@@ -489,8 +536,8 @@ impl IsoEnvironment for OsIsoEnvironment {
                         Ok(())
                     }
                     _ => Err(IsoError::MountFailed(format!(
-                        "Failed to unmount {:?}",
-                        mount_point
+                        "Failed to unmount {}",
+                        mount_point.display()
                     ))),
                 }
             }
@@ -506,12 +553,29 @@ pub struct IsoParser<E: IsoEnvironment> {
 }
 
 impl<E: IsoEnvironment> IsoParser<E> {
+    /// Construct a parser bound to the given [`IsoEnvironment`].
+    /// Typically [`OsIsoEnvironment`] in production; a mock in tests.
     pub fn new(env: E) -> Self {
         Self { env }
     }
 
     /// Scan a directory for ISO files and extract boot entries
+    /// Scan a directory for `.iso` files, mount + parse each one, and
+    /// return the collected [`BootEntry`] records.
+    ///
+    /// The `async` signature is retained for backwards source-compat
+    /// with callers that `.await` it; the function itself performs no
+    /// async work today.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IsoError::PathTraversal`] if `path` escapes
+    /// `/` (degenerate), or [`IsoError::Io`] on a filesystem read
+    /// failure during the ISO-file discovery walk. Per-ISO parse /
+    /// mount failures are silently skipped and logged at `debug`; the
+    /// overall scan succeeds as long as at least the walk works.
     #[instrument(skip(self))]
+    #[allow(clippy::unused_async)]
     pub async fn scan_directory(&self, path: &std::path::Path) -> Result<Vec<BootEntry>, IsoError> {
         let mut entries = Vec::new();
 
@@ -599,7 +663,8 @@ impl<E: IsoEnvironment> IsoParser<E> {
         result
     }
 
-    /// Extract boot entries from a mounted ISO
+    /// Extract boot entries from a mounted ISO.
+    #[allow(clippy::unused_async)]
     async fn extract_boot_entries(
         &self,
         mount_point: &Path,
@@ -671,7 +736,7 @@ impl<E: IsoEnvironment> IsoParser<E> {
                 // rather than a hardcoded `Distribution::Arch`. (#116)
                 let rel_kernel = kernel
                     .strip_prefix(mount_point)
-                    .map(|p| p.to_path_buf())
+                    .map(std::path::Path::to_path_buf)
                     .map_err(|_| {
                         IsoError::Io(std::io::Error::new(
                             std::io::ErrorKind::InvalidData,
@@ -797,7 +862,7 @@ impl<E: IsoEnvironment> IsoParser<E> {
                         ),
                         kernel: kernel
                             .strip_prefix(mount_point)
-                            .map(|p| p.to_path_buf())
+                            .map(std::path::Path::to_path_buf)
                             .map_err(|_| {
                                 IsoError::Io(std::io::Error::new(
                                     std::io::ErrorKind::InvalidData,
@@ -807,7 +872,7 @@ impl<E: IsoEnvironment> IsoParser<E> {
                         initrd: found_initrd
                             .map(|p| {
                                 p.strip_prefix(mount_point)
-                                    .map(|p| p.to_path_buf())
+                                    .map(std::path::Path::to_path_buf)
                                     .map_err(|_| {
                                         IsoError::Io(std::io::Error::new(
                                             std::io::ErrorKind::InvalidData,
@@ -861,7 +926,7 @@ impl<E: IsoEnvironment> IsoParser<E> {
                 // Find matching initrd
                 let version = name.strip_prefix("vmlinuz").unwrap_or("");
                 let initrd_names = [
-                    format!("initrd{}.img", version),
+                    format!("initrd{version}.img"),
                     "initrd.img".to_string(),
                     format!("initrd{}.img", version.trim_end_matches('-')),
                 ];
@@ -879,7 +944,7 @@ impl<E: IsoEnvironment> IsoParser<E> {
                     label: format!("Fedora {}", version.trim()),
                     kernel: kernel
                         .strip_prefix(mount_point)
-                        .map(|p| p.to_path_buf())
+                        .map(std::path::Path::to_path_buf)
                         .map_err(|_| {
                             IsoError::Io(std::io::Error::new(
                                 std::io::ErrorKind::InvalidData,
@@ -889,7 +954,7 @@ impl<E: IsoEnvironment> IsoParser<E> {
                     initrd: found_initrd
                         .map(|p| {
                             p.strip_prefix(mount_point)
-                                .map(|p| p.to_path_buf())
+                                .map(std::path::Path::to_path_buf)
                                 .map_err(|_| {
                                     IsoError::Io(std::io::Error::new(
                                         std::io::ErrorKind::InvalidData,
@@ -938,7 +1003,7 @@ impl<E: IsoEnvironment> IsoParser<E> {
                     ),
                     kernel: kernel
                         .strip_prefix(mount_point)
-                        .map(|p| p.to_path_buf())
+                        .map(std::path::Path::to_path_buf)
                         .map_err(|_| {
                             IsoError::Io(std::io::Error::new(
                                 std::io::ErrorKind::InvalidData,
@@ -949,7 +1014,7 @@ impl<E: IsoEnvironment> IsoParser<E> {
                         Some(
                             initrd_path
                                 .strip_prefix(mount_point)
-                                .map(|p| p.to_path_buf())
+                                .map(std::path::Path::to_path_buf)
                                 .map_err(|_| {
                                     IsoError::Io(std::io::Error::new(
                                         std::io::ErrorKind::InvalidData,
@@ -983,7 +1048,7 @@ impl<E: IsoEnvironment> IsoParser<E> {
 ///
 /// 1. `/etc/os-release` `PRETTY_NAME` — systemd convention; all
 ///    modern distros ship this (Ubuntu, Fedora, Rocky, Alma, Debian 12+,
-///    openSUSE, Arch, NixOS 22+, Alpine 3.17+).
+///    openSUSE, Arch, `NixOS` 22+, Alpine 3.17+).
 /// 2. `/lib/os-release` `PRETTY_NAME` — symlink target on some distros;
 ///    handled independently in case the `/etc` copy is missing.
 /// 3. `/.disk/info` — single line of free text, Ubuntu + Debian live/install
@@ -1055,6 +1120,13 @@ fn read_first_nonempty_line(path: &Path) -> Option<String> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::too_many_lines,
+    clippy::missing_panics_doc,
+    clippy::match_same_arms
+)]
 mod tests {
     use super::*;
     use std::collections::HashMap;
