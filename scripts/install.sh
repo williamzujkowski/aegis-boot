@@ -270,11 +270,63 @@ main() {
             ;;
     esac
 
+    # Completion install — best-effort, never fail the installer. The
+    # completion files are versioned in the repo (not shipped as release
+    # assets) so fetch them directly from GitHub raw. If a specific
+    # --version was requested, pull completions from the same tag for
+    # consistency; otherwise pull from main.
+    install_completions "$version"
+
     note ""
     note "Try it:"
     note "  $target --version"
     note "  $target doctor"
     note "  $target recommend"
+}
+
+# Install bash + zsh completion files from the repo (raw.githubusercontent.com).
+# Best-effort — any failure prints a hint and proceeds. The binary install
+# is the main deliverable; completions are a convenience.
+install_completions() {
+    version_or_main="$1"
+    # Completions live in completions/ at the repo root. For a tagged
+    # install, pull from the exact tag; otherwise track main.
+    ref="${version_or_main:-main}"
+    if [ "$ref" = "latest" ] || [ -z "$ref" ]; then
+        ref=main
+    fi
+    bash_url="https://raw.githubusercontent.com/$REPO/$ref/completions/aegis-boot.bash"
+    zsh_url="https://raw.githubusercontent.com/$REPO/$ref/completions/_aegis-boot"
+
+    # Bash: system path for root, per-user otherwise.
+    if [ "$(id -u)" -eq 0 ]; then
+        bash_dest=/usr/share/bash-completion/completions/aegis-boot
+    else
+        bash_dest="$HOME/.local/share/bash-completion/completions/aegis-boot"
+    fi
+    bash_dir="$(dirname "$bash_dest")"
+    if mkdir -p "$bash_dir" 2>/dev/null \
+        && curl -fsSL --proto '=https' --tlsv1.2 -o "$bash_dest" "$bash_url" 2>/dev/null; then
+        note "bash completion: $bash_dest"
+    else
+        note "(bash completion not installed — download from $bash_url)"
+    fi
+
+    # Zsh: system path only when root (per-user zsh fpath varies wildly).
+    if [ "$(id -u)" -eq 0 ]; then
+        zsh_dest=/usr/share/zsh/site-functions/_aegis-boot
+        zsh_dir="$(dirname "$zsh_dest")"
+        if mkdir -p "$zsh_dir" 2>/dev/null \
+            && curl -fsSL --proto '=https' --tlsv1.2 -o "$zsh_dest" "$zsh_url" 2>/dev/null; then
+            note "zsh completion:  $zsh_dest"
+        else
+            note "(zsh completion not installed — download from $zsh_url)"
+        fi
+    else
+        note "(zsh completion skipped; re-run as root, or fetch manually:"
+        note "   curl -sSL $zsh_url -o ~/.zsh/completions/_aegis-boot"
+        note "   and add ~/.zsh/completions to your fpath)"
+    fi
 }
 
 main "$@"
