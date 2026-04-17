@@ -18,7 +18,7 @@ USAGE:
   aegis-boot update <device>    Check eligibility for in-place signed-chain update
   aegis-boot verify [device]    Re-verify every ISO's sha256 against its sidecar
   aegis-boot compat [query]     Hardware compatibility lookup (verified reports only)
-  aegis-boot --version          Print version
+  aegis-boot --version [--json] Print version (--json emits schema_version=1)
   aegis-boot --help             This message
 ```
 
@@ -38,6 +38,7 @@ The read-mostly subcommands emit a stable machine-readable document when given `
 | `recommend --json`  | Full catalog (or single entry with `recommend --json <slug>`)                |
 | `update --json`     | Eligibility envelope + host-chain (sha256 per slot) or reason-for-ineligible |
 | `compat --json`     | Compat DB entries (or single entry with `compat --json <query>`)             |
+| `--version --json`  | `{ schema_version, tool, version }` — scriptable semver lookup               |
 
 Every `--json` output carries `schema_version: 1` at the root so downstream tooling can detect future breaking changes.
 
@@ -638,6 +639,8 @@ aegis-boot compat --help
 ## Versioning
 
 `aegis-boot --version` reports the workspace version (currently `0.13.0`). The CLI ships in lockstep with the rest of the workspace; `cargo install --path crates/aegis-cli` (or downloading a release binary) will give you a CLI that matches the on-stick rescue-tui.
+
+`aegis-boot --version --json` emits the same info as a stable envelope — `{ "schema_version": 1, "tool": "aegis-boot", "version": "0.13.0" }` — for scripted install verification or Homebrew-style version matching.
 
 ## See also
 

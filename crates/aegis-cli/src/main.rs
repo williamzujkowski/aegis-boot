@@ -62,7 +62,18 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some("--version" | "version") => {
-            println!("aegis-boot v{}", env!("CARGO_PKG_VERSION"));
+            // `--json` can appear anywhere after the `--version` /
+            // `version` subcommand. Consistent with the rest of the
+            // --json sweep, the envelope carries schema_version + the
+            // full semver so tools can match against a registry.
+            if args.iter().skip(1).any(|a| a == "--json") {
+                println!(
+                    "{{ \"schema_version\": 1, \"tool\": \"aegis-boot\", \"version\": \"{}\" }}",
+                    env!("CARGO_PKG_VERSION")
+                );
+            } else {
+                println!("aegis-boot v{}", env!("CARGO_PKG_VERSION"));
+            }
             ExitCode::SUCCESS
         }
         Some(other) => {
@@ -89,7 +100,7 @@ fn print_help() {
     println!("  aegis-boot update <device>    Check eligibility for in-place update");
     println!("  aegis-boot verify [device]    Re-verify every ISO's sha256 against its sidecar");
     println!("  aegis-boot compat [query]     Hardware compatibility lookup");
-    println!("  aegis-boot --version          Print version");
+    println!("  aegis-boot --version [--json] Print version (--json emits schema_version=1)");
     println!("  aegis-boot --help             This message");
     println!();
     println!("EXAMPLES:");
