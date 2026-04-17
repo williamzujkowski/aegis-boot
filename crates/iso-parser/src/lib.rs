@@ -1253,18 +1253,24 @@ mod tests {
             self.files.contains_key(path)
         }
 
-        fn metadata(&self, path: &std::path::Path) -> std::io::Result<std::fs::Metadata> {
-            // Mock doesn't actually need real metadata - return success for existing files
-            if self.files.contains_key(path) {
-                // Mock-only: returns metadata of a path guaranteed to exist for test plumbing.
-                // nosemgrep: rust.lang.security.temp-dir.temp-dir
-                std::fs::metadata(std::env::temp_dir())
-            } else {
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "Not found",
-                ))
-            }
+        fn metadata(&self, _path: &std::path::Path) -> std::io::Result<std::fs::Metadata> {
+            // Fail closed: the previous implementation returned the real
+            // metadata of `std::env::temp_dir()` for any path that existed
+            // in the mock — which silently made size/mtime assertions pass
+            // on fake data (they'd read /tmp's values, not the mock's).
+            //
+            // Since no caller in the workspace uses IsoEnvironment::metadata
+            // today (the trait method is currently unused, per #138 audit),
+            // and std::fs::Metadata has no public constructor, there is no
+            // safe way to return a synthesized value from pure mock data.
+            //
+            // If a future caller needs this method, the correct fix is to
+            // add real size/mtime fields to MockEntry and return them via a
+            // wrapper type — not to paper over the hazard with /tmp values.
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "MockIsoEnvironment::metadata is not implemented — see #138 for the design note",
+            ))
         }
 
         fn mount_iso(&self, iso_path: &std::path::Path) -> Result<PathBuf, IsoError> {
@@ -1276,12 +1282,24 @@ mod tests {
                     .unwrap_or("iso")
             ));
 
-            self.mount_points.lock().unwrap().push(mount_point.clone());
+            // Poison-safe lock: if a prior test panicked while holding the
+            // mutex, `.lock()` returns `Err(PoisonError)`. `into_inner()`
+            // recovers the guarded value so we don't cascade-fail every
+            // subsequent test that happens to hit this path. Mock state is
+            // append-or-trim only, so partial updates from a poisoned
+            // critical section are safe to observe.
+            self.mount_points
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(mount_point.clone());
             Ok(mount_point)
         }
 
         fn unmount(&self, mount_point: &std::path::Path) -> Result<(), IsoError> {
-            let mut points = self.mount_points.lock().unwrap();
+            let mut points = self
+                .mount_points
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             points.retain(|p| p != mount_point);
             Ok(())
         }
@@ -1554,5 +1572,46 @@ ID=ubuntu
         std::fs::create_dir_all(tmp.path().join(".disk")).unwrap();
         std::fs::write(tmp.path().join(".disk/info"), "\n\n   \nDebian 12.8\n").unwrap();
         assert_eq!(read_pretty_name(tmp.path()).as_deref(), Some("Debian 12.8"),);
+    }
+
+    /// `MockIsoEnvironment::metadata` must fail closed — previously it
+    /// returned the real metadata of `std::env::temp_dir()` for any path
+    /// the mock knew about, which silently validated size/mtime assertions
+    /// against `/tmp` values instead of mock data. Regression from #138.
+    #[test]
+    fn mock_metadata_fails_closed() {
+        let env = MockIsoEnvironment::new();
+        let err = env
+            .metadata(std::path::Path::new("/mock_mount/boot/vmlinuz"))
+            .expect_err("mock metadata() must surface an error");
+        assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+    }
+
+    /// Poisoned mount-points mutex must not cascade. Simulate a poisoning
+    /// by panicking inside a lock-holding scope and confirm subsequent
+    /// `mount_iso` / `unmount` calls still succeed. Regression from #138.
+    #[test]
+    fn mock_mount_lock_recovers_from_poison() {
+        use std::sync::Arc;
+        let env = Arc::new(MockIsoEnvironment::new());
+        // Force a poisoned lock by panicking inside a critical section on
+        // a scoped thread. The spawned thread's join result is expected
+        // to be Err (the panic); that's what poisons the Mutex.
+        let env_for_thread = env.clone();
+        let join = std::thread::spawn(move || {
+            let _guard = env_for_thread.mount_points.lock().unwrap();
+            panic!("deliberately poisoning the mutex for this test");
+        })
+        .join();
+        assert!(join.is_err(), "helper thread must have panicked");
+
+        // Now verify the mock still functions — mount + unmount should
+        // succeed without panicking via lock recovery.
+        let iso = std::path::Path::new("/isos/test.iso");
+        let mount = env
+            .mount_iso(iso)
+            .expect("mount_iso must recover from poison");
+        env.unmount(&mount)
+            .expect("unmount must recover from poison");
     }
 }
