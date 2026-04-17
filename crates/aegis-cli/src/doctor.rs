@@ -553,8 +553,12 @@ const DMI_PLACEHOLDERS: &[&str] = &[
 /// Read a DMI field from sysfs, trim whitespace, and filter vendor
 /// placeholder strings. Returns `None` for missing, empty, or placeholder
 /// values.
+///
+/// `pub(crate)` so other subcommands (e.g., `compat --my-machine`) can
+/// reuse the same sysfs read + placeholder-filter semantics without
+/// re-implementing the whole set of OEM-placeholder strings.
 #[cfg(target_os = "linux")]
-fn read_dmi_field(field: &str) -> Option<String> {
+pub(crate) fn read_dmi_field(field: &str) -> Option<String> {
     let path = format!("/sys/class/dmi/id/{field}");
     let raw = std::fs::read_to_string(&path).ok()?;
     let trimmed = raw.trim();
@@ -572,8 +576,12 @@ fn read_dmi_field(field: &str) -> Option<String> {
 /// human-readable model in `product_version` and a SKU in `product_name`;
 /// Dell/HP/QEMU put the friendly name in `product_name`. Prefer
 /// `product_version` when it differs meaningfully from `product_name`.
+///
+/// `pub(crate)` so `compat --my-machine` can cite the same label as
+/// `doctor`'s machine-identity row — both surfaces must agree on what
+/// "this machine" is named.
 #[cfg(target_os = "linux")]
-fn dmi_product_label() -> Option<String> {
+pub(crate) fn dmi_product_label() -> Option<String> {
     let name = read_dmi_field("product_name");
     let version = read_dmi_field("product_version");
     match (name, version) {

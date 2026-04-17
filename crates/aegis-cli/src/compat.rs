@@ -131,7 +131,33 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
     }
 
     let json_mode = args.iter().any(|a| a == "--json");
-    let query = args.iter().find(|a| !a.starts_with("--")).map(String::as_str);
+    let my_machine = args.iter().any(|a| a == "--my-machine");
+    let query = args
+        .iter()
+        .find(|a| !a.starts_with("--"))
+        .map(String::as_str);
+
+    // `--my-machine` auto-fills the query from DMI. Conflicts with an
+    // explicit query — the operator should pick one or the other so
+    // the intent stays unambiguous in scripted usage.
+    if my_machine && query.is_some() {
+        eprintln!(
+            "aegis-boot compat: --my-machine takes no query (DMI fills it in). \
+             Remove one or the other."
+        );
+        return Err(2);
+    }
+
+    if my_machine {
+        let Some(auto_query) = resolve_my_machine_query() else {
+            return report_my_machine_miss(json_mode);
+        };
+        return if json_mode {
+            run_json(Some(&auto_query))
+        } else {
+            lookup_and_print(&auto_query)
+        };
+    }
 
     if json_mode {
         return run_json(query);
@@ -141,13 +167,62 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
         print_table();
         return Ok(());
     };
-    if let Some(entry) = find_entry(q) {
+    lookup_and_print(q)
+}
+
+/// Shared exit path for interactive (non-JSON) query → entry lookup.
+/// Pulled out so `--my-machine` and the positional-query path agree on
+/// behavior (and on exit codes).
+fn lookup_and_print(query: &str) -> Result<(), u8> {
+    if let Some(entry) = find_entry(query) {
         print_entry(entry);
         Ok(())
     } else {
-        print_miss(q);
+        print_miss(query);
         Err(1)
     }
+}
+
+/// Build the auto-query string for `--my-machine` by reading DMI via the
+/// shared `doctor::read_dmi_field` helper. Returns `None` when DMI
+/// fields are unavailable (non-Linux, stripped-down kernels, all
+/// placeholder values) — the caller then emits a clear "couldn't
+/// determine" message rather than silently falling back to the empty
+/// match on an empty query.
+fn resolve_my_machine_query() -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        let vendor = crate::doctor::read_dmi_field("sys_vendor")?;
+        let product = crate::doctor::dmi_product_label()?;
+        Some(format!("{vendor} {product}"))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+/// Handle the `--my-machine` failure-to-resolve case for both JSON and
+/// human modes. Consistent exit code (2) so scripted callers can
+/// distinguish it from a normal miss (1) — an auto-resolve failure is
+/// a host-environment issue, not a DB-coverage issue.
+fn report_my_machine_miss(json_mode: bool) -> Result<(), u8> {
+    use crate::doctor::json_escape;
+    if json_mode {
+        println!(
+            "{{ \"schema_version\": 1, \"error\": \"{}\" }}",
+            json_escape(
+                "--my-machine: DMI fields unavailable (non-Linux host or placeholder values)"
+            )
+        );
+    } else {
+        eprintln!("aegis-boot compat --my-machine: could not determine machine identity from DMI.");
+        eprintln!(
+            "  On Linux, verify /sys/class/dmi/id/ has populated sys_vendor and product_name."
+        );
+        eprintln!("  On non-Linux hosts, this flag is not supported — use `aegis-boot compat <query>` instead.");
+    }
+    Err(2)
 }
 
 fn print_help() {
@@ -156,17 +231,17 @@ fn print_help() {
     println!("USAGE:");
     println!("  aegis-boot compat                     Show every known platform");
     println!("  aegis-boot compat <query>             Fuzzy match one platform");
+    println!("  aegis-boot compat --my-machine        Auto-lookup from DMI (Linux only)");
     println!("  aegis-boot compat --json [query]      Structured output");
     println!();
     println!("EXAMPLES:");
     println!("  aegis-boot compat                     # full table");
     println!("  aegis-boot compat thinkpad            # match by vendor or model");
+    println!("  aegis-boot compat --my-machine        # query this exact machine");
     println!("  aegis-boot compat --json              # script-friendly list");
     println!();
     println!("NOTES:");
-    println!(
-        "  Rows are verified outcomes only — no speculation. If your machine is missing,"
-    );
+    println!("  Rows are verified outcomes only — no speculation. If your machine is missing,");
     println!("  please submit a report:");
     println!("  {REPORT_URL}");
 }
@@ -176,7 +251,10 @@ fn print_table() {
     println!();
     println!("{} platform(s) reported.", COMPAT_DB.len());
     println!();
-    println!("{:<14} {:<12} {:<12} {:<10} MODEL", "LEVEL", "VENDOR", "SB", "BOOT");
+    println!(
+        "{:<14} {:<12} {:<12} {:<10} MODEL",
+        "LEVEL", "VENDOR", "SB", "BOOT"
+    );
     for entry in COMPAT_DB {
         let level_col = format!("{} {}", entry.level.glyph(), entry.level.label());
         println!(
@@ -266,11 +344,23 @@ fn emit_entry_json(entry: &CompatEntry, indent: &str, comma: &str) {
     println!("{indent}{{");
     println!("{indent}  \"vendor\": \"{}\",", json_escape(entry.vendor));
     println!("{indent}  \"model\": \"{}\",", json_escape(entry.model));
-    println!("{indent}  \"firmware\": \"{}\",", json_escape(entry.firmware));
-    println!("{indent}  \"sb_state\": \"{}\",", json_escape(entry.sb_state));
-    println!("{indent}  \"boot_key\": \"{}\",", json_escape(entry.boot_key));
+    println!(
+        "{indent}  \"firmware\": \"{}\",",
+        json_escape(entry.firmware)
+    );
+    println!(
+        "{indent}  \"sb_state\": \"{}\",",
+        json_escape(entry.sb_state)
+    );
+    println!(
+        "{indent}  \"boot_key\": \"{}\",",
+        json_escape(entry.boot_key)
+    );
     println!("{indent}  \"level\": \"{}\",", entry.level.label());
-    println!("{indent}  \"reported_by\": \"{}\",", json_escape(entry.reported_by));
+    println!(
+        "{indent}  \"reported_by\": \"{}\",",
+        json_escape(entry.reported_by)
+    );
     println!("{indent}  \"date\": \"{}\",", json_escape(entry.date));
     println!("{indent}  \"notes\": [");
     let last = entry.notes.len().saturating_sub(1);
@@ -381,7 +471,10 @@ mod tests {
             assert!(!entry.firmware.is_empty(), "firmware must not be empty");
             assert!(!entry.sb_state.is_empty(), "sb_state must not be empty");
             assert!(!entry.boot_key.is_empty(), "boot_key must not be empty");
-            assert!(!entry.reported_by.is_empty(), "reported_by must not be empty");
+            assert!(
+                !entry.reported_by.is_empty(),
+                "reported_by must not be empty"
+            );
             assert!(!entry.date.is_empty(), "date must not be empty");
         }
     }
@@ -437,6 +530,49 @@ mod tests {
         assert_eq!(
             try_run(&["--json".to_string(), "xyz-no-such-box".to_string()]),
             Err(1)
+        );
+    }
+
+    #[test]
+    fn try_run_my_machine_with_explicit_query_is_usage_error() {
+        // Operator ambiguity: --my-machine supplies the query from DMI,
+        // so accepting an explicit query alongside it would silently
+        // pick one. Reject at arg-parse time with exit code 2.
+        assert_eq!(
+            try_run(&["--my-machine".to_string(), "thinkpad".to_string()]),
+            Err(2)
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn try_run_my_machine_returns_one_or_two() {
+        // Result depends on whether the host's DMI matches a COMPAT_DB
+        // entry: Ok(()) on hit, Err(1) on DB miss (normal compat miss),
+        // Err(2) on DMI unavailable. Never panics, never returns other
+        // codes. Kept flexible so the test works on every CI runner
+        // shape (QEMU, real hardware, non-Linux-in-container, etc.).
+        let result = try_run(&["--my-machine".to_string()]);
+        assert!(
+            matches!(result, Ok(()) | Err(1 | 2)),
+            "unexpected exit code from --my-machine: {result:?}"
+        );
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn try_run_my_machine_returns_two_on_non_linux() {
+        // DMI is Linux-only; every other host must report error 2
+        // (host-environment issue), not error 1 (DB miss).
+        assert_eq!(try_run(&["--my-machine".to_string()]), Err(2));
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn try_run_my_machine_json_mode_returns_two_on_non_linux() {
+        assert_eq!(
+            try_run(&["--my-machine".to_string(), "--json".to_string()]),
+            Err(2)
         );
     }
 }
