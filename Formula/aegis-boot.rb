@@ -30,6 +30,37 @@ class AegisBoot < Formula
   def install
     if OS.linux? && Hardware::CPU.intel?
       bin.install "aegis-boot-x86_64-linux" => "aegis-boot"
+      # GitHub release downloads come in without the exec bit; bin.install
+      # preserves the source mode. brew's final `test do` phase runs through
+      # a shell that sets 0755 implicitly, but the install-time
+      # generate_completions_from_executable invocation needs the bit set
+      # now. Mode 0555 matches what brew would land with post-install
+      # (read+exec for everyone, no write).
+      (bin/"aegis-boot").chmod 0555
+
+      # Generate completions + man page only when the installed binary
+      # supports them. `completions` + `man` subcommands shipped in
+      # #207 / #211 (post-v0.13.0); pinning to an older tag means these
+      # subcommands exit 2 with "unknown command", which would fail the
+      # install. Probe via `--help` — grep-on-help is more reliable than
+      # semver-parse against a floating --version format.
+      help_output = Utils.safe_popen_read(bin/"aegis-boot", "--help")
+      if help_output.include?("completions")
+        # `shells:` constrains to the two we support — `completions fish`
+        # would exit 2 otherwise and fail the install.
+        generate_completions_from_executable(
+          bin/"aegis-boot", "completions", shells: [:bash, :zsh]
+        )
+      end
+
+      if help_output.include?("aegis-boot man")
+        # Emit the man page from the same binary (self-contained via
+        # include_str! in crates/aegis-cli/src/man.rs). Homebrew has no
+        # built-in `generate_man_from_executable`, so shell-out to the
+        # binary and install the result.
+        (buildpath/"aegis-boot.1").write(Utils.safe_popen_read(bin/"aegis-boot", "man"))
+        man1.install "aegis-boot.1"
+      end
     else
       odie <<~EOS
         aegis-boot binaries are currently published only for Linux x86_64.
@@ -83,5 +114,19 @@ class AegisBoot < Formula
     # status check so brew doesn't fail on the expected non-zero.)
     output = shell_output("#{bin}/aegis-boot flash 2>&1", 1)
     assert_match(/no removable USB drives detected|not detected as one/i, output)
+    # Completion files and man page — only assert when the installed
+    # binary is new enough to generate them (see `def install` block
+    # for the same gate). v0.13.0 predates the completions/man
+    # subcommands; v0.14.0+ ships them. Once the Formula pins
+    # v0.14.0 the conditional goes away.
+    help_output = shell_output("#{bin}/aegis-boot --help")
+    if help_output.include?("completions")
+      assert_path_exists bash_completion/"aegis-boot"
+      assert_path_exists zsh_completion/"_aegis-boot"
+    end
+    if help_output.include?("aegis-boot man")
+      assert_path_exists man1/"aegis-boot.1"
+      assert_match(/^\.TH AEGIS-BOOT 1/, (man1/"aegis-boot.1").read)
+    end
   end
 end
