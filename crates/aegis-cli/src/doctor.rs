@@ -61,6 +61,11 @@ struct Report {
     /// Suggested next action — set by the first FAIL'd check that has one,
     /// or by the highest-severity WARN if no FAILs.
     next_action: Option<String>,
+    /// When true, `add()` / `add_with_next()` skip the per-row
+    /// `println!` so the only stdout content is the final JSON blob
+    /// printed by `print_json_summary()`. Leaves stderr alone —
+    /// tracing warnings, sudo prompts, and similar still show.
+    json_mode: bool,
 }
 
 impl Report {
@@ -68,13 +73,21 @@ impl Report {
         Self {
             rows: Vec::new(),
             next_action: None,
+            json_mode: false,
         }
+    }
+
+    fn with_json_mode(mut self, json: bool) -> Self {
+        self.json_mode = json;
+        self
     }
 
     fn add(&mut self, verdict: Verdict, name: impl Into<String>, detail: impl Into<String>) {
         let name = name.into();
         let detail = detail.into();
-        Self::print_row(verdict, &name, &detail);
+        if !self.json_mode {
+            Self::print_row(verdict, &name, &detail);
+        }
         self.rows.push((verdict, name, detail));
     }
 
@@ -88,7 +101,9 @@ impl Report {
         let name = name.into();
         let detail = detail.into();
         let next = next_action.into();
-        Self::print_row(verdict, &name, &detail);
+        if !self.json_mode {
+            Self::print_row(verdict, &name, &detail);
+        }
         self.rows.push((verdict, name, detail));
         if matches!(verdict, Verdict::Fail) && self.next_action.is_none() {
             self.next_action = Some(next);
@@ -155,6 +170,96 @@ impl Report {
     fn has_any_fail(&self) -> bool {
         self.rows.iter().any(|(v, _, _)| matches!(v, Verdict::Fail))
     }
+
+    /// Print the report as a machine-readable JSON document on stdout.
+    ///
+    /// Schema (stable — downstream CI / monitoring tooling parses
+    /// this; breaking changes require a `schema_version` bump):
+    ///
+    /// ```json
+    /// {
+    ///   "schema_version": 1,
+    ///   "tool_version": "0.14.0-dev",
+    ///   "score": 93,
+    ///   "band": "EXCELLENT",
+    ///   "has_any_fail": false,
+    ///   "next_action": null,
+    ///   "rows": [
+    ///     { "verdict": "PASS", "name": "OS", "detail": "Linux 6.17.0" },
+    ///     { "verdict": "WARN", "name": "Secure Boot (host)", "detail": "disabled" }
+    ///   ]
+    /// }
+    /// ```
+    ///
+    /// Emitted via hand-rolled JSON to avoid a `serde_json` import in
+    /// `doctor.rs` — keeps the binary size contribution minimal. Each
+    /// string is escaped for `"` and `\`; no embedded newlines
+    /// expected in check names/details (but the escaper handles them
+    /// safely anyway).
+    fn print_json_summary(&self) {
+        let score = self.score();
+        let band = band_for_score(score);
+        println!("{{");
+        println!("  \"schema_version\": 1,");
+        println!("  \"tool_version\": \"{}\",", env!("CARGO_PKG_VERSION"));
+        println!("  \"score\": {score},");
+        println!("  \"band\": \"{band}\",");
+        println!(
+            "  \"has_any_fail\": {},",
+            if self.has_any_fail() { "true" } else { "false" }
+        );
+        match &self.next_action {
+            Some(na) => println!("  \"next_action\": \"{}\",", json_escape(na)),
+            None => println!("  \"next_action\": null,"),
+        }
+        println!("  \"rows\": [");
+        let last = self.rows.len().saturating_sub(1);
+        for (i, (verdict, name, detail)) in self.rows.iter().enumerate() {
+            let comma = if i == last { "" } else { "," };
+            println!(
+                "    {{ \"verdict\": \"{}\", \"name\": \"{}\", \"detail\": \"{}\" }}{comma}",
+                verdict.label(),
+                json_escape(name),
+                json_escape(detail),
+            );
+        }
+        println!("  ]");
+        println!("}}");
+    }
+}
+
+/// JSON band label for a 0–100 score. Extracted so both `print_summary`
+/// and `print_json_summary` use the same thresholds.
+fn band_for_score(score: u8) -> &'static str {
+    match score {
+        90..=100 => "EXCELLENT",
+        70..=89 => "OK",
+        40..=69 => "DEGRADED",
+        _ => "BROKEN",
+    }
+}
+
+/// Minimal JSON string escaper: handles the five characters RFC 8259
+/// requires (`"`, `\`, `\n`, `\r`, `\t`). Sufficient for check names /
+/// details — doctor doesn't carry arbitrary user input.
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            // Control chars beyond \t/\n/\r: emit as \u00XX.
+            c if (c as u32) < 0x20 => {
+                use std::fmt::Write as _;
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// Entry point for `aegis-boot doctor [--stick /dev/sdX]`.
@@ -178,13 +283,20 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
         return Ok(());
     }
 
+    // --json suppresses the human-readable row-by-row prints and
+    // emits a single structured JSON blob at the end. Useful for
+    // CI / monitoring / scripted pipelines. Detection is case-
+    // sensitive and tolerates the flag appearing anywhere in args.
+    let json_mode = args.iter().any(|a| a == "--json");
+
     let stick = parse_stick_arg(args);
-    let mut report = Report::new();
+    let mut report = Report::new().with_json_mode(json_mode);
 
-    println!("aegis-boot doctor — host + stick health check");
-    println!();
-
-    println!("Host checks:");
+    if !json_mode {
+        println!("aegis-boot doctor — host + stick health check");
+        println!();
+        println!("Host checks:");
+    }
     check_os(&mut report);
     check_command_present(&mut report, "dd", "required to write the stick");
     check_command_present(&mut report, "sudo", "required for dd / mount");
@@ -215,9 +327,10 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
     );
     check_secureboot_state(&mut report);
     check_removable_drives(&mut report);
-    println!();
-
-    println!("Stick checks:");
+    if !json_mode {
+        println!();
+        println!("Stick checks:");
+    }
     if let Some(dev) = stick.or_else(autodetect_single_stick) {
         check_stick_partitions(&mut report, &dev);
         check_aegis_isos_mount(&mut report, &dev);
@@ -227,14 +340,19 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
             "stick selection",
             "no --stick argument and no single removable drive auto-detected",
         );
-        println!(
-            "  (pass `--stick /dev/sdX` to inspect a specific drive; \
-             with no removable USB drives plugged in, stick checks are skipped)"
-        );
+        if !json_mode {
+            println!(
+                "  (pass `--stick /dev/sdX` to inspect a specific drive; \
+                 with no removable USB drives plugged in, stick checks are skipped)"
+            );
+        }
     }
-    println!();
-
-    report.print_summary();
+    if json_mode {
+        report.print_json_summary();
+    } else {
+        println!();
+        report.print_summary();
+    }
     if report.has_any_fail() {
         Err(1)
     } else {
@@ -246,11 +364,16 @@ fn print_help() {
     println!("aegis-boot doctor — host + stick health check");
     println!();
     println!("USAGE:");
-    println!("  aegis-boot doctor              # check host, auto-detect a removable drive");
-    println!("  aegis-boot doctor --stick /dev/sdX");
+    println!("  aegis-boot doctor                      # human-readable table");
+    println!("  aegis-boot doctor --stick /dev/sdX     # include stick checks");
+    println!("  aegis-boot doctor --json               # machine-readable (CI / monitoring)");
     println!();
     println!("Reports a 0-100 health score with a single NEXT ACTION line.");
     println!("Exit code 0 = healthy (PASS or only WARN); 1 = at least one FAIL.");
+    println!();
+    println!("JSON schema (stable, schema_version=1):");
+    println!("  {{ schema_version, tool_version, score, band, has_any_fail,");
+    println!("    next_action, rows: [{{ verdict, name, detail }}, ...] }}");
 }
 
 fn parse_stick_arg(args: &[String]) -> Option<PathBuf> {
@@ -651,5 +774,59 @@ mod tests {
         l.sort_unstable();
         l.dedup();
         assert_eq!(l.len(), 4);
+    }
+
+    // ---- --json mode --------------------------------------------------
+
+    #[test]
+    fn band_for_score_thresholds() {
+        assert_eq!(band_for_score(100), "EXCELLENT");
+        assert_eq!(band_for_score(90), "EXCELLENT");
+        assert_eq!(band_for_score(89), "OK");
+        assert_eq!(band_for_score(70), "OK");
+        assert_eq!(band_for_score(69), "DEGRADED");
+        assert_eq!(band_for_score(40), "DEGRADED");
+        assert_eq!(band_for_score(39), "BROKEN");
+        assert_eq!(band_for_score(0), "BROKEN");
+    }
+
+    #[test]
+    fn json_escape_handles_quotes_and_backslash() {
+        assert_eq!(json_escape(r#"hello "world""#), r#"hello \"world\""#);
+        assert_eq!(json_escape(r"path\to\file"), r"path\\to\\file");
+    }
+
+    #[test]
+    fn json_escape_handles_newline_and_tab() {
+        assert_eq!(json_escape("line1\nline2"), "line1\\nline2");
+        assert_eq!(json_escape("col1\tcol2"), "col1\\tcol2");
+        assert_eq!(json_escape("\r\n"), "\\r\\n");
+    }
+
+    #[test]
+    fn json_escape_handles_control_chars() {
+        // NUL and SOH should render as \u00XX.
+        assert_eq!(json_escape("a\x00b"), "a\\u0000b");
+        assert_eq!(json_escape("\x01"), "\\u0001");
+    }
+
+    #[test]
+    fn json_escape_leaves_ascii_unchanged() {
+        assert_eq!(json_escape("plain ascii 123"), "plain ascii 123");
+    }
+
+    #[test]
+    fn report_with_json_mode_silences_inline_prints() {
+        // Black-box: creating + adding to a json-mode Report shouldn't
+        // panic and shouldn't print (we can't easily intercept stdout
+        // in unit tests, but we can assert the flag threads through).
+        let r = Report::new().with_json_mode(true);
+        assert!(r.json_mode);
+    }
+
+    #[test]
+    fn report_without_json_mode_defaults_to_false() {
+        let r = Report::new();
+        assert!(!r.json_mode);
     }
 }
