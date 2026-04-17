@@ -10,6 +10,7 @@
 //!   * `fetch`     — download + verify a catalog ISO
 //!   * `attest`    — list / show attestation receipts for past flashes
 //!   * `eject`     — safely power-off and prepare a USB stick for removal
+//!   * `update`    — in-place signed-chain rotation (phase 1: eligibility check)
 //!
 //! This replaces the developer workflow of running shell scripts
 //! manually. The binary is named `aegis-boot` so operators type
@@ -26,6 +27,7 @@ mod fetch;
 mod flash;
 mod init;
 mod inventory;
+mod update;
 
 use std::env;
 use std::process::ExitCode;
@@ -48,6 +50,7 @@ fn main() -> ExitCode {
         Some("fetch") => fetch::run(&args[1..]),
         Some("attest") => attest::run(&args[1..]),
         Some("eject") => eject::run(&args[1..]),
+        Some("update") => update::run(&args[1..]),
         Some("-h" | "--help" | "help") | None => {
             print_help();
             ExitCode::SUCCESS
@@ -77,6 +80,7 @@ fn print_help() {
     println!("  aegis-boot fetch <slug>       Download + verify a catalog ISO");
     println!("  aegis-boot attest [list|show] Attestation receipts for past flashes");
     println!("  aegis-boot eject [device]     Safely power-off a stick before removal");
+    println!("  aegis-boot update <device>    Check eligibility for in-place update");
     println!("  aegis-boot --version          Print version");
     println!("  aegis-boot --help             This message");
     println!();
