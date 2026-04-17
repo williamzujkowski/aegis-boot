@@ -595,9 +595,11 @@ pub(crate) fn dmi_product_label() -> Option<String> {
 }
 
 /// Compose the BIOS half: "vendor version (date)" with graceful degradation
-/// when any field is missing.
+/// when any field is missing. `pub(crate)` so other subcommands (e.g.,
+/// `compat --submit`) can cite the same BIOS string as `doctor`'s
+/// machine-identity row.
 #[cfg(target_os = "linux")]
-fn dmi_bios_label() -> Option<String> {
+pub(crate) fn dmi_bios_label() -> Option<String> {
     let vendor = read_dmi_field("bios_vendor");
     let version = read_dmi_field("bios_version");
     let date = read_dmi_field("bios_date");

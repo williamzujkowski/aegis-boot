@@ -115,7 +115,8 @@ pub const COMPAT_DB: &[CompatEntry] = &[
 /// URL operators visit to file a hardware report. Kept here so the
 /// CLI and docs point at the same landing page. `pub(crate)` so other
 /// subcommands (e.g., `doctor`) can cite the same URL in their prompts.
-pub(crate) const REPORT_URL: &str = "https://github.com/williamzujkowski/aegis-boot/issues/new?template=hardware-report.yml";
+pub(crate) const REPORT_URL: &str =
+    "https://github.com/williamzujkowski/aegis-boot/issues/new?template=hardware-report.yml";
 
 pub fn run(args: &[String]) -> ExitCode {
     match try_run(args) {
@@ -132,10 +133,24 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
 
     let json_mode = args.iter().any(|a| a == "--json");
     let my_machine = args.iter().any(|a| a == "--my-machine");
+    let submit = args.iter().any(|a| a == "--submit");
     let query = args
         .iter()
         .find(|a| !a.starts_with("--"))
         .map(String::as_str);
+
+    // `--submit` auto-gathers DMI like `--my-machine` and emits a
+    // pre-filled GitHub hardware-report URL. Short-circuits all the
+    // lookup logic — it's a dedicated "draft a report" flow.
+    if submit {
+        if query.is_some() || my_machine {
+            eprintln!(
+                "aegis-boot compat: --submit cannot be combined with a query or --my-machine"
+            );
+            return Err(2);
+        }
+        return run_submit(json_mode);
+    }
 
     // `--my-machine` auto-fills the query from DMI. Conflicts with an
     // explicit query — the operator should pick one or the other so
@@ -202,6 +217,124 @@ fn resolve_my_machine_query() -> Option<String> {
     }
 }
 
+/// `--submit` flow: gather DMI, build pre-filled GitHub issue URL.
+/// Fields pre-filled: `vendor` (`sys_vendor`), `model` (product label),
+/// `firmware` (BIOS label), `aegis-version`. Everything else (outcome,
+/// boot-key, sb-state, iso, quirks, confidence, handle) is left for
+/// the operator — those are signals we can't derive from DMI.
+fn run_submit(json_mode: bool) -> Result<(), u8> {
+    #[cfg(target_os = "linux")]
+    {
+        let vendor = crate::doctor::read_dmi_field("sys_vendor");
+        let product = crate::doctor::dmi_product_label();
+        let bios = crate::doctor::dmi_bios_label();
+        if vendor.is_none() && product.is_none() {
+            return report_my_machine_miss(json_mode);
+        }
+        let tool_version = env!("CARGO_PKG_VERSION");
+        let url = build_hardware_report_url(
+            vendor.as_deref(),
+            product.as_deref(),
+            bios.as_deref(),
+            tool_version,
+        );
+        if json_mode {
+            use crate::doctor::json_escape;
+            println!("{{");
+            println!("  \"schema_version\": 1,");
+            println!("  \"tool\": \"aegis-boot\",");
+            println!("  \"submit_url\": \"{}\",", json_escape(&url));
+            println!(
+                "  \"vendor\": \"{}\",",
+                json_escape(vendor.as_deref().unwrap_or(""))
+            );
+            println!(
+                "  \"model\": \"{}\",",
+                json_escape(product.as_deref().unwrap_or(""))
+            );
+            println!(
+                "  \"firmware\": \"{}\"",
+                json_escape(bios.as_deref().unwrap_or(""))
+            );
+            println!("}}");
+        } else {
+            println!("aegis-boot compat — draft hardware-report submission");
+            println!();
+            println!("DMI fields gathered for pre-fill:");
+            println!("  vendor    : {}", vendor.as_deref().unwrap_or("(not set)"));
+            println!(
+                "  model     : {}",
+                product.as_deref().unwrap_or("(not set)")
+            );
+            println!("  firmware  : {}", bios.as_deref().unwrap_or("(not set)"));
+            println!("  tool      : aegis-boot v{tool_version}");
+            println!();
+            println!("Open this URL in a browser to finish the report (outcome,");
+            println!("boot-menu key, SB state, etc. are not derivable from DMI");
+            println!("and must be entered by hand):");
+            println!();
+            println!("  {url}");
+            println!();
+            println!("Before filing, please run the full flash → boot → kexec chain");
+            println!("on this machine. `aegis-boot compat` rows are verified-outcomes-");
+            println!("only; don't submit speculative entries.");
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        report_my_machine_miss(json_mode)
+    }
+}
+
+/// URL-encode a single query-param value. Minimal percent-encoder — we
+/// don't need a general-purpose one, just enough to get the operator's
+/// vendor / model / firmware strings through GitHub's URL parser. Encodes
+/// everything outside RFC 3986 §2.3 unreserved ASCII.
+fn percent_encode(s: &str) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(b as char);
+        } else {
+            // write! into a String is infallible — suppress the Result.
+            let _ = write!(out, "%{b:02X}");
+        }
+    }
+    out
+}
+
+/// Compose the pre-filled hardware-report URL. Returns a full HTTPS URL
+/// that opens GitHub's issue form with the passed fields populated.
+/// `pub(crate)` so the unit tests can round-trip it without running the
+/// full `run_submit` flow.
+pub(crate) fn build_hardware_report_url(
+    vendor: Option<&str>,
+    model: Option<&str>,
+    firmware: Option<&str>,
+    tool_version: &str,
+) -> String {
+    let mut url = String::from(
+        "https://github.com/williamzujkowski/aegis-boot/issues/new?template=hardware-report.yml",
+    );
+    if let Some(v) = vendor {
+        url.push_str("&vendor=");
+        url.push_str(&percent_encode(v));
+    }
+    if let Some(m) = model {
+        url.push_str("&model=");
+        url.push_str(&percent_encode(m));
+    }
+    if let Some(f) = firmware {
+        url.push_str("&firmware=");
+        url.push_str(&percent_encode(f));
+    }
+    url.push_str("&aegis-version=v");
+    url.push_str(&percent_encode(tool_version));
+    url
+}
+
 /// Handle the `--my-machine` failure-to-resolve case for both JSON and
 /// human modes. Consistent exit code (2) so scripted callers can
 /// distinguish it from a normal miss (1) — an auto-resolve failure is
@@ -232,12 +365,14 @@ fn print_help() {
     println!("  aegis-boot compat                     Show every known platform");
     println!("  aegis-boot compat <query>             Fuzzy match one platform");
     println!("  aegis-boot compat --my-machine        Auto-lookup from DMI (Linux only)");
+    println!("  aegis-boot compat --submit            Draft a hardware-report with DMI pre-fill");
     println!("  aegis-boot compat --json [query]      Structured output");
     println!();
     println!("EXAMPLES:");
     println!("  aegis-boot compat                     # full table");
     println!("  aegis-boot compat thinkpad            # match by vendor or model");
     println!("  aegis-boot compat --my-machine        # query this exact machine");
+    println!("  aegis-boot compat --submit            # pre-filled report URL");
     println!("  aegis-boot compat --json              # script-friendly list");
     println!();
     println!("NOTES:");
@@ -574,5 +709,91 @@ mod tests {
             try_run(&["--my-machine".to_string(), "--json".to_string()]),
             Err(2)
         );
+    }
+
+    // ---- --submit: URL builder + arg-parse tests ----
+
+    #[test]
+    fn percent_encode_preserves_unreserved() {
+        assert_eq!(percent_encode("abcXYZ"), "abcXYZ");
+        assert_eq!(
+            percent_encode("abc-123_test.foo~bar"),
+            "abc-123_test.foo~bar"
+        );
+        assert_eq!(percent_encode("0"), "0");
+    }
+
+    #[test]
+    fn percent_encode_escapes_spaces_and_special() {
+        assert_eq!(percent_encode("Framework Laptop"), "Framework%20Laptop");
+        assert_eq!(percent_encode("foo & bar"), "foo%20%26%20bar");
+        assert_eq!(percent_encode("("), "%28");
+        assert_eq!(percent_encode(")"), "%29");
+        assert_eq!(percent_encode("/"), "%2F");
+    }
+
+    #[test]
+    fn percent_encode_escapes_non_ascii_utf8() {
+        assert_eq!(percent_encode("—"), "%E2%80%94");
+    }
+
+    #[test]
+    fn build_hardware_report_url_has_template_param() {
+        let url = build_hardware_report_url(None, None, None, "0.13.0");
+        assert!(url.contains("template=hardware-report.yml"));
+        assert!(url.contains("aegis-version=v0.13.0"));
+    }
+
+    #[test]
+    fn build_hardware_report_url_pre_fills_all_fields() {
+        let url = build_hardware_report_url(
+            Some("LENOVO"),
+            Some("ThinkPad X1 Carbon Gen 11"),
+            Some("LENOVO N3HET70W (2024-01-15)"),
+            "0.13.0",
+        );
+        assert!(url.contains("vendor=LENOVO"));
+        assert!(url.contains("model=ThinkPad%20X1%20Carbon%20Gen%2011"));
+        assert!(url.contains("firmware=LENOVO%20N3HET70W%20%282024-01-15%29"));
+        assert!(url.contains("aegis-version=v0.13.0"));
+    }
+
+    #[test]
+    fn build_hardware_report_url_omits_missing_fields() {
+        let url = build_hardware_report_url(Some("LENOVO"), None, None, "0.13.0");
+        assert!(url.contains("vendor=LENOVO"));
+        assert!(!url.contains("&model="));
+        assert!(!url.contains("&firmware="));
+    }
+
+    #[test]
+    fn try_run_submit_rejects_extra_query() {
+        assert_eq!(
+            try_run(&["--submit".to_string(), "thinkpad".to_string()]),
+            Err(2)
+        );
+    }
+
+    #[test]
+    fn try_run_submit_rejects_my_machine_combo() {
+        assert_eq!(
+            try_run(&["--submit".to_string(), "--my-machine".to_string()]),
+            Err(2)
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn try_run_submit_returns_ok_or_two() {
+        // Depends on DMI populated-ness — Ok(()) on populated, Err(2)
+        // when every field is empty / placeholder.
+        let r = try_run(&["--submit".to_string()]);
+        assert!(matches!(r, Ok(()) | Err(2)), "unexpected: {r:?}");
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn try_run_submit_returns_two_on_non_linux() {
+        assert_eq!(try_run(&["--submit".to_string()]), Err(2));
     }
 }
