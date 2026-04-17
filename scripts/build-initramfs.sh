@@ -378,6 +378,17 @@ else
 fi
 /bin/mount -t tmpfs  run   /run
 
+# Enable kernel SysRq for emergency escape hatches that rescue-tui's
+# Help overlay advertises (Alt+SysRq+b reboot, +s sync, +e SIGTERM).
+# Without this, those keybind cheatsheets lie — kernel.sysrq=0 is the
+# common distro default. Write 1 (all SysRq functions enabled) since
+# this is a rescue environment an operator explicitly booted. (#93)
+if /bin/echo 1 > /proc/sys/kernel/sysrq 2>/dev/null; then
+    /bin/echo "init: SysRq enabled (kernel.sysrq=1) — operator escape hatches active"
+else
+    /bin/echo "init: WARNING could not enable SysRq (kernel built without CONFIG_MAGIC_SYSRQ?)"
+fi
+
 # #109 shakedown: every /bin/echo "init: ..." below is ALSO captured
 # to /run/aegis-init.log via a simple helper. After AEGIS_ISOS
 # mounts, the file is copied onto the data partition so the
