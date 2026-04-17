@@ -4,6 +4,11 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 
 ## [Unreleased]
 
+### Operator experience
+
+- **`aegis-boot init --profile panic-room`** ([#161](https://github.com/williamzujkowski/aegis-boot/issues/161)) — one-command rescue stick. Composes `doctor → flash → fetch + add` for every slug in a named profile, producing a single attestation manifest spanning the whole run. Default `panic-room` profile ships three ISOs (Alpine 3.20, Ubuntu 24.04 Server, Rocky 9) covering ~5 GiB — fits on a 16 GB stick. Extracted `try_run` variants on `doctor`, `flash`, `fetch`, and `inventory::run_add` so the composition can branch on typed `Result` instead of opaque `ExitCode`. Flash gained `--yes` to skip the typed-confirmation prompt when invoked from `init`.
+- **Stale issue triage ([#52](https://github.com/williamzujkowski/aegis-boot/issues/52), [#122](https://github.com/williamzujkowski/aegis-boot/issues/122), [#127](https://github.com/williamzujkowski/aegis-boot/issues/127))** — closed three bugs/docs issues whose fixes had already shipped in v0.12.0 / v0.13.0 and were masquerading as open. Verified the fixes in source (Debian-layout marker gate, post-kexec handoff banner, CHANGELOG reproducibility caveat) before closing.
+
 ### Catalog + quality
 
 - **Catalog curation policy** ([#154](https://github.com/williamzujkowski/aegis-boot/issues/154)) — `docs/CATALOG_POLICY.md` formalizes the 5 inclusion criteria (HTTPS canonical URL, project-published signed SHA256SUMS, operator value, stable URL, honest SB posture), accepted categories, and the PR proposal process.

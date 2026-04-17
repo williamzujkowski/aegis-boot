@@ -6,6 +6,7 @@ The `aegis-boot` binary is the operator-facing front end. It wraps the build/fla
 aegis-boot — Signed boot. Any ISO. Your keys.
 
 USAGE:
+  aegis-boot init [device]      One-command rescue stick (flash + fetch + add)
   aegis-boot flash [device]     Write aegis-boot to a USB stick
   aegis-boot list [device]      Show ISOs on the stick
   aegis-boot add <iso> [device] Copy + validate an ISO
@@ -20,6 +21,94 @@ USAGE:
 All subcommands accept `--help` / `-h` for per-command usage.
 
 The implementation lives in [`crates/aegis-cli`](../crates/aegis-cli) (binary name `aegis-boot`).
+
+---
+
+## `aegis-boot init`
+
+One-command rescue stick. Composes `doctor → flash → fetch + add` in sequence using a named **profile** — a constant bundle of catalog slugs. The simplest path from empty stick to rescue-ready, producing a single attestation manifest that spans the entire run.
+
+### Usage
+
+```bash
+aegis-boot init                         # auto-detect drive, panic-room profile
+aegis-boot init /dev/sdc                # explicit device
+aegis-boot init /dev/sdc --yes          # unattended (skips prompts)
+aegis-boot init --profile panic-room    # explicit profile (same default)
+aegis-boot init --help
+```
+
+### Options
+
+| Flag               | Effect                                                                    |
+| ------------------ | ------------------------------------------------------------------------- |
+| `--profile <name>` | Profile to install (default: `panic-room`)                                |
+| `--yes`, `-y`      | Skip interactive confirmations; destructive (overrides doctor BROKEN too) |
+| `--no-doctor`      | Skip the `doctor` preflight check (not recommended)                       |
+| `--no-gpg`         | Skip GPG signature verification on fetched ISOs (not recommended)         |
+
+### What it does
+
+1. **Doctor preflight.** Runs `aegis-boot doctor --stick <device>`. Exits if the score falls into BROKEN (any `FAIL` check) unless `--yes` is passed.
+2. **Flash.** Runs `aegis-boot flash <device> --yes` — wipes, writes the signed boot image, and records a new attestation manifest.
+3. **Fetch + add each ISO** in the profile. Each `fetch` is idempotent via the `$XDG_CACHE_HOME/aegis-boot/<slug>/` cache, and each `add` appends an `IsoRecord` to the single attestation manifest from step 2.
+
+If any step fails, `init` stops immediately and prints a context line. Re-running picks up where it left off (fetch is cached; flash and add are idempotent on the same stick).
+
+### Profiles
+
+| Name         | ISOs (count) | Size (approx.) | Purpose                                      |
+| ------------ | ------------ | -------------- | -------------------------------------------- |
+| `panic-room` | 3            | ~5 GiB         | Emergency recovery kit (default)             |
+
+**`panic-room`** contains:
+
+- `alpine-3.20-standard` — 200 MiB, minimal, fast boot for basic rescue
+- `ubuntu-24.04-live-server` — 3 GiB, familiar tooling, server-class rescue
+- `rocky-9-minimal` — 2 GiB, enterprise RHEL-family rescue
+
+Fits on a 16 GB stick with headroom for operator-added ISOs.
+
+### Exit codes
+
+- `0` — stick is ready with the profile installed
+- `1` — step failure (doctor, flash, fetch, or add); see preceding error
+- `2` — invalid arguments or unknown profile
+
+### Example
+
+```bash
+$ aegis-boot init /dev/sdc --yes
+aegis-boot init — Emergency recovery kit — Alpine 3.20 + Ubuntu 24.04 Server + Rocky 9
+
+Plan:
+  1. doctor preflight (host + stick health)
+  2. flash /dev/sdc
+  3. fetch + add each ISO in the profile:
+       - alpine-3.20-standard
+       - ubuntu-24.04-live-server
+       - rocky-9-minimal
+
+--- doctor preflight ---
+...
+
+--- flash stick ---
+...
+
+--- alpine-3.20-standard ---
+Fetching Alpine Linux 3.20 Standard into ~/.cache/aegis-boot/alpine-3.20-standard
+...
+
+=== aegis-boot init: DONE ===
+Profile 'panic-room' is ready on the stick (3 ISO(s) added).
+
+Next steps:
+  1. Eject: sudo sync && sudo eject /dev/sdX
+  2. Boot the target machine (UEFI boot menu → USB entry).
+  3. In rescue-tui, pick an ISO and press Enter.
+
+Inspect attestation: aegis-boot list
+```
 
 ---
 

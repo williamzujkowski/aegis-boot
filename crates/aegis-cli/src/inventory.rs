@@ -64,6 +64,15 @@ pub fn run_list(args: &[String]) -> ExitCode {
 
 /// Entry point for `aegis-boot add <iso> [mount-or-device]`.
 pub fn run_add(args: &[String]) -> ExitCode {
+    match try_run_add(args) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(code) => ExitCode::from(code),
+    }
+}
+
+/// Inner runner returning a typed result so `aegis-boot init` can branch
+/// on success/failure. Same semantics as `run_add`.
+pub(crate) fn try_run_add(args: &[String]) -> Result<(), u8> {
     if args.is_empty()
         || args.first().map(String::as_str) == Some("--help")
         || args.first().map(String::as_str) == Some("-h")
@@ -71,17 +80,13 @@ pub fn run_add(args: &[String]) -> ExitCode {
         println!("aegis-boot add — copy an ISO onto the stick with verification");
         println!();
         println!("USAGE: aegis-boot add <iso-file> [/dev/sdX | /mnt/aegis-isos]");
-        return if args.is_empty() {
-            ExitCode::from(2)
-        } else {
-            ExitCode::SUCCESS
-        };
+        return if args.is_empty() { Err(2) } else { Ok(()) };
     }
 
     let iso_arg = PathBuf::from(&args[0]);
     if !iso_arg.is_file() {
         eprintln!("aegis-boot add: not a file: {}", iso_arg.display());
-        return ExitCode::from(1);
+        return Err(1);
     }
     let iso_filename = iso_arg
         .file_name()
@@ -92,7 +97,7 @@ pub fn run_add(args: &[String]) -> ExitCode {
         Ok(m) => m,
         Err(e) => {
             eprintln!("aegis-boot add: {e}");
-            return ExitCode::from(1);
+            return Err(1);
         }
     };
 
@@ -116,7 +121,7 @@ pub fn run_add(args: &[String]) -> ExitCode {
             if mount.temporary {
                 unmount_temp(&mount);
             }
-            return ExitCode::from(1);
+            return Err(1);
         }
         _ => {}
     }
@@ -129,7 +134,7 @@ pub fn run_add(args: &[String]) -> ExitCode {
         if mount.temporary {
             unmount_temp(&mount);
         }
-        return ExitCode::from(1);
+        return Err(1);
     }
 
     let mut sidecars_copied: Vec<String> = Vec::new();
@@ -173,7 +178,7 @@ pub fn run_add(args: &[String]) -> ExitCode {
     if mount.temporary {
         unmount_temp(&mount);
     }
-    ExitCode::SUCCESS
+    Ok(())
 }
 
 // ---- helpers ---------------------------------------------------------------

@@ -31,6 +31,15 @@ use crate::catalog::{find_entry, Entry, SbStatus};
 
 /// Entry point for `aegis-boot fetch [--out DIR] [--no-gpg] <slug>`.
 pub fn run(args: &[String]) -> ExitCode {
+    match try_run(args) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(code) => ExitCode::from(code),
+    }
+}
+
+/// Inner runner returning a typed result so `aegis-boot init` can branch
+/// on success/failure. Same semantics as `run`.
+pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
     let mut out_dir: Option<PathBuf> = None;
     let mut skip_gpg = false;
     let mut slug: Option<String> = None;
@@ -39,12 +48,12 @@ pub fn run(args: &[String]) -> ExitCode {
         match a.as_str() {
             "--help" | "-h" => {
                 print_help();
-                return ExitCode::SUCCESS;
+                return Ok(());
             }
             "--out" => {
                 let Some(v) = iter.next() else {
                     eprintln!("aegis-boot fetch: --out requires a directory argument");
-                    return ExitCode::from(2);
+                    return Err(2);
                 };
                 out_dir = Some(PathBuf::from(v));
             }
@@ -56,13 +65,15 @@ pub fn run(args: &[String]) -> ExitCode {
             }
             arg if arg.starts_with("--") => {
                 eprintln!("aegis-boot fetch: unknown option '{arg}'");
-                return ExitCode::from(2);
+                return Err(2);
             }
             other => {
                 if slug.is_some() {
-                    eprintln!("aegis-boot fetch: only one slug allowed (got '{other}' after '{}')",
-                        slug.unwrap_or_else(|| "?".into()));
-                    return ExitCode::from(2);
+                    eprintln!(
+                        "aegis-boot fetch: only one slug allowed (got '{other}' after '{}')",
+                        slug.unwrap_or_else(|| "?".into())
+                    );
+                    return Err(2);
                 }
                 slug = Some(other.to_string());
             }
@@ -72,19 +83,19 @@ pub fn run(args: &[String]) -> ExitCode {
     let Some(slug) = slug else {
         eprintln!("aegis-boot fetch: missing <slug> argument");
         eprintln!("run 'aegis-boot recommend' to see available slugs");
-        return ExitCode::from(2);
+        return Err(2);
     };
 
     let Some(entry) = find_entry(&slug) else {
         eprintln!("aegis-boot fetch: no catalog entry matching '{slug}'");
         eprintln!("run 'aegis-boot recommend' to see available slugs");
-        return ExitCode::from(1);
+        return Err(1);
     };
 
     let dest = out_dir.unwrap_or_else(|| default_cache_dir(entry.slug));
     if let Err(e) = std::fs::create_dir_all(&dest) {
         eprintln!("aegis-boot fetch: cannot create {}: {e}", dest.display());
-        return ExitCode::from(1);
+        return Err(1);
     }
 
     println!("Fetching {} into {}", entry.name, dest.display());
@@ -96,18 +107,18 @@ pub fn run(args: &[String]) -> ExitCode {
 
     if let Err(e) = download(entry.iso_url, &dest.join(&iso_filename)) {
         eprintln!("aegis-boot fetch: ISO download failed: {e}");
-        return ExitCode::from(1);
+        return Err(1);
     }
     if let Err(e) = download(entry.sha256_url, &dest.join(&sha_filename)) {
         eprintln!("aegis-boot fetch: SHA256SUMS download failed: {e}");
-        return ExitCode::from(1);
+        return Err(1);
     }
     if let Err(e) = download(entry.sig_url, &dest.join(&sig_filename)) {
         // Sig download is best-effort if the user opts out of GPG, but
         // useful to have on disk regardless.
         eprintln!("aegis-boot fetch: signature download failed: {e}");
         if !skip_gpg {
-            return ExitCode::from(1);
+            return Err(1);
         }
     }
 
@@ -116,11 +127,13 @@ pub fn run(args: &[String]) -> ExitCode {
     if !verify_sha256(&dest, &iso_filename, &sha_filename) {
         eprintln!();
         eprintln!("aegis-boot fetch: SHA-256 verification FAILED");
-        eprintln!("the ISO at {} does not match the project's published checksum",
-            dest.join(&iso_filename).display());
+        eprintln!(
+            "the ISO at {} does not match the project's published checksum",
+            dest.join(&iso_filename).display()
+        );
         eprintln!("re-fetch from a different network if you suspect MITM, or check");
         eprintln!("the project's release page for an updated checksum file");
-        return ExitCode::from(1);
+        return Err(1);
     }
     println!("  SHA-256: OK");
 
@@ -128,18 +141,18 @@ pub fn run(args: &[String]) -> ExitCode {
         println!();
         println!("(GPG verification skipped per --no-gpg)");
     } else if let Some(code) = handle_gpg_step(&dest, &sha_filename, &sig_filename, &slug) {
-        return code;
+        return Err(code);
     }
 
     print_success(entry, &dest, &iso_filename);
-    ExitCode::SUCCESS
+    Ok(())
 }
 
-/// Run + report GPG verification. Returns `Some(ExitCode)` to abort the
+/// Run + report GPG verification. Returns `Some(code)` to abort the
 /// whole `fetch` command (BAD signature, gpg missing); `None` to
 /// continue (OK or unknown-key — both are non-fatal because the
 /// operator can review and re-run).
-fn handle_gpg_step(dest: &Path, sums: &str, sig: &str, slug: &str) -> Option<ExitCode> {
+fn handle_gpg_step(dest: &Path, sums: &str, sig: &str, slug: &str) -> Option<u8> {
     println!();
     println!("Verifying GPG signature of {sums}...");
     match verify_gpg(dest, sums, sig) {
@@ -171,14 +184,14 @@ fn handle_gpg_step(dest: &Path, sums: &str, sig: &str, slug: &str) -> Option<Exi
             eprintln!("--- gpg --verify ---");
             eprintln!("{stderr}");
             eprintln!("--- end ---");
-            Some(ExitCode::from(1))
+            Some(1)
         }
         GpgVerdict::GpgMissing => {
             eprintln!();
             eprintln!("aegis-boot fetch: gpg not found in PATH");
             eprintln!("install gpg (e.g. `sudo apt-get install gnupg`) and re-run, or pass");
             eprintln!("--no-gpg to skip signature verification (NOT recommended)");
-            Some(ExitCode::from(1))
+            Some(1)
         }
     }
 }
@@ -339,10 +352,7 @@ mod tests {
 
     #[test]
     fn filename_from_url_no_path() {
-        assert_eq!(
-            filename_from_url("https://example.com/file"),
-            "file"
-        );
+        assert_eq!(filename_from_url("https://example.com/file"), "file");
     }
 
     #[test]

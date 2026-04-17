@@ -152,26 +152,30 @@ impl Report {
         }
     }
 
-    fn exit_code(&self) -> ExitCode {
-        if self
-            .rows
-            .iter()
-            .any(|(v, _, _)| matches!(v, Verdict::Fail))
-        {
-            ExitCode::from(1)
-        } else {
-            ExitCode::SUCCESS
-        }
+    fn has_any_fail(&self) -> bool {
+        self.rows.iter().any(|(v, _, _)| matches!(v, Verdict::Fail))
     }
 }
 
 /// Entry point for `aegis-boot doctor [--stick /dev/sdX]`.
 pub fn run(args: &[String]) -> ExitCode {
+    match try_run(args) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(code) => ExitCode::from(code),
+    }
+}
+
+/// Inner runner returning a typed result so `aegis-boot init` can branch
+/// on doctor outcome without comparing opaque `ExitCode`s. Semantics
+/// match `run`: `Ok(())` on pass, `Err(1)` when any check reported
+/// `Verdict::Fail` (i.e. score < 40 in the worst case, though the
+/// fail-counter is the real gate).
+pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
     if args.first().map(String::as_str) == Some("--help")
         || args.first().map(String::as_str) == Some("-h")
     {
         print_help();
-        return ExitCode::SUCCESS;
+        return Ok(());
     }
 
     let stick = parse_stick_arg(args);
@@ -231,7 +235,11 @@ pub fn run(args: &[String]) -> ExitCode {
     println!();
 
     report.print_summary();
-    report.exit_code()
+    if report.has_any_fail() {
+        Err(1)
+    } else {
+        Ok(())
+    }
 }
 
 fn print_help() {
@@ -428,7 +436,10 @@ fn check_stick_partitions(report: &mut Report, dev: &Path) {
         report.add_with_next(
             Verdict::Fail,
             name,
-            format!("sgdisk failed: {}", String::from_utf8_lossy(&out.stderr).trim()),
+            format!(
+                "sgdisk failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
             format!(
                 "verify {} is an aegis-boot stick (was it flashed by `aegis-boot flash`?)",
                 dev.display()

@@ -44,7 +44,7 @@ pub enum SbStatus {
 impl SbStatus {
     fn glyph(self) -> &'static str {
         match self {
-            SbStatus::Signed(_) => "\u{2713}", // ✓
+            SbStatus::Signed(_) => "\u{2713}",        // ✓
             SbStatus::UnsignedNeedsMok => "\u{2717}", // ✗
             SbStatus::Unknown => "?",
         }
@@ -240,7 +240,11 @@ fn print_entry(e: &Entry) {
     println!();
     println!("  Slug:        {}", e.slug);
     println!("  Architecture: {}", e.arch);
-    println!("  Approx size:  {} ({} MiB)", humanize(e.size_mib), e.size_mib);
+    println!(
+        "  Approx size:  {} ({} MiB)",
+        humanize(e.size_mib),
+        e.size_mib
+    );
     println!("  Purpose:      {}", e.purpose);
     println!();
     println!("  ISO URL:      {}", e.iso_url);
@@ -359,9 +363,21 @@ mod tests {
     #[test]
     fn catalog_urls_are_https() {
         for e in CATALOG {
-            assert!(e.iso_url.starts_with("https://"), "{} iso_url not https", e.slug);
-            assert!(e.sha256_url.starts_with("https://"), "{} sha256_url not https", e.slug);
-            assert!(e.sig_url.starts_with("https://"), "{} sig_url not https", e.slug);
+            assert!(
+                e.iso_url.starts_with("https://"),
+                "{} iso_url not https",
+                e.slug
+            );
+            assert!(
+                e.sha256_url.starts_with("https://"),
+                "{} sha256_url not https",
+                e.slug
+            );
+            assert!(
+                e.sig_url.starts_with("https://"),
+                "{} sig_url not https",
+                e.slug
+            );
         }
     }
 
@@ -369,7 +385,11 @@ mod tests {
     fn catalog_sizes_are_plausible() {
         for e in CATALOG {
             assert!(e.size_mib >= 1, "{} size_mib too small", e.slug);
-            assert!(e.size_mib < 16_000, "{} size_mib > 16 GiB seems wrong", e.slug);
+            assert!(
+                e.size_mib < 16_000,
+                "{} size_mib > 16 GiB seems wrong",
+                e.slug
+            );
         }
     }
 
