@@ -399,13 +399,16 @@ fn print_help() {
     println!("Manifests live in $XDG_DATA_HOME/aegis-boot/attestations/.");
     println!();
     println!("USAGE:");
-    println!("  aegis-boot attest list           List all stored attestations");
-    println!("  aegis-boot attest show <FILE>    Pretty-print one attestation");
-    println!("  aegis-boot attest --help         This message");
+    println!("  aegis-boot attest list              List all stored attestations");
+    println!("  aegis-boot attest list --json       Machine-readable summary");
+    println!("  aegis-boot attest show <FILE>       Pretty-print one attestation");
+    println!("  aegis-boot attest show --json <FILE> Raw manifest JSON (full detail)");
+    println!("  aegis-boot attest --help            This message");
     println!();
     println!("EXAMPLES:");
     println!("  aegis-boot attest list");
     println!("  aegis-boot attest show ~/.local/share/aegis-boot/attestations/abc123-2026-04-16T12-34-56Z.json");
+    println!("  aegis-boot attest list --json | jq '.attestations[].flashed_at'");
 }
 
 fn run_list(json_mode: bool) -> ExitCode {
@@ -546,7 +549,9 @@ fn print_attest_list_json(dir: &Path, entries: &[std::fs::DirEntry]) {
 }
 
 fn run_show(args: &[String]) -> ExitCode {
-    let Some(file_arg) = args.first() else {
+    // --json can appear anywhere; the positional is the FILE path.
+    let json_mode = args.iter().any(|a| a == "--json");
+    let Some(file_arg) = args.iter().find(|a| !a.starts_with("--")) else {
         eprintln!("aegis-boot attest show: missing <FILE> argument");
         eprintln!("run 'aegis-boot attest list' to find files");
         return ExitCode::from(2);
@@ -555,11 +560,43 @@ fn run_show(args: &[String]) -> ExitCode {
     let att = match read_attestation(&path) {
         Ok(a) => a,
         Err(e) => {
-            eprintln!("aegis-boot attest show: {e}");
+            if json_mode {
+                println!(
+                    "{{ \"schema_version\": 1, \"error\": \"{}\" }}",
+                    crate::doctor::json_escape(&e)
+                );
+            } else {
+                eprintln!("aegis-boot attest show: {e}");
+            }
             return ExitCode::from(1);
         }
     };
-    print_attestation(&path, &att);
+    if json_mode {
+        // The on-disk manifest IS JSON — emit it verbatim. This gives
+        // downstream consumers the full Attestation schema (including
+        // every IsoRecord and host/target detail) without requiring
+        // aegis-cli to re-serialize. A separate `attest list --json`
+        // gives the summary; this is the full detail.
+        match fs::read_to_string(&path) {
+            Ok(body) => {
+                // `body` already ends with a newline from serde_json
+                // pretty-print; use print! to avoid doubling.
+                print!("{body}");
+                if !body.ends_with('\n') {
+                    println!();
+                }
+            }
+            Err(e) => {
+                println!(
+                    "{{ \"schema_version\": 1, \"error\": \"read {}: {e}\" }}",
+                    crate::doctor::json_escape(&path.display().to_string())
+                );
+                return ExitCode::from(1);
+            }
+        }
+    } else {
+        print_attestation(&path, &att);
+    }
     ExitCode::SUCCESS
 }
 
