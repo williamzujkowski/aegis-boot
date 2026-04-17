@@ -5,7 +5,12 @@ edition.workspace = true
 rust-version.workspace = true
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/williamzujkowski/aegis-boot"
-description = "ISO installation media parser for aegis-boot"
+description = "Boot-entry discovery from ISO installation media (Arch, Debian/Ubuntu, Fedora/RHEL, Alpine, NixOS, Mint)"
+readme = "README.md"
+documentation = "https://docs.rs/iso-parser"
+homepage = "https://github.com/williamzujkowski/aegis-boot"
+keywords = ["iso", "boot", "kexec", "rescue", "installer"]
+categories = ["filesystem", "parser-implementations"]
 
 [features]
 default = ["std"]

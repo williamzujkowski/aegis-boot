@@ -8,6 +8,11 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 
 - **OVMF SB detection fallback** ([#118](https://github.com/williamzujkowski/aegis-boot/issues/118)) — `rescue-tui`'s `SecureBootStatus::detect()` now scans `/sys/firmware/efi/efivars` for any filename starting with `SecureBoot-` when the two upstream-spec paths (global-GUID and plain) miss. Handles OVMF firmware builds that publish the variable under a non-spec suffix — observed under QEMU+OVMF SecBoot shakedown where rescue-tui's header showed `SB:unknown` despite SB enforcing. Parallels the existing scan fallback in `aegis-cli doctor` (doctor.rs:371).
 
+### Publishing prep
+
+- **Crates.io metadata for the library trio** ([#51](https://github.com/williamzujkowski/aegis-boot/issues/51)) — `iso-parser`, `iso-probe`, `kexec-loader` now carry the full `[package]` surface (`readme`, `documentation`, `homepage`, `keywords`, `categories`) plus per-crate README files. `iso-probe`'s path dep on `iso-parser` gained the required registry `version = "0.13"`. `cargo publish --dry-run -p iso-parser` and `-p kexec-loader` come back clean; `iso-probe`'s dry-run blocks on the unpublished-registry chicken-and-egg which is expected and resolved by the real publish ordering documented in `docs/RELEASE_CRATES.md`. Gate to actual publish remains v1.0.0-rc1 (real-hardware shakedown still pending).
+- **Test flake fix** — `fetch::tests::default_cache_uses_xdg_cache_home` and `default_cache_falls_back_to_home_dot_cache` now serialize on a `Mutex` to avoid the process-global env-var race. Both tests pass across parallel runs.
+
 ### Operator experience
 
 - **Two more `init` profiles** — `minimal` (alpine-only, ~200 MiB, fastest) and `server` (ubuntu-server + rocky + almalinux, ~6 GiB, enterprise RHEL + Ubuntu rescue triple). Operators can now pick `aegis-boot init --profile <panic-room|minimal|server>` to fit the target-environment shape. Every profile slug is enforced to be in the verified catalog at test time (`every_profile_slug_is_in_catalog`).

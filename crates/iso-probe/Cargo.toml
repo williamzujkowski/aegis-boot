@@ -5,12 +5,17 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Runtime ISO discovery on the live rescue environment (loopback + GPT/ISO9660)"
+description = "Runtime ISO discovery for rescue environments (loopback mount + GPT/ISO9660 + sha256/minisign sidecar verification)"
+readme = "README.md"
+documentation = "https://docs.rs/iso-probe"
+homepage = "https://github.com/williamzujkowski/aegis-boot"
+keywords = ["iso", "loopback", "rescue", "kexec", "verification"]
+categories = ["filesystem", "embedded"]
 
 [lib]
 
 [dependencies]
-iso-parser = { path = "../iso-parser" }
+iso-parser = { path = "../iso-parser", version = "0.13" }
 thiserror.workspace = true
 serde = { workspace = true }
 tracing.workspace = true
