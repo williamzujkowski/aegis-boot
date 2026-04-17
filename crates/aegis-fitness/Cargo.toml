@@ -22,5 +22,8 @@ missing_docs = "warn"
 [lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
-unwrap_used = "warn"
-expect_used = "warn"
+# Tightened from warn → deny (#138 quality gates). Production code
+# contains zero bare .unwrap()/.expect() calls at the time of this change.
+# Test modules get #[allow(clippy::unwrap_used, clippy::expect_used)].
+unwrap_used = "deny"
+expect_used = "deny"
