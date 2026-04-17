@@ -36,5 +36,11 @@ missing_docs = "warn"
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
-unwrap_used = "warn"
-expect_used = "warn"
+# unwrap_used/expect_used tightened to `deny` (#138). Production code
+# must surface errors explicitly rather than panic; test modules opt
+# back out with `#[allow(clippy::unwrap_used, clippy::expect_used)]`
+# at the `#[cfg(test)] mod …` boundary, where unwrap/expect are
+# legitimate for clarity. CI already runs with `-D warnings` so this
+# tightening blocks new unwrap/expect in production at PR time.
+unwrap_used = "deny"
+expect_used = "deny"
