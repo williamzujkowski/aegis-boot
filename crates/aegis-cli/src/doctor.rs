@@ -240,9 +240,12 @@ fn band_for_score(score: u8) -> &'static str {
 }
 
 /// Minimal JSON string escaper: handles the five characters RFC 8259
-/// requires (`"`, `\`, `\n`, `\r`, `\t`). Sufficient for check names /
-/// details — doctor doesn't carry arbitrary user input.
-fn json_escape(s: &str) -> String {
+/// requires (`"`, `\`, `\n`, `\r`, `\t`), plus control characters
+/// below `0x20` as `\u00XX`. Sufficient for check names / details —
+/// doctor doesn't carry arbitrary user input. Shared with other
+/// `--json` surfaces (`list --json`, `attest --json`) so every
+/// aegis-boot structured-output formatter uses the same escape rules.
+pub(crate) fn json_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {

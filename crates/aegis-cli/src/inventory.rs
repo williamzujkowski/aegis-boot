@@ -15,51 +15,114 @@ pub fn run_list(args: &[String]) -> ExitCode {
     {
         println!("aegis-boot list — inventory ISOs on the stick");
         println!();
-        println!("USAGE: aegis-boot list [/dev/sdX | /mnt/aegis-isos]");
-        println!("  No argument = auto-find the mounted AEGIS_ISOS partition");
+        println!("USAGE:");
+        println!("  aegis-boot list [/dev/sdX | /mnt/aegis-isos]");
+        println!("  aegis-boot list --json [target]   # machine-readable output");
+        println!();
+        println!("  No target argument = auto-find the mounted AEGIS_ISOS partition.");
         return ExitCode::SUCCESS;
     }
 
-    let mount = match resolve_mount(args.first().map(String::as_str)) {
+    // --json is a mode flag; accepted in any position. Everything else
+    // is positional (the target mount path or device).
+    let json_mode = args.iter().any(|a| a == "--json");
+    let target = args
+        .iter()
+        .find(|a| !a.starts_with("--"))
+        .map(String::as_str);
+
+    let mount = match resolve_mount(target) {
         Ok(m) => m,
         Err(e) => {
-            eprintln!("aegis-boot list: {e}");
+            if json_mode {
+                println!(
+                    "{{ \"schema_version\": 1, \"error\": \"{}\" }}",
+                    crate::doctor::json_escape(&e)
+                );
+            } else {
+                eprintln!("aegis-boot list: {e}");
+            }
             return ExitCode::from(1);
         }
     };
 
-    print_attestation_summary(&mount.path);
-
     let isos = scan_isos(&mount.path);
-    if isos.is_empty() {
-        println!("No .iso files on {}", mount.path.display());
-        if mount.temporary {
-            unmount_temp(&mount);
-        }
-        return ExitCode::SUCCESS;
-    }
 
-    println!("ISOs on {}:", mount.path.display());
-    println!();
-    for iso in &isos {
-        let sha_marker = if iso.has_sha256 { "\u{2713}" } else { " " };
-        let sig_marker = if iso.has_minisig { "\u{2713}" } else { " " };
-        println!(
-            "  [{sha_marker} sha256] [{sig_marker} minisig]  {:>8}  {}",
-            humanize(iso.size),
-            iso.name
-        );
+    if json_mode {
+        print_list_json(&mount.path, &isos);
+    } else {
+        print_attestation_summary(&mount.path);
+        if isos.is_empty() {
+            println!("No .iso files on {}", mount.path.display());
+        } else {
+            println!("ISOs on {}:", mount.path.display());
+            println!();
+            for iso in &isos {
+                let sha_marker = if iso.has_sha256 { "\u{2713}" } else { " " };
+                let sig_marker = if iso.has_minisig { "\u{2713}" } else { " " };
+                println!(
+                    "  [{sha_marker} sha256] [{sig_marker} minisig]  {:>8}  {}",
+                    humanize(iso.size),
+                    iso.name
+                );
+            }
+            println!();
+            println!("{} ISO(s) total. Legend:", isos.len());
+            println!("  \u{2713} sha256   sibling <iso>.sha256 present");
+            println!("  \u{2713} minisig  sibling <iso>.minisig present");
+            println!("  (missing sidecars mean the ISO will show GRAY verdict in rescue-tui)");
+        }
     }
-    println!();
-    println!("{} ISO(s) total. Legend:", isos.len());
-    println!("  \u{2713} sha256   sibling <iso>.sha256 present");
-    println!("  \u{2713} minisig  sibling <iso>.minisig present");
-    println!("  (missing sidecars mean the ISO will show GRAY verdict in rescue-tui)");
 
     if mount.temporary {
         unmount_temp(&mount);
     }
     ExitCode::SUCCESS
+}
+
+/// Emit the list inventory as a stable `schema_version=1` JSON document
+/// on stdout. Matches the shape of `aegis-boot doctor --json` so
+/// downstream tooling has one parser.
+fn print_list_json(mount_path: &Path, isos: &[IsoEntry]) {
+    use crate::doctor::json_escape;
+    println!("{{");
+    println!("  \"schema_version\": 1,");
+    println!("  \"tool_version\": \"{}\",", env!("CARGO_PKG_VERSION"));
+    println!(
+        "  \"mount_path\": \"{}\",",
+        json_escape(&mount_path.display().to_string())
+    );
+    // Attestation summary if any — stays null when the mount has no
+    // attestation (operator flashed elsewhere, or pre-v0.13.0 stick).
+    match crate::attest::summary_for_mount(mount_path) {
+        Some(s) => {
+            println!("  \"attestation\": {{");
+            println!("    \"flashed_at\": \"{}\",", json_escape(&s.flashed_at));
+            println!("    \"operator\": \"{}\",", json_escape(&s.operator));
+            println!("    \"isos_recorded\": {},", s.isos_recorded);
+            println!(
+                "    \"manifest_path\": \"{}\"",
+                json_escape(&s.manifest_path.display().to_string())
+            );
+            println!("  }},");
+        }
+        None => println!("  \"attestation\": null,"),
+    }
+    println!("  \"count\": {},", isos.len());
+    println!("  \"isos\": [");
+    let last = isos.len().saturating_sub(1);
+    for (i, iso) in isos.iter().enumerate() {
+        let comma = if i == last { "" } else { "," };
+        println!(
+            "    {{ \"name\": \"{}\", \"size_bytes\": {}, \"has_sha256\": {}, \"has_minisig\": {} }}{comma}",
+            json_escape(&iso.name),
+            iso.size,
+            iso.has_sha256,
+            iso.has_minisig,
+        );
+    }
+    println!("  ]");
+    println!("}}");
 }
 
 /// Entry point for `aegis-boot add <iso> [mount-or-device]`.

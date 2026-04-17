@@ -372,13 +372,17 @@ pub fn record_flash(drive: &Drive, img_path: &Path, img_size: u64) -> Result<Pat
 /// Entry point for `aegis-boot attest [list|show <file>] [--help]`.
 pub fn run(args: &[String]) -> ExitCode {
     let sub = args.first().map(String::as_str);
+    // --json is accepted on `list` (applies to the enumeration).
+    let json_mode = args.iter().any(|a| a == "--json");
     match sub {
         None | Some("--help" | "-h" | "help") => {
             print_help();
             ExitCode::SUCCESS
         }
-        Some("list") => run_list(),
+        Some("list") => run_list(json_mode),
         Some("show") => run_show(&args[1..]),
+        // Bare `aegis-boot attest --json` == `aegis-boot attest list --json`
+        Some("--json") => run_list(true),
         Some(other) => {
             eprintln!("aegis-boot attest: unknown subcommand '{other}'");
             eprintln!("run 'aegis-boot attest --help' for usage");
@@ -404,10 +408,14 @@ fn print_help() {
     println!("  aegis-boot attest show ~/.local/share/aegis-boot/attestations/abc123-2026-04-16T12-34-56Z.json");
 }
 
-fn run_list() -> ExitCode {
+fn run_list(json_mode: bool) -> ExitCode {
     let dir = data_dir().join("attestations");
     if !dir.is_dir() {
-        println!("(no attestations recorded yet — run `aegis-boot flash` to create one)");
+        if json_mode {
+            println!("{{ \"schema_version\": 1, \"attestations\": [] }}");
+        } else {
+            println!("(no attestations recorded yet — run `aegis-boot flash` to create one)");
+        }
         return ExitCode::SUCCESS;
     }
     let mut entries: Vec<_> = match fs::read_dir(&dir) {
@@ -416,11 +424,22 @@ fn run_list() -> ExitCode {
             .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
             .collect(),
         Err(e) => {
-            eprintln!("aegis-boot attest list: read_dir {}: {e}", dir.display());
+            if json_mode {
+                println!(
+                    "{{ \"schema_version\": 1, \"error\": \"{}\" }}",
+                    crate::doctor::json_escape(&format!("read_dir {}: {e}", dir.display()))
+                );
+            } else {
+                eprintln!("aegis-boot attest list: read_dir {}: {e}", dir.display());
+            }
             return ExitCode::from(1);
         }
     };
     entries.sort_by_key(std::fs::DirEntry::path);
+    if json_mode {
+        print_attest_list_json(&dir, &entries);
+        return ExitCode::SUCCESS;
+    }
     if entries.is_empty() {
         println!("(no attestations in {})", dir.display());
         return ExitCode::SUCCESS;
@@ -451,6 +470,79 @@ fn run_list() -> ExitCode {
         entries.len()
     );
     ExitCode::SUCCESS
+}
+
+/// Emit the attestation list as a stable `schema_version=1` JSON
+/// document on stdout. Each entry carries the parsed attestation
+/// summary plus the on-disk manifest path so downstream tooling can
+/// follow the chain to `aegis-boot attest show <file>` for full detail.
+fn print_attest_list_json(dir: &Path, entries: &[std::fs::DirEntry]) {
+    use crate::doctor::json_escape;
+    println!("{{");
+    println!("  \"schema_version\": 1,");
+    println!("  \"tool_version\": \"{}\",", env!("CARGO_PKG_VERSION"));
+    println!(
+        "  \"attestations_dir\": \"{}\",",
+        json_escape(&dir.display().to_string())
+    );
+    println!("  \"count\": {},", entries.len());
+    println!("  \"attestations\": [");
+    let last = entries.len().saturating_sub(1);
+    for (i, entry) in entries.iter().enumerate() {
+        let path = entry.path();
+        let comma = if i == last { "" } else { "," };
+        match read_attestation(&path) {
+            Ok(att) => {
+                // Emit a subset of the full manifest — enough to drive
+                // a CI/monitoring dashboard without requiring the
+                // consumer to re-parse each file. Full detail is one
+                // `aegis-boot attest show <path>` away.
+                println!("    {{");
+                println!(
+                    "      \"manifest_path\": \"{}\",",
+                    json_escape(&path.display().to_string())
+                );
+                println!("      \"schema_version\": {},", att.schema_version);
+                println!(
+                    "      \"tool_version\": \"{}\",",
+                    json_escape(&att.tool_version)
+                );
+                println!(
+                    "      \"flashed_at\": \"{}\",",
+                    json_escape(&att.flashed_at)
+                );
+                println!("      \"operator\": \"{}\",", json_escape(&att.operator));
+                println!(
+                    "      \"target_device\": \"{}\",",
+                    json_escape(&att.target.device)
+                );
+                println!(
+                    "      \"target_model\": \"{}\",",
+                    json_escape(&att.target.model)
+                );
+                println!(
+                    "      \"disk_guid\": \"{}\",",
+                    json_escape(&att.target.disk_guid)
+                );
+                println!("      \"iso_count\": {}", att.isos.len());
+                println!("    }}{comma}");
+            }
+            Err(e) => {
+                println!("    {{");
+                println!(
+                    "      \"manifest_path\": \"{}\",",
+                    json_escape(&path.display().to_string())
+                );
+                println!(
+                    "      \"error\": \"{}\"",
+                    json_escape(&format!("parse failed: {e}"))
+                );
+                println!("    }}{comma}");
+            }
+        }
+    }
+    println!("  ]");
+    println!("}}");
 }
 
 fn run_show(args: &[String]) -> ExitCode {
