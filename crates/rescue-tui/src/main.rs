@@ -110,7 +110,7 @@ fn run(roots: &[PathBuf]) -> Result<u8, Box<dyn std::error::Error>> {
             "discovered ISO"
         );
     }
-    let mut state = AppState::new(isos);
+    let mut state = AppState::new(isos).with_scanned_roots(roots.to_vec());
     if let Ok(name) = env::var("AEGIS_THEME") {
         state.theme = theme::Theme::from_name(&name);
         tracing::info!(theme = %name, "rescue-tui: theme override applied");

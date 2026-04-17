@@ -507,14 +507,80 @@ fn draw_confirm_quit_overlay(frame: &mut Frame<'_>, area: Rect, state: &AppState
     );
 }
 
+/// Render the empty-state screen when `discover()` returned zero ISOs.
+///
+/// Replaces the terse "No bootable ISOs found. Press q to quit, or check
+/// that `AEGIS_ISO_ROOTS` points at a directory containing `.iso` files."
+/// with a concrete diagnosis: the exact paths that were scanned, the
+/// paths' existence state, and three specific actionable next steps
+/// (mount media, copy an ISO, drop to rescue shell). (#85 Tier 2)
+fn draw_empty_list(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
+    let mut lines: Vec<Line<'_>> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        "No bootable ISOs found.",
+        Style::default().add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(""));
+
+    if state.scanned_roots.is_empty() {
+        lines.push(Line::from(
+            "(paths scanned: none — AEGIS_ISO_ROOTS parsing returned an empty list)",
+        ));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "Scanned these paths:",
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+        for root in &state.scanned_roots {
+            let exists_marker = if root.exists() { "exists" } else { "MISSING" };
+            lines.push(Line::from(format!(
+                "  {}  ({exists_marker})",
+                root.display()
+            )));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Next steps:",
+        Style::default().add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(
+        "  1. On the host, copy an ISO into the AEGIS_ISOS partition:",
+    ));
+    lines.push(Line::from("       aegis-boot add /path/to/distro.iso"));
+    lines.push(Line::from(
+        "     (or drag-and-drop the .iso file onto the stick via your file manager).",
+    ));
+    lines.push(Line::from(
+        "  2. If the AEGIS_ISOS partition is on this stick but wasn't auto-mounted,",
+    ));
+    lines.push(Line::from(
+        "     boot this stick on a host and run `aegis-boot doctor --stick /dev/sdX`.",
+    ));
+    lines.push(Line::from(
+        "  3. Select the always-present rescue shell entry below (if enabled) to",
+    ));
+    lines.push(Line::from(
+        "     drop to a busybox prompt and mount/inspect filesystems by hand.",
+    ));
+    lines.push(Line::from(""));
+    lines.push(Line::from("Press q to reboot, ? for keybindings."));
+
+    let panel = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" aegis-boot — no ISOs discovered "),
+        )
+        .wrap(Wrap { trim: false });
+    frame.render_widget(panel, area);
+}
+
 fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usize) {
     use crate::state::ViewEntry;
     if state.isos.is_empty() {
-        let empty = Paragraph::new(
-            "No bootable ISOs found.\n\nPress q to quit, or check that AEGIS_ISO_ROOTS\npoints at a directory containing .iso files.",
-        )
-        .block(Block::default().borders(Borders::ALL).title("aegis-boot"));
-        frame.render_widget(empty, area);
+        draw_empty_list(frame, area, state);
         return;
     }
 
@@ -1086,6 +1152,69 @@ mod tests {
         let s = render_to_string(&state);
         assert!(s.contains("No bootable ISOs"));
         assert!(s.contains("aegis-boot"));
+    }
+
+    #[test]
+    fn empty_list_shows_next_steps_with_actionable_commands() {
+        // (#85 Tier 2) — empty state must tell the operator WHAT to do,
+        // not just "no ISOs found". Verify the three actionable next
+        // steps all render.
+        let state = AppState::new(vec![]);
+        let s = render_to_string(&state);
+        assert!(
+            s.contains("Next steps"),
+            "missing 'Next steps' heading in: {s}"
+        );
+        assert!(
+            s.contains("aegis-boot add"),
+            "missing `aegis-boot add` recipe in: {s}",
+        );
+        assert!(
+            s.contains("aegis-boot doctor"),
+            "missing `aegis-boot doctor` recipe in: {s}",
+        );
+        assert!(
+            s.contains("rescue shell"),
+            "missing rescue-shell escape-hatch mention in: {s}",
+        );
+    }
+
+    #[test]
+    fn empty_list_surfaces_scanned_roots() {
+        // Operator seeing "no ISOs" needs to know WHERE we looked. The
+        // TUI should echo each scanned path with its existence state.
+        let state = AppState::new(vec![]).with_scanned_roots(vec![
+            std::path::PathBuf::from("/this-path-definitely-does-not-exist"),
+            std::path::PathBuf::from("/tmp"),
+        ]);
+        let s = render_to_string(&state);
+        assert!(
+            s.contains("/this-path-definitely-does-not-exist"),
+            "missing scanned path 1 in: {s}",
+        );
+        assert!(
+            s.contains("MISSING"),
+            "missing existence marker for non-existent path in: {s}",
+        );
+        assert!(s.contains("/tmp"), "missing scanned path 2 in: {s}",);
+        assert!(
+            s.contains("exists"),
+            "missing existence marker for existing path in: {s}",
+        );
+    }
+
+    #[test]
+    fn empty_list_with_no_scanned_roots_explains_why() {
+        // Degenerate case: AEGIS_ISO_ROOTS parsing returned empty —
+        // unusual but possible if env var is literally empty. Tell
+        // the operator rather than silently showing no paths.
+        let state = AppState::new(vec![]);
+        // Default state has scanned_roots = vec![] (not set by main.rs in tests).
+        let s = render_to_string(&state);
+        assert!(
+            s.contains("AEGIS_ISO_ROOTS") || s.contains("paths scanned: none"),
+            "empty-state with no-roots must explain: {s}",
+        );
     }
 
     #[test]

@@ -115,6 +115,12 @@ pub struct AppState {
     pub filter_editing: bool,
     /// Sort order for the List screen view. Cycled with `s`.
     pub sort_order: SortOrder,
+    /// Paths that `iso_probe::discover()` was asked to scan. Surfaced
+    /// in the empty-state screen so operators see where we looked
+    /// (rather than "no bootable ISOs found" with no actionable
+    /// detail). Populated by `main.rs` after reading `AEGIS_ISO_ROOTS`;
+    /// default empty in tests. (#85 Tier 2)
+    pub scanned_roots: Vec<std::path::PathBuf>,
 }
 
 /// Sort order applied to the List view. Cycled with the `s` key.
@@ -299,7 +305,19 @@ impl AppState {
             filter: String::new(),
             filter_editing: false,
             sort_order: SortOrder::Name,
+            scanned_roots: Vec::new(),
         }
+    }
+
+    /// Attach the paths `discover()` was asked to scan. Called from
+    /// `main.rs` before entering the event loop so the empty-state
+    /// screen can tell the operator where we looked. Safe to skip in
+    /// tests — field defaults to empty and renders a no-paths variant.
+    /// (#85 Tier 2)
+    #[must_use]
+    pub fn with_scanned_roots(mut self, roots: Vec<std::path::PathBuf>) -> Self {
+        self.scanned_roots = roots;
+        self
     }
 
     /// Ordered list of entries displayed on the List screen (#90).
