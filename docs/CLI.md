@@ -14,6 +14,7 @@ USAGE:
   aegis-boot recommend [slug]   Curated catalog of known-good ISOs
   aegis-boot fetch <slug>       Download + verify a catalog ISO
   aegis-boot attest [list|show] Attestation receipts for past flashes
+  aegis-boot eject [device]     Safely power-off a stick before removal
   aegis-boot --version          Print version
   aegis-boot --help             This message
 ```
@@ -484,6 +485,40 @@ When `aegis-boot add` succeeds, it appends an `IsoRecord` to the matching attest
 ```
 
 Matching logic: the destination mount path → owning device (from `/proc/mounts`) → strip partition suffix (`/dev/sdc2 → /dev/sdc`, `/dev/nvme0n1p3 → /dev/nvme0n1`) → disk GUID via `sgdisk -p` → newest manifest in the attestations dir whose filename starts with that GUID. If GUID can't be resolved, falls back to "most recent attestation overall" with a warning (correct for the common single-stick workflow; ambiguous in multi-stick sessions). Failure to update the attestation does NOT fail the add.
+
+---
+
+## `aegis-boot eject`
+
+Safely power-off a USB stick before physical removal. Bundles the `sync + blockdev --flushbufs + udisksctl power-off / eject` recipe into one command. Pulling a stick without syncing can leave the `AEGIS_ISOS` FAT32 / ext4 state dirty, which downstream presents as "file ends mid-ISO" on the next boot or sha256 mismatch during verification.
+
+### Usage
+
+```bash
+aegis-boot eject                    # auto-detect removable drive
+aegis-boot eject /dev/sdc           # explicit device
+aegis-boot eject --help
+```
+
+### Behavior
+
+1. **`sync`** — flush filesystem-level dirty buffers (specifically against the target device if supported, else global).
+2. **`sudo -n blockdev --flushbufs`** — flush the block-device cache. Skipped with a warning if sudo is unavailable; the sync in step 1 still ran.
+3. **`udisksctl power-off`** (if installed) — polkit-friendly power-off, no sudo needed. Falls back to `eject /dev/sdX` if udisksctl isn't present.
+
+On success: "Done. Safe to remove /dev/sdX."
+
+If step 3 fails, the stick is still synced and safe to remove — the CLI prints the manual recipe (`sudo eject` or `udisksctl power-off -b`) for the operator to finish by hand.
+
+### Exit codes
+
+- `0` — synced + powered-off
+- `1` — could not auto power-off (stick still safe to remove — CLI prints fallback recipe)
+- `2` — invalid arguments
+
+### Why not force-unmount?
+
+Force-unmount of a busy partition (fuser / lsof-integrated) is deliberately out of scope. If the AEGIS_ISOS partition is busy, the operator needs to know why (a file manager has it open? a background rescan?) — silently forcing the unmount would mask the cause and risk data loss.
 
 ---
 

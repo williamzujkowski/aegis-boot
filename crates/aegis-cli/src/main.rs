@@ -9,6 +9,7 @@
 //!   * `recommend` — curated catalog of known-good ISOs
 //!   * `fetch`     — download + verify a catalog ISO
 //!   * `attest`    — list / show attestation receipts for past flashes
+//!   * `eject`     — safely power-off and prepare a USB stick for removal
 //!
 //! This replaces the developer workflow of running shell scripts
 //! manually. The binary is named `aegis-boot` so operators type
@@ -20,6 +21,7 @@ mod attest;
 mod catalog;
 mod detect;
 mod doctor;
+mod eject;
 mod fetch;
 mod flash;
 mod init;
@@ -45,6 +47,7 @@ fn main() -> ExitCode {
         Some("recommend") => catalog::run(&args[1..]),
         Some("fetch") => fetch::run(&args[1..]),
         Some("attest") => attest::run(&args[1..]),
+        Some("eject") => eject::run(&args[1..]),
         Some("-h" | "--help" | "help") | None => {
             print_help();
             ExitCode::SUCCESS
@@ -73,6 +76,7 @@ fn print_help() {
     println!("  aegis-boot recommend [slug]   Curated catalog of known-good ISOs");
     println!("  aegis-boot fetch <slug>       Download + verify a catalog ISO");
     println!("  aegis-boot attest [list|show] Attestation receipts for past flashes");
+    println!("  aegis-boot eject [device]     Safely power-off a stick before removal");
     println!("  aegis-boot --version          Print version");
     println!("  aegis-boot --help             This message");
     println!();
@@ -85,4 +89,5 @@ fn print_help() {
     println!("  aegis-boot flash /dev/sdc     # specific drive");
     println!("  aegis-boot add ubuntu.iso     # validate + copy to stick");
     println!("  aegis-boot attest list        # show recorded flashes");
+    println!("  aegis-boot eject /dev/sdc     # sync + power-off before removal");
 }
