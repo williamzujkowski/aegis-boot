@@ -67,7 +67,18 @@ brew install aegis-boot
 
 Each release ships a static-musl `aegis-boot-x86_64-linux` binary plus its Sigstore cosign signature + certificate; the installer checks the cert is bound to *this* repo's `release.yml` workflow before installing. See `docs/RELEASE_NOTES_FOOTER.md` for the manual `cosign verify-blob` recipe.
 
-Then the operator flow:
+Then the operator flow — pick one:
+
+### One command — `aegis-boot init` (recommended for new users)
+
+```bash
+# Empty stick → rescue-ready in under 10 minutes
+sudo aegis-boot init /dev/sdc --yes
+```
+
+Composes `doctor → flash → fetch + add` for every ISO in the default `panic-room` profile (Alpine 3.20 + Ubuntu 24.04 Server + Rocky 9, ~5 GiB total). Produces one attestation manifest spanning the whole run. See [`aegis-boot init`](./docs/CLI.md#aegis-boot-init) for profiles and options.
+
+### Step-by-step — when you want a custom ISO set
 
 ```bash
 # 0. (recommended) check host + stick health before doing anything destructive
@@ -108,7 +119,7 @@ Full developer loop: [docs/LOCAL_TESTING.md](./docs/LOCAL_TESTING.md).
 
 | Crate | Role |
 |---|---|
-| [`aegis-cli`](./crates/aegis-cli) | Operator CLI — `aegis-boot flash`, `add`, `list` |
+| [`aegis-cli`](./crates/aegis-cli) | Operator CLI — `aegis-boot init`, `flash`, `add`, `list`, `doctor` |
 | [`iso-parser`](./crates/iso-parser) | ISO media analysis — finds kernel/initrd/cmdline in distro boot configs |
 | [`iso-probe`](./crates/iso-probe) | Runtime discovery + sibling `.sha256` / `.minisig` verification + installer-vs-live heuristics |
 | [`kexec-loader`](./crates/kexec-loader) | Safe wrapper over `kexec_file_load(2)` with error classification |
