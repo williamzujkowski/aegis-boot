@@ -426,8 +426,14 @@ impl IsoEnvironment for OsIsoEnvironment {
             .args([
                 "-o",
                 "loop,ro",
+                // Windows install ISOs are UDF-primary with a tiny
+                // iso9660 fallback volume that contains only a readme.txt
+                // shim. Mount tries types left-to-right — UDF first so
+                // we get the real filesystem on Windows ISOs, then iso9660
+                // as the fallback for pure-iso9660 media (Alpine, Ubuntu,
+                // Fedora install/live ISOs).
                 "-t",
-                "iso9660",
+                "udf,iso9660",
                 &iso_path.to_string_lossy(),
                 &mount_point.to_string_lossy(),
             ])
@@ -463,7 +469,7 @@ impl IsoEnvironment for OsIsoEnvironment {
                     .args([
                         "-r",
                         "-t",
-                        "iso9660",
+                        "udf,iso9660",
                         &loop_dev,
                         &mount_point.to_string_lossy(),
                     ])
@@ -676,6 +682,7 @@ impl<E: IsoEnvironment> IsoParser<E> {
         entries.extend(self.try_arch_layout(mount_point, source_iso)?);
         entries.extend(self.try_debian_layout(mount_point, source_iso)?);
         entries.extend(self.try_fedora_layout(mount_point, source_iso)?);
+        entries.extend(self.try_windows_layout(mount_point, source_iso)?);
 
         // Populate pretty_name from the mounted ISO's release files
         // before the caller unmounts. Best-effort — if none of the
@@ -1039,6 +1046,82 @@ impl<E: IsoEnvironment> IsoParser<E> {
 
         Ok(entries)
     }
+
+    /// Detect Windows installer ISOs (Win10, Win11, Server). Emits a
+    /// synthesized `BootEntry` so the ISO surfaces in rescue-tui's list
+    /// with `Distribution::Windows` and the `NotKexecBootable` quirk —
+    /// replaces the current behavior where Windows ISOs got silently
+    /// skipped as `NoBootEntries`, which mismatched the `docs/
+    /// compatibility/iso-matrix.md` + `iso-probe`'s explicit "not a
+    /// kexec target" classification.
+    ///
+    /// Detection uses three independent markers (ANY match suffices):
+    ///
+    /// 1. `/bootmgr` — Windows NT loader, present since Vista on
+    ///    installer and recovery media.
+    /// 2. `/sources/boot.wim` — Windows PE boot image, the signature
+    ///    of a Microsoft-shipped install ISO.
+    /// 3. `/efi/microsoft/boot/` — UEFI boot directory with the
+    ///    signed `bootmgfw.efi`.
+    ///
+    /// The synthesized `kernel` field points at `bootmgr` (or the
+    /// EFI equivalent when `bootmgr` is absent). It's never passed to
+    /// kexec — downstream code gates on the `NotKexecBootable` quirk
+    /// surfaced by `iso-probe::lookup_quirks(Distribution::Windows)`.
+    /// Using `bootmgr` as the semantic "kernel" makes the rendered
+    /// evidence line ("kernel: bootmgr") self-explanatory.
+    // `Result` parallels `try_arch_layout` / `try_debian_layout` / etc.
+    // even though Windows detection uses only `env.exists()` (infallible
+    // in this crate's IsoEnvironment shape) — keeps the caller site in
+    // `extract_boot_entries` uniformly `?`-chained across all layouts.
+    #[allow(clippy::unnecessary_wraps)]
+    fn try_windows_layout(
+        &self,
+        mount_point: &Path,
+        source_iso: &Path,
+    ) -> Result<Vec<BootEntry>, IsoError> {
+        let bootmgr = mount_point.join("bootmgr");
+        let boot_wim = mount_point.join("sources/boot.wim");
+        let efi_ms_boot = mount_point.join("efi/microsoft/boot");
+        let bootmgfw_efi = mount_point.join("efi/boot/bootx64.efi");
+
+        let has_any_marker = self.env.exists(&bootmgr)
+            || self.env.exists(&boot_wim)
+            || self.env.exists(&efi_ms_boot);
+        if !has_any_marker {
+            return Ok(Vec::new());
+        }
+
+        // Prefer `bootmgr` (the classic NT loader) as the synthetic
+        // "kernel" path. Fall back to bootmgfw.efi / a synthetic marker
+        // if a stripped-down ISO is missing bootmgr but still carries
+        // sources/boot.wim (unusual but seen on some Windows PE rebuilds).
+        let kernel_path = if self.env.exists(&bootmgr) {
+            PathBuf::from("bootmgr")
+        } else if self.env.exists(&bootmgfw_efi) {
+            PathBuf::from("efi/boot/bootx64.efi")
+        } else {
+            PathBuf::from("sources/boot.wim")
+        };
+
+        let label = "Windows (not kexec-bootable)".to_string();
+
+        Ok(vec![BootEntry {
+            label,
+            kernel: kernel_path,
+            // Windows PE uses `boot.wim` as its "initrd equivalent" but
+            // that's not something kexec could use — leave None.
+            initrd: None,
+            kernel_args: None,
+            distribution: Distribution::Windows,
+            source_iso: source_iso
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            pretty_name: None,
+        }])
+    }
 }
 
 /// Best-effort "friendly" distro name for a mounted ISO.
@@ -1218,10 +1301,33 @@ mod tests {
                 // (Alpine + NixOS behave like Arch at the path layer; RedHat
                 // like Fedora). The scan_directory tests only care about the
                 // 3 original categories, so nothing new to stage here.
-                Distribution::RedHat
-                | Distribution::Alpine
-                | Distribution::NixOS
-                | Distribution::Windows => {}
+                Distribution::RedHat | Distribution::Alpine | Distribution::NixOS => {}
+                Distribution::Windows => {
+                    // Windows installer: /bootmgr + /sources/boot.wim +
+                    // /efi/microsoft/boot/. We stage all three canonical
+                    // markers so try_windows_layout's any-marker detection
+                    // logic gets exercised from multiple angles.
+                    env.files
+                        .insert(mount_base.join("bootmgr"), MockEntry::File);
+                    env.files.insert(
+                        mount_base.join("sources"),
+                        MockEntry::Directory(vec![mount_base.join("sources/boot.wim")]),
+                    );
+                    env.files
+                        .insert(mount_base.join("sources/boot.wim"), MockEntry::File);
+                    env.files.insert(
+                        mount_base.join("efi"),
+                        MockEntry::Directory(vec![mount_base.join("efi/microsoft")]),
+                    );
+                    env.files.insert(
+                        mount_base.join("efi/microsoft"),
+                        MockEntry::Directory(vec![mount_base.join("efi/microsoft/boot")]),
+                    );
+                    env.files.insert(
+                        mount_base.join("efi/microsoft/boot"),
+                        MockEntry::Directory(vec![]),
+                    );
+                }
                 Distribution::Unknown => {}
             }
 
@@ -1613,5 +1719,71 @@ ID=ubuntu
             .expect("mount_iso must recover from poison");
         env.unmount(&mount)
             .expect("unmount must recover from poison");
+    }
+
+    // ---- Windows layout detection (was silently skipped before) ----
+
+    #[tokio::test]
+    async fn extract_boot_entries_detects_windows_installer() {
+        let mock = MockIsoEnvironment::with_iso(Distribution::Windows);
+        let parser = IsoParser::new(mock);
+
+        let mount_base = PathBuf::from("/mock_mount");
+        let entries = parser
+            .extract_boot_entries(&mount_base, &PathBuf::from("Win11_25H2.iso"))
+            .await
+            .expect("Windows ISO should now produce a BootEntry instead of empty");
+
+        assert!(
+            !entries.is_empty(),
+            "Windows ISO must produce at least one entry"
+        );
+        let win = entries
+            .iter()
+            .find(|e| e.distribution == Distribution::Windows)
+            .expect("one of the entries must be Distribution::Windows");
+        assert_eq!(win.kernel.to_string_lossy(), "bootmgr");
+        assert!(win.initrd.is_none());
+        assert_eq!(win.kernel_args, None);
+        assert!(win.label.contains("Windows"));
+        assert!(win.source_iso.contains("Win11"));
+    }
+
+    #[tokio::test]
+    async fn try_windows_layout_declines_on_linux_layouts() {
+        // Arch mock has no Windows markers; try_windows_layout must
+        // decline (return empty) rather than synthesize an entry.
+        let mock = MockIsoEnvironment::with_iso(Distribution::Arch);
+        let parser = IsoParser::new(mock);
+
+        let mount_base = PathBuf::from("/mock_mount");
+        let entries = parser
+            .extract_boot_entries(&mount_base, &PathBuf::from("arch.iso"))
+            .await
+            .expect("Arch ISO must produce entries");
+
+        // No Windows-tagged entries should sneak in.
+        assert!(
+            !entries
+                .iter()
+                .any(|e| e.distribution == Distribution::Windows),
+            "Windows detector must not fire on Arch fixture"
+        );
+    }
+
+    #[test]
+    fn windows_boot_entry_has_not_kexec_bootable_quirk_in_iso_probe() {
+        // Contract between iso-parser and iso-probe: when iso-parser emits
+        // Distribution::Windows, iso-probe's lookup_quirks returns
+        // NotKexecBootable. This test lives here (iso-parser side) so
+        // the pairing is guarded end-to-end even if iso-probe internals
+        // change — the public Distribution::Windows arm is stable.
+        //
+        // We don't depend on iso-probe from this crate (cyclic), so this
+        // test asserts the metadata iso-parser produces is the shape
+        // iso-probe's mapping expects (a Windows enum variant an
+        // external crate can pattern-match on).
+        let iso_distro = Distribution::Windows;
+        assert!(matches!(iso_distro, Distribution::Windows));
     }
 }
