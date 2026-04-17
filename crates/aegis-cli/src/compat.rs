@@ -39,12 +39,20 @@ impl CompatLevel {
         }
     }
 
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             CompatLevel::Verified => "verified",
             CompatLevel::Partial => "partial",
             CompatLevel::Reference => "reference",
         }
+    }
+}
+
+impl CompatEntry {
+    /// Convenience for crate consumers (e.g., `doctor`) that want the
+    /// level label without pulling in the `CompatLevel` enum directly.
+    pub(crate) fn level_label(&self) -> &'static str {
+        self.level.label()
     }
 }
 
@@ -105,8 +113,9 @@ pub const COMPAT_DB: &[CompatEntry] = &[
 ];
 
 /// URL operators visit to file a hardware report. Kept here so the
-/// CLI and docs point at the same landing page.
-const REPORT_URL: &str = "https://github.com/williamzujkowski/aegis-boot/issues/new?template=hardware-report.yml";
+/// CLI and docs point at the same landing page. `pub(crate)` so other
+/// subcommands (e.g., `doctor`) can cite the same URL in their prompts.
+pub(crate) const REPORT_URL: &str = "https://github.com/williamzujkowski/aegis-boot/issues/new?template=hardware-report.yml";
 
 pub fn run(args: &[String]) -> ExitCode {
     match try_run(args) {
@@ -274,9 +283,10 @@ fn emit_entry_json(entry: &CompatEntry, indent: &str, comma: &str) {
 }
 
 /// Case-insensitive substring match against vendor + model. A query
-/// matches if any whitespace-separated token appears in the combined
-/// "vendor model" string. First match wins.
-fn find_entry(query: &str) -> Option<&'static CompatEntry> {
+/// matches if every whitespace-separated token appears in the combined
+/// "vendor model" string. First match wins. `pub(crate)` so `doctor`
+/// can cross-check its own DMI-derived identity against the DB.
+pub(crate) fn find_entry(query: &str) -> Option<&'static CompatEntry> {
     let q = query.trim().to_ascii_lowercase();
     if q.is_empty() {
         return None;

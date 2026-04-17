@@ -455,21 +455,26 @@ fn check_machine_identity(report: &mut Report) {
         let product = dmi_product_label();
         let bios = dmi_bios_label();
 
-        match (&sys_vendor, &product) {
-            (Some(v), Some(p)) => {
-                let detail = match bios {
-                    Some(b) => format!("{v} {p} — firmware: {b}"),
-                    None => format!("{v} {p}"),
-                };
-                report.add(Verdict::Pass, "machine identity", detail);
-            }
-            _ => {
-                report.add(
-                    Verdict::Skip,
-                    "machine identity",
-                    "DMI fields unavailable (placeholder values or /sys/class/dmi/id not present)",
-                );
-            }
+        if let (Some(v), Some(p)) = (&sys_vendor, &product) {
+            let detail = match bios {
+                Some(b) => format!("{v} {p} — firmware: {b}"),
+                None => format!("{v} {p}"),
+            };
+            report.add(Verdict::Pass, "machine identity", detail);
+            // Immediately cross-check the DB so the compat verdict
+            // sits visually next to the identity row.
+            check_compat_db_coverage(report, v, p);
+        } else {
+            report.add(
+                Verdict::Skip,
+                "machine identity",
+                "DMI fields unavailable (placeholder values or /sys/class/dmi/id not present)",
+            );
+            report.add(
+                Verdict::Skip,
+                "compat DB coverage",
+                "cannot cross-check without machine identity",
+            );
         }
     }
     #[cfg(not(target_os = "linux"))]
@@ -478,6 +483,53 @@ fn check_machine_identity(report: &mut Report) {
             Verdict::Skip,
             "machine identity",
             "DMI lookup is Linux-only (non-Linux hosts skip this check)",
+        );
+        report.add(
+            Verdict::Skip,
+            "compat DB coverage",
+            "cross-check is Linux-only (non-Linux hosts skip this check)",
+        );
+    }
+}
+
+/// Look up the host's DMI-derived identity in the in-binary compat DB.
+/// This is the final link in the hardware-coverage loop: `doctor` can
+/// tell an operator *"your machine is verified"* or *"your machine is
+/// not yet documented — here's how to submit a report"* without them
+/// running a second command.
+///
+/// Verdict logic:
+///   * `Pass` — a row matched; include the row's level.
+///   * `Warn` + next-action — no row matched; hint at `aegis-boot compat`
+///     and the report URL.
+#[cfg(target_os = "linux")]
+fn check_compat_db_coverage(report: &mut Report, vendor: &str, product: &str) {
+    // Build a query string the same way an operator would type it.
+    // `find_entry` is whitespace-tokenized and requires every token to
+    // appear in "vendor model"; vendor+product combined gives a strong
+    // signal without being so specific that it misses near-matches.
+    let query = format!("{vendor} {product}");
+    if let Some(entry) = crate::compat::find_entry(&query) {
+        report.add(
+            Verdict::Pass,
+            "compat DB coverage",
+            format!(
+                "this machine is documented ({} — reported by {})",
+                entry.level_label(),
+                entry.reported_by,
+            ),
+        );
+    } else {
+        // Warn (not Fail): missing coverage is informational — aegis-boot
+        // still works on undocumented machines. We inline the guidance
+        // into `detail` because `next_action` only surfaces on Fail.
+        report.add(
+            Verdict::Warn,
+            "compat DB coverage",
+            format!(
+                "not yet in compat DB — file a report at {}",
+                crate::compat::REPORT_URL,
+            ),
         );
     }
 }
@@ -950,28 +1002,39 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn check_machine_identity_adds_row_and_does_not_panic() {
-        // The check must always add exactly one row and never panic,
-        // regardless of whether DMI data is available (CI runners often
-        // expose QEMU/KVM identity; developer workstations expose real
-        // hardware). Verdict is Pass or Skip, never Fail/Warn.
+    fn check_machine_identity_adds_identity_and_compat_rows() {
+        // Always emits two rows: machine identity + compat DB coverage.
+        // Identity row is Pass (hardware) or Skip (DMI unavailable).
+        // Coverage row is Pass (matched), Warn (unmatched), or Skip
+        // (identity unavailable).
         let mut r = Report::new();
         check_machine_identity(&mut r);
-        assert_eq!(r.rows.len(), 1);
-        let (verdict, name, _) = &r.rows[0];
-        assert_eq!(name, "machine identity");
+        assert_eq!(r.rows.len(), 2);
+        assert_eq!(r.rows[0].1, "machine identity");
+        assert_eq!(r.rows[1].1, "compat DB coverage");
         assert!(
-            matches!(verdict, Verdict::Pass | Verdict::Skip),
-            "machine identity should never Fail or Warn, got {verdict:?}"
+            matches!(r.rows[0].0, Verdict::Pass | Verdict::Skip),
+            "identity verdict must be Pass or Skip, got {:?}",
+            r.rows[0].0
         );
+        assert!(
+            matches!(r.rows[1].0, Verdict::Pass | Verdict::Warn | Verdict::Skip),
+            "coverage verdict must be Pass/Warn/Skip, got {:?}",
+            r.rows[1].0
+        );
+        // When identity is Skip, coverage must also be Skip.
+        if matches!(r.rows[0].0, Verdict::Skip) {
+            assert!(matches!(r.rows[1].0, Verdict::Skip));
+        }
     }
 
     #[cfg(not(target_os = "linux"))]
     #[test]
-    fn check_machine_identity_skips_on_non_linux() {
+    fn check_machine_identity_skips_both_rows_on_non_linux() {
         let mut r = Report::new();
         check_machine_identity(&mut r);
-        assert_eq!(r.rows.len(), 1);
+        assert_eq!(r.rows.len(), 2);
         assert!(matches!(r.rows[0].0, Verdict::Skip));
+        assert!(matches!(r.rows[1].0, Verdict::Skip));
     }
 }
