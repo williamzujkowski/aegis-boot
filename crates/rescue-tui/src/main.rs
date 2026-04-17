@@ -69,6 +69,50 @@ fn tracing_subscriber_init() {
     }
 }
 
+/// Count the number of `.iso` files present under any of `roots`.
+/// Depth-limited walk (max 3 levels) since `AEGIS_ISOS` is a flat
+/// layout in practice; goes 3 deep to catch operators who nested one
+/// or two levels. Matches the depth bound in `iso_probe::find_iso_size`.
+///
+/// Used for the #85 Tier 2 inline error band: `discover()` silently
+/// drops per-ISO parse failures; we need an independent count to
+/// spot "N ISOs on disk, M discovered, N-M skipped" and surface that
+/// to the operator without requiring them to read journalctl.
+fn count_iso_files_on_disk(roots: &[PathBuf]) -> usize {
+    const MAX_DEPTH: u32 = 3;
+    fn walk(dir: &std::path::Path, depth: u32) -> usize {
+        if depth == 0 {
+            return 0;
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return 0;
+        };
+        let mut n = 0usize;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(ft) = entry.file_type() else { continue };
+            if ft.is_file()
+                && path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e.eq_ignore_ascii_case("iso"))
+            {
+                n += 1;
+            } else if ft.is_dir() {
+                n += walk(&path, depth - 1);
+            }
+        }
+        n
+    }
+    let mut total = 0usize;
+    for root in roots {
+        if root.exists() {
+            total += walk(root, MAX_DEPTH);
+        }
+    }
+    total
+}
+
 fn parse_roots(env_var: Option<&str>) -> Vec<PathBuf> {
     match env_var {
         Some(s) if !s.is_empty() => s.split(':').map(PathBuf::from).collect(),
@@ -82,6 +126,13 @@ fn run(roots: &[PathBuf]) -> Result<u8, Box<dyn std::error::Error>> {
         roots = ?roots,
         "rescue-tui starting"
     );
+    // Count .iso files on disk BEFORE calling discover(). iso-probe
+    // silently drops ISOs it can't parse (malformed layout, unsupported
+    // distro, loopback mount failure after PR #170 surfaces a warn).
+    // Tracing logs the details; the TUI inline band shows the count so
+    // operators can act without reading journalctl. (#85 Tier 2)
+    let on_disk_iso_count = count_iso_files_on_disk(roots);
+
     let isos = match iso_probe::discover(roots) {
         Ok(v) => v,
         Err(iso_probe::ProbeError::NoIsosFound) => {
@@ -93,14 +144,25 @@ fn run(roots: &[PathBuf]) -> Result<u8, Box<dyn std::error::Error>> {
             return Err(e.into());
         }
     };
+    let skipped = on_disk_iso_count.saturating_sub(isos.len());
     // Startup banner to stderr — mirrored via tracing::info! so structured
     // consumers (journald, CI smoke greps) see the same signal as humans
     // reading the serial console directly.
     eprintln!(
-        "aegis-boot rescue-tui starting: discovered {} ISO(s)",
-        isos.len()
+        "aegis-boot rescue-tui starting: discovered {} ISO(s){}",
+        isos.len(),
+        if skipped > 0 {
+            format!(" ({skipped} skipped — see logs)")
+        } else {
+            String::new()
+        }
     );
-    tracing::info!(discovered = isos.len(), "ISO discovery complete");
+    tracing::info!(
+        discovered = isos.len(),
+        on_disk = on_disk_iso_count,
+        skipped,
+        "ISO discovery complete"
+    );
     for iso in &isos {
         tracing::debug!(
             label = %iso.label,
@@ -110,7 +172,9 @@ fn run(roots: &[PathBuf]) -> Result<u8, Box<dyn std::error::Error>> {
             "discovered ISO"
         );
     }
-    let mut state = AppState::new(isos).with_scanned_roots(roots.to_vec());
+    let mut state = AppState::new(isos)
+        .with_scanned_roots(roots.to_vec())
+        .with_skipped_iso_count(skipped);
     if let Ok(name) = env::var("AEGIS_THEME") {
         state.theme = theme::Theme::from_name(&name);
         tracing::info!(theme = %name, "rescue-tui: theme override applied");

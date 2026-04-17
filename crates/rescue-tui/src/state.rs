@@ -121,6 +121,14 @@ pub struct AppState {
     /// detail). Populated by `main.rs` after reading `AEGIS_ISO_ROOTS`;
     /// default empty in tests. (#85 Tier 2)
     pub scanned_roots: Vec<std::path::PathBuf>,
+    /// Count of `.iso` files found on disk under `scanned_roots` that
+    /// DID NOT parse into a `DiscoveredIso` (silently dropped by
+    /// `iso-probe::discover()` due to malformed layout, unsupported
+    /// distro, etc). Populated by `main.rs` via a direct fs walk that
+    /// runs alongside `discover()`. Surfaced as a yellow inline band
+    /// above the List when >0 so the operator knows the list is
+    /// incomplete. (#85 Tier 2 last child)
+    pub skipped_iso_count: usize,
 }
 
 /// Sort order applied to the List view. Cycled with the `s` key.
@@ -306,6 +314,7 @@ impl AppState {
             filter_editing: false,
             sort_order: SortOrder::Name,
             scanned_roots: Vec::new(),
+            skipped_iso_count: 0,
         }
     }
 
@@ -317,6 +326,16 @@ impl AppState {
     #[must_use]
     pub fn with_scanned_roots(mut self, roots: Vec<std::path::PathBuf>) -> Self {
         self.scanned_roots = roots;
+        self
+    }
+
+    /// Record how many `.iso` files on disk were silently skipped by
+    /// `discover()` (malformed ISO, unsupported layout, parse failure).
+    /// Populated by `main.rs` — tests default to 0 via `AppState::new()`.
+    /// (#85 Tier 2 last child — inline error band)
+    #[must_use]
+    pub fn with_skipped_iso_count(mut self, n: usize) -> Self {
+        self.skipped_iso_count = n;
         self
     }
 

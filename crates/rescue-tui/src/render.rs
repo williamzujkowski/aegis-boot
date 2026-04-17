@@ -577,6 +577,47 @@ fn draw_empty_list(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     frame.render_widget(panel, area);
 }
 
+/// Compute layout + render the optional inline error band (#85 Tier 2
+/// last child) on the List screen. Returns `(info_area, list_area)`
+/// for the caller to render into. Extracted from `draw_list` so the
+/// main draw function stays under the workspace-wide 100-line cap.
+fn split_list_chrome(frame: &mut Frame<'_>, area: Rect, state: &AppState) -> (Rect, Rect) {
+    // Tier 2 (#85) — info bar above list shows filter + sort state.
+    // When some ISOs on disk failed to parse, insert a one-line inline
+    // error band ABOVE the info bar so it's unmissable without modal
+    // interruption — memtest86+-style "one-frame warning".
+    if state.skipped_iso_count > 0 {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1), // error band
+                Constraint::Length(1), // info bar
+                Constraint::Min(1),    // list
+            ])
+            .split(area);
+        let band = Paragraph::new(Line::from(vec![
+            Span::styled(
+                " \u{26A0} SKIPPED ",
+                Style::default()
+                    .fg(state.theme.warning)
+                    .add_modifier(Modifier::REVERSED | Modifier::BOLD),
+            ),
+            Span::raw(format!(
+                "  {} ISO(s) on disk failed to parse — see journalctl -u rescue-tui (iso_parser warnings)",
+                state.skipped_iso_count
+            )),
+        ]));
+        frame.render_widget(band, chunks[0]);
+        (chunks[1], chunks[2])
+    } else {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .split(area);
+        (chunks[0], chunks[1])
+    }
+}
+
 fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usize) {
     use crate::state::ViewEntry;
     if state.isos.is_empty() {
@@ -584,12 +625,7 @@ fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usiz
         return;
     }
 
-    // Tier 2 (#85) — info bar above list shows filter + sort state.
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(1)])
-        .split(area);
-    let (info_area, list_area) = (chunks[0], chunks[1]);
+    let (info_area, list_area) = split_list_chrome(frame, area, state);
 
     // Design-review #102: filter-mode visual was too subtle (trailing
     // `_` the only indicator). Now: when editing, render a reversed-
@@ -1224,6 +1260,31 @@ mod tests {
         assert!(s.contains("alpha"));
         assert!(s.contains("beta"));
         assert!(s.contains("Debian/Ubuntu"));
+    }
+
+    #[test]
+    fn list_inline_band_appears_when_some_isos_skipped() {
+        // (#85 Tier 2 last child) — operator sees "N ISO(s) on disk
+        // failed to parse" without needing to read journalctl.
+        let state = AppState::new(vec![fake_iso("ok")]).with_skipped_iso_count(2);
+        let s = render_to_string(&state);
+        assert!(
+            s.contains("SKIPPED") && s.contains("2 ISO(s) on disk failed to parse"),
+            "expected inline error band in: {s}",
+        );
+        // The good ISO should still render alongside the band.
+        assert!(s.contains("ok"));
+    }
+
+    #[test]
+    fn list_no_inline_band_when_nothing_skipped() {
+        // Default count is 0; band should not appear.
+        let state = AppState::new(vec![fake_iso("ok")]);
+        let s = render_to_string(&state);
+        assert!(
+            !s.contains("SKIPPED"),
+            "unexpected error band in clean-state render: {s}",
+        );
     }
 
     #[test]
