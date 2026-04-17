@@ -52,8 +52,37 @@ pub const PANIC_ROOM: Profile = Profile {
     ],
 };
 
+/// Smallest possible kit — just Alpine for basic rescue work. Fastest
+/// `init` run (single ~200 MiB download), fits on any stick. Useful when
+/// the target is "I just need a known-good Linux userspace to poke at
+/// this disk" and the operator doesn't want to wait for 5 GiB of GPG
+/// verification.
+pub const MINIMAL: Profile = Profile {
+    name: "minimal",
+    description: "Fastest rescue stick — Alpine 3.20 only (~200 MiB)",
+    slugs: &["alpine-3.20-standard"],
+};
+
+/// Enterprise server triple — RHEL-family + Ubuntu-family, all three
+/// "known signed by a vendor our operators trust" minimal installers.
+/// No desktop; no live session. For operators whose targets are servers,
+/// not laptops. Total ~6 GiB.
+pub const SERVER: Profile = Profile {
+    name: "server",
+    description: "Enterprise server rescue — Ubuntu 24.04 Server + Rocky 9 + AlmaLinux 9",
+    slugs: &[
+        "ubuntu-24.04-live-server",
+        "rocky-9-minimal",
+        "almalinux-9-minimal",
+    ],
+};
+
 /// Registry of known profiles. Keep in sync with `--help` output below.
-pub const PROFILES: &[&Profile] = &[&PANIC_ROOM];
+///
+/// Ordering matters for the help output: operators see the list in this
+/// order, so put the default (panic-room) first, then the other choices
+/// roughly by expected frequency of use.
+pub const PROFILES: &[&Profile] = &[&PANIC_ROOM, &MINIMAL, &SERVER];
 
 /// Entry point for `aegis-boot init [/dev/sdX] [--profile NAME] [--yes]`.
 pub fn run(args: &[String]) -> ExitCode {
@@ -331,7 +360,8 @@ fn print_help() {
     println!("  aegis-boot init                       # auto-detect drive, panic-room");
     println!("  aegis-boot init /dev/sdc              # explicit device");
     println!("  aegis-boot init /dev/sdc --yes        # unattended");
-    println!("  aegis-boot init --profile panic-room  # explicit profile");
+    println!("  aegis-boot init --profile minimal     # fastest — Alpine only");
+    println!("  aegis-boot init --profile server      # Ubuntu Server + Rocky + Alma");
 }
 
 #[cfg(test)]
@@ -345,18 +375,61 @@ mod tests {
     }
 
     #[test]
-    fn panic_room_slugs_all_in_catalog() {
-        for slug in PANIC_ROOM.slugs {
-            assert!(
-                find_entry(slug).is_some(),
-                "PANIC_ROOM profile references slug '{slug}' which is not in catalog",
-            );
+    fn minimal_has_one_slug() {
+        assert_eq!(MINIMAL.slugs.len(), 1);
+    }
+
+    #[test]
+    fn server_has_three_slugs() {
+        assert_eq!(SERVER.slugs.len(), 3);
+    }
+
+    #[test]
+    fn every_profile_slug_is_in_catalog() {
+        for profile in PROFILES {
+            for slug in profile.slugs {
+                assert!(
+                    find_entry(slug).is_some(),
+                    "profile '{}' references slug '{}' which is not in catalog",
+                    profile.name,
+                    slug,
+                );
+            }
         }
     }
 
     #[test]
-    fn profiles_registry_contains_panic_room() {
-        assert!(PROFILES.iter().any(|p| p.name == "panic-room"));
+    fn panic_room_is_the_default() {
+        // Default comes from parse_flags when --profile isn't given;
+        // verify the string literal matches the const name.
+        assert_eq!(parse_flags(&[]).unwrap().profile_name, PANIC_ROOM.name,);
+    }
+
+    #[test]
+    fn profiles_registry_contains_all_three() {
+        let names: Vec<&str> = PROFILES.iter().map(|p| p.name).collect();
+        assert!(names.contains(&"panic-room"));
+        assert!(names.contains(&"minimal"));
+        assert!(names.contains(&"server"));
+    }
+
+    #[test]
+    fn profile_names_match_slash_free_kebab() {
+        // Names go into argv, help text, and CLI examples. Enforce a
+        // simple shape so future profile authors don't introduce
+        // shell-escape hazards (spaces, slashes, quotes).
+        for p in PROFILES {
+            for ch in p.name.chars() {
+                assert!(
+                    ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-',
+                    "profile name '{}' contains non-kebab char '{}'",
+                    p.name,
+                    ch,
+                );
+            }
+            assert!(!p.name.starts_with('-'));
+            assert!(!p.name.ends_with('-'));
+        }
     }
 
     #[test]

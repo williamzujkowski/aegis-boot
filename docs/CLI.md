@@ -57,9 +57,11 @@ If any step fails, `init` stops immediately and prints a context line. Re-runnin
 
 ### Profiles
 
-| Name         | ISOs (count) | Size (approx.) | Purpose                                      |
-| ------------ | ------------ | -------------- | -------------------------------------------- |
-| `panic-room` | 3            | ~5 GiB         | Emergency recovery kit (default)             |
+| Name         | ISOs (count) | Size (approx.) | Purpose                                                         |
+| ------------ | ------------ | -------------- | --------------------------------------------------------------- |
+| `panic-room` | 3            | ~5 GiB         | Emergency recovery kit (default)                                |
+| `minimal`    | 1            | ~200 MiB       | Fastest — Alpine only                                           |
+| `server`     | 3            | ~6 GiB         | Enterprise server rescue (RHEL family + Ubuntu Server)          |
 
 **`panic-room`** contains:
 
@@ -68,6 +70,20 @@ If any step fails, `init` stops immediately and prints a context line. Re-runnin
 - `rocky-9-minimal` — 2 GiB, enterprise RHEL-family rescue
 
 Fits on a 16 GB stick with headroom for operator-added ISOs.
+
+**`minimal`** contains:
+
+- `alpine-3.20-standard` — 200 MiB
+
+Use when "I just need a known-good Linux userspace to poke at this disk" and bandwidth / time / verification overhead should all be as small as possible.
+
+**`server`** contains:
+
+- `ubuntu-24.04-live-server` — 3 GiB
+- `rocky-9-minimal` — 2 GiB
+- `almalinux-9-minimal` — 1.5 GiB
+
+For operators whose targets are servers, not laptops. No desktop / live session. All three are RHEL-family-or-Ubuntu-family enterprise minimal installers signed by a vendor our operators trust.
 
 ### Exit codes
 
