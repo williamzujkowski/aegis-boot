@@ -47,34 +47,60 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
         return Ok(());
     }
 
-    let mount = match resolve_mount(args.first().map(String::as_str)) {
+    // --json suppresses per-ISO and summary prints; emits one structured
+    // document at the end. Matches the doctor/list/attest pattern. Flag
+    // detection tolerates the flag appearing anywhere in args; positional
+    // args (the mount target) are whatever doesn't start with `--`.
+    let json_mode = args.iter().any(|a| a == "--json");
+    let target = args
+        .iter()
+        .find(|a| !a.starts_with("--"))
+        .map(String::as_str);
+
+    let mount = match resolve_mount(target) {
         Ok(m) => m,
         Err(e) => {
-            eprintln!("aegis-boot verify: {e}");
+            if json_mode {
+                println!(
+                    "{{ \"schema_version\": 1, \"error\": \"{}\" }}",
+                    crate::doctor::json_escape(&e)
+                );
+            } else {
+                eprintln!("aegis-boot verify: {e}");
+            }
             return Err(2);
         }
     };
 
     let isos = scan_iso_files(&mount.path);
     if isos.is_empty() {
-        println!(
-            "No .iso files on {} — nothing to verify.",
-            mount.path.display()
-        );
+        if json_mode {
+            print_verify_json_empty(&mount.path);
+        } else {
+            println!(
+                "No .iso files on {} — nothing to verify.",
+                mount.path.display()
+            );
+        }
         if mount.temporary {
             unmount_temp(&mount);
         }
         return Ok(());
     }
 
-    println!(
-        "Verifying {} ISO(s) on {}...",
-        isos.len(),
-        mount.path.display()
-    );
-    println!();
+    if !json_mode {
+        println!(
+            "Verifying {} ISO(s) on {}...",
+            isos.len(),
+            mount.path.display()
+        );
+        println!();
+    }
 
     let mut tally = Tally::default();
+    // When json_mode, we collect verdicts for the final structured
+    // emit rather than streaming them. Vec<(iso_name, verdict)>.
+    let mut verdicts: Vec<(String, HashVerification)> = Vec::with_capacity(isos.len());
     for iso in &isos {
         let verdict = iso_probe::verify_iso_hash(iso).unwrap_or_else(|e| {
             // Failure to read the ISO file itself — distinct from
@@ -88,13 +114,21 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
         let iso_name = iso
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("(unknown)");
-        print_verdict(iso_name, &verdict);
+            .unwrap_or("(unknown)")
+            .to_string();
+        if !json_mode {
+            print_verdict(&iso_name, &verdict);
+        }
         tally.record(&verdict);
+        verdicts.push((iso_name, verdict));
     }
 
-    println!();
-    tally.print_summary();
+    if json_mode {
+        print_verify_json(&mount.path, &verdicts, &tally);
+    } else {
+        println!();
+        tally.print_summary();
+    }
 
     if mount.temporary {
         unmount_temp(&mount);
@@ -109,6 +143,108 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
     }
 }
 
+/// Empty-stick JSON envelope. Stable `schema_version=1`; every field
+/// is present (even if 0 or empty array) so a downstream consumer can
+/// parse without conditionals.
+fn print_verify_json_empty(mount_path: &std::path::Path) {
+    use crate::doctor::json_escape;
+    println!("{{");
+    println!("  \"schema_version\": 1,");
+    println!("  \"tool_version\": \"{}\",", env!("CARGO_PKG_VERSION"));
+    println!(
+        "  \"mount_path\": \"{}\",",
+        json_escape(&mount_path.display().to_string())
+    );
+    println!("  \"summary\": {{");
+    println!("    \"total\": 0, \"verified\": 0, \"mismatch\": 0,");
+    println!("    \"unreadable\": 0, \"not_present\": 0,");
+    println!("    \"any_failure\": false");
+    println!("  }},");
+    println!("  \"isos\": []");
+    println!("}}");
+}
+
+/// Populated-stick JSON envelope. Schema matches `print_verify_json_empty`
+/// with a non-empty `isos` array. Each entry carries the verdict plus
+/// the variant-specific fields (digest, actual/expected, reason).
+fn print_verify_json(
+    mount_path: &std::path::Path,
+    verdicts: &[(String, HashVerification)],
+    tally: &Tally,
+) {
+    use crate::doctor::json_escape;
+    println!("{{");
+    println!("  \"schema_version\": 1,");
+    println!("  \"tool_version\": \"{}\",", env!("CARGO_PKG_VERSION"));
+    println!(
+        "  \"mount_path\": \"{}\",",
+        json_escape(&mount_path.display().to_string())
+    );
+    println!("  \"summary\": {{");
+    println!("    \"total\": {},", tally.total());
+    println!("    \"verified\": {},", tally.verified);
+    println!("    \"mismatch\": {},", tally.mismatch);
+    println!("    \"unreadable\": {},", tally.unreadable);
+    println!("    \"not_present\": {},", tally.not_present);
+    println!(
+        "    \"any_failure\": {}",
+        if tally.any_failure() { "true" } else { "false" }
+    );
+    println!("  }},");
+    println!("  \"isos\": [");
+    let last = verdicts.len().saturating_sub(1);
+    for (i, (name, verdict)) in verdicts.iter().enumerate() {
+        let comma = if i == last { "" } else { "," };
+        emit_verdict_json(name, verdict, comma);
+    }
+    println!("  ]");
+    println!("}}");
+}
+
+/// Emit one ISO's verdict as a JSON object. Variant-specific fields
+/// match the in-memory `HashVerification` enum so the parser can
+/// dispatch on `verdict` and expect the right supporting fields.
+fn emit_verdict_json(name: &str, verdict: &HashVerification, comma: &str) {
+    use crate::doctor::json_escape;
+    match verdict {
+        HashVerification::Verified { digest, source } => {
+            println!(
+                "    {{ \"name\": \"{}\", \"verdict\": \"Verified\", \"digest\": \"{}\", \"source\": \"{}\" }}{comma}",
+                json_escape(name),
+                json_escape(digest),
+                json_escape(source),
+            );
+        }
+        HashVerification::Mismatch {
+            actual,
+            expected,
+            source,
+        } => {
+            println!(
+                "    {{ \"name\": \"{}\", \"verdict\": \"Mismatch\", \"actual\": \"{}\", \"expected\": \"{}\", \"source\": \"{}\" }}{comma}",
+                json_escape(name),
+                json_escape(actual),
+                json_escape(expected),
+                json_escape(source),
+            );
+        }
+        HashVerification::Unreadable { source, reason } => {
+            println!(
+                "    {{ \"name\": \"{}\", \"verdict\": \"Unreadable\", \"source\": \"{}\", \"reason\": \"{}\" }}{comma}",
+                json_escape(name),
+                json_escape(source),
+                json_escape(reason),
+            );
+        }
+        HashVerification::NotPresent => {
+            println!(
+                "    {{ \"name\": \"{}\", \"verdict\": \"NotPresent\" }}{comma}",
+                json_escape(name),
+            );
+        }
+    }
+}
+
 fn print_help() {
     println!("aegis-boot verify — re-verify every ISO on a stick against its sidecar checksum");
     println!();
@@ -116,6 +252,7 @@ fn print_help() {
     println!("  aegis-boot verify                 Auto-find mounted AEGIS_ISOS");
     println!("  aegis-boot verify /dev/sdX        Mount partition 2 and verify");
     println!("  aegis-boot verify /mnt/iso-dir    Use explicit mount path");
+    println!("  aegis-boot verify --json [target] Machine-readable (CI / monitoring)");
     println!("  aegis-boot verify --help");
     println!();
     println!("EXIT CODES:");
