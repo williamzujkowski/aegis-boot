@@ -831,6 +831,12 @@ fn checksum_span<'a>(verification: &iso_probe::HashVerification, theme: &Theme) 
                 .add_modifier(Modifier::BOLD),
         ),
         iso_probe::HashVerification::NotPresent => Span::raw("(no sibling checksum)"),
+        iso_probe::HashVerification::Unreadable { .. } => Span::styled(
+            // Sidecar exists but unreadable — distinct yellow verdict
+            // rather than gray "not present". (#138)
+            "⚠ checksum file unreadable",
+            Style::default().fg(theme.warning),
+        ),
     }
 }
 

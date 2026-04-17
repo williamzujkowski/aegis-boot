@@ -222,12 +222,18 @@ fn find_iso_size(root: &Path, filename: &str) -> Option<u64> {
 fn boot_entry_to_discovered(entry: &BootEntry, search_root: &Path) -> DiscoveredIso {
     let iso_path = search_root.join(&entry.source_iso);
     let hash_verification = verify_iso_hash(&iso_path).unwrap_or_else(|e| {
-        tracing::debug!(
+        // Reading the ISO itself failed — surface as Unreadable with the
+        // ISO path as source so the operator sees "ISO bytes could not
+        // be read" rather than a silent "no verification" verdict. (#138)
+        tracing::warn!(
             iso = %iso_path.display(),
             error = %e,
-            "iso-probe: hash verification skipped due to I/O error"
+            "iso-probe: ISO hash read failed (I/O error on ISO itself)"
         );
-        HashVerification::NotPresent
+        HashVerification::Unreadable {
+            source: iso_path.display().to_string(),
+            reason: e.to_string(),
+        }
     });
     match &hash_verification {
         HashVerification::Verified { source, .. } => tracing::info!(
@@ -243,6 +249,12 @@ fn boot_entry_to_discovered(entry: &BootEntry, search_root: &Path) -> Discovered
         HashVerification::NotPresent => tracing::debug!(
             iso = %iso_path.display(),
             "iso-probe: no sibling checksum file"
+        ),
+        HashVerification::Unreadable { source, reason } => tracing::warn!(
+            iso = %iso_path.display(),
+            source = %source,
+            reason = %reason,
+            "iso-probe: checksum file present but unreadable — verification suppressed"
         ),
     }
     let signature_verification = verify_iso_signature(&iso_path);

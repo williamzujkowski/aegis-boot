@@ -45,6 +45,21 @@ pub enum HashVerification {
     },
     /// No sibling checksum file was found.
     NotPresent,
+    /// A sibling checksum file EXISTED but could not be read (permission
+    /// denied, I/O error, filesystem corruption). Distinguished from
+    /// `NotPresent` because the latter is a benign "no checksum to
+    /// verify" verdict, while `Unreadable` is a security signal — the
+    /// file is there but the operator can't read it, which could mean
+    /// the sidecar is deliberately locked down (e.g. 0000 perms), the
+    /// stick is failing, or an attacker has flipped permissions to
+    /// suppress verification. Surfaced in the TUI as a distinct verdict
+    /// (yellow, not gray) and in logs at `warn` rather than `debug`. (#138)
+    Unreadable {
+        /// Path of the sibling file that couldn't be read.
+        source: String,
+        /// Why the read failed (typically an `io::Error` stringified).
+        reason: String,
+    },
 }
 
 impl HashVerification {
@@ -55,6 +70,7 @@ impl HashVerification {
             Self::Verified { .. } => "verified",
             Self::Mismatch { .. } => "MISMATCH",
             Self::NotPresent => "not present",
+            Self::Unreadable { .. } => "UNREADABLE",
         }
     }
 }
@@ -92,22 +108,29 @@ pub fn verify_iso_hash_with_progress<F>(
 where
     F: FnMut(u64, u64),
 {
-    let Some(expected) = find_expected_hash(iso_path) else {
-        return Ok(HashVerification::NotPresent);
-    };
-    let total = std::fs::metadata(iso_path).map(|m| m.len()).unwrap_or(0);
-    let actual = sha256_of_file_with_progress(iso_path, total, &mut on_progress)?;
-    if actual == expected.hash.to_ascii_lowercase() {
-        Ok(HashVerification::Verified {
-            digest: actual,
-            source: expected.source,
-        })
-    } else {
-        Ok(HashVerification::Mismatch {
-            actual,
-            expected: expected.hash,
-            source: expected.source,
-        })
+    match find_expected_hash(iso_path) {
+        ExpectedHashResult::Found(expected) => {
+            let total = std::fs::metadata(iso_path).map(|m| m.len()).unwrap_or(0);
+            let actual = sha256_of_file_with_progress(iso_path, total, &mut on_progress)?;
+            if actual == expected.hash.to_ascii_lowercase() {
+                Ok(HashVerification::Verified {
+                    digest: actual,
+                    source: expected.source,
+                })
+            } else {
+                Ok(HashVerification::Mismatch {
+                    actual,
+                    expected: expected.hash,
+                    source: expected.source,
+                })
+            }
+        }
+        ExpectedHashResult::NotFound => Ok(HashVerification::NotPresent),
+        ExpectedHashResult::Unreadable { source, reason } => {
+            // Sibling exists but can't be read: distinct verdict so the
+            // TUI can warn rather than silently drop verification. (#138)
+            Ok(HashVerification::Unreadable { source, reason })
+        }
     }
 }
 
@@ -116,7 +139,24 @@ struct ExpectedHash {
     source: String,
 }
 
-fn find_expected_hash(iso_path: &Path) -> Option<ExpectedHash> {
+/// Result of looking for a sibling checksum file.
+///
+/// Three-way distinct so callers can surface "exists but unreadable"
+/// separately from "genuinely absent". (#138)
+enum ExpectedHashResult {
+    /// A sibling exists, is readable, and contains a parseable hash
+    /// for this ISO.
+    Found(ExpectedHash),
+    /// No sibling checksum file found (neither `<iso>.sha256` nor
+    /// `SHA256SUMS` with a matching entry).
+    NotFound,
+    /// A sibling file exists but could not be read (permission denied,
+    /// I/O error, truncated read). Caller should surface as a warning
+    /// rather than treating as "no verification material".
+    Unreadable { source: String, reason: String },
+}
+
+fn find_expected_hash(iso_path: &Path) -> ExpectedHashResult {
     // 1. <iso>.sha256 sibling.
     let mut per_iso = PathBuf::from(iso_path);
     let ext = per_iso
@@ -128,31 +168,67 @@ fn find_expected_hash(iso_path: &Path) -> Option<ExpectedHash> {
     } else {
         format!("{ext}.sha256")
     });
-    if let Ok(body) = std::fs::read_to_string(&per_iso) {
-        if let Some(hash) = parse_sha256sum_line(body.trim()) {
-            return Some(ExpectedHash {
-                hash,
+    match std::fs::read_to_string(&per_iso) {
+        Ok(body) => {
+            if let Some(hash) = parse_sha256sum_line(body.trim()) {
+                return ExpectedHashResult::Found(ExpectedHash {
+                    hash,
+                    source: per_iso.display().to_string(),
+                });
+            }
+            // File readable but no valid sha256 line — treat as
+            // "unreadable for verification purposes" since we can't
+            // extract a hash from it. This also catches empty files.
+            return ExpectedHashResult::Unreadable {
                 source: per_iso.display().to_string(),
-            });
+                reason: "no parseable sha256 line".to_string(),
+            };
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Genuinely absent; fall through to SHA256SUMS check.
+        }
+        Err(e) => {
+            return ExpectedHashResult::Unreadable {
+                source: per_iso.display().to_string(),
+                reason: e.to_string(),
+            };
         }
     }
 
     // 2. SHA256SUMS in the same dir.
-    let dir = iso_path.parent()?;
+    let Some(dir) = iso_path.parent() else {
+        return ExpectedHashResult::NotFound;
+    };
     let sums_path = dir.join("SHA256SUMS");
-    let sums = std::fs::read_to_string(&sums_path).ok()?;
-    let basename = iso_path.file_name()?.to_string_lossy().to_string();
+    let sums = match std::fs::read_to_string(&sums_path) {
+        Ok(body) => body,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return ExpectedHashResult::NotFound;
+        }
+        Err(e) => {
+            return ExpectedHashResult::Unreadable {
+                source: sums_path.display().to_string(),
+                reason: e.to_string(),
+            };
+        }
+    };
+    let Some(basename) = iso_path
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+    else {
+        return ExpectedHashResult::NotFound;
+    };
     for line in sums.lines() {
         if let Some((hash, fname)) = parse_sha256sums_line(line) {
             if fname == basename {
-                return Some(ExpectedHash {
+                return ExpectedHashResult::Found(ExpectedHash {
                     hash,
                     source: sums_path.display().to_string(),
                 });
             }
         }
     }
-    None
+    ExpectedHashResult::NotFound
 }
 
 /// Parse a single sha256 line of either form:
@@ -340,5 +416,62 @@ mod tests {
             matches!(result, HashVerification::Verified { .. }),
             "per-iso sidecar must win over SHA256SUMS"
         );
+    }
+
+    // ---- #138: Unreadable variant -----------------------------------
+
+    #[test]
+    fn no_sidecar_returns_not_present() {
+        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("tempdir: {e}"));
+        let iso = dir.path().join("alone.iso");
+        std::fs::write(&iso, b"content").unwrap_or_else(|e| panic!("write iso: {e}"));
+        let result = verify_iso_hash(&iso).unwrap_or_else(|e| panic!("io: {e}"));
+        assert!(matches!(result, HashVerification::NotPresent));
+    }
+
+    #[test]
+    fn empty_sidecar_returns_unreadable() {
+        // File exists but has no parseable sha256 line — distinct from
+        // "file not present". Caller should warn rather than silently
+        // skip verification. (#138)
+        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("tempdir: {e}"));
+        let iso = dir.path().join("x.iso");
+        std::fs::write(&iso, b"content").unwrap_or_else(|e| panic!("write iso: {e}"));
+        std::fs::write(dir.path().join("x.iso.sha256"), b"")
+            .unwrap_or_else(|e| panic!("write sidecar: {e}"));
+        let result = verify_iso_hash(&iso).unwrap_or_else(|e| panic!("io: {e}"));
+        match result {
+            HashVerification::Unreadable { source, reason } => {
+                assert!(source.ends_with("x.iso.sha256"), "source: {source}");
+                assert!(
+                    reason.contains("no parseable") || reason.contains("unreadable"),
+                    "reason: {reason}"
+                );
+            }
+            other => panic!("expected Unreadable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn garbage_sidecar_returns_unreadable() {
+        // File exists but content isn't a valid sha256 line — same
+        // shape as empty: classifier-invisible without a real hash.
+        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("tempdir: {e}"));
+        let iso = dir.path().join("y.iso");
+        std::fs::write(&iso, b"content").unwrap_or_else(|e| panic!("write iso: {e}"));
+        std::fs::write(dir.path().join("y.iso.sha256"), b"not a sha256 line\n")
+            .unwrap_or_else(|e| panic!("write sidecar: {e}"));
+        let result = verify_iso_hash(&iso).unwrap_or_else(|e| panic!("io: {e}"));
+        assert!(matches!(result, HashVerification::Unreadable { .. }));
+    }
+
+    #[test]
+    fn unreadable_summary_is_distinct() {
+        let u = HashVerification::Unreadable {
+            source: "/tmp/x.sha256".to_string(),
+            reason: "permission denied".to_string(),
+        };
+        assert_eq!(u.summary(), "UNREADABLE");
+        assert_ne!(u.summary(), HashVerification::NotPresent.summary());
     }
 }
