@@ -68,13 +68,22 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
         Ok(()) => {
             println!();
             println!("Done. Next steps:");
-            println!("  1. Mount the AEGIS_ISOS partition and copy .iso files onto it:");
+            println!("  1. Add ISOs to the stick (handles mount, verify, attestation):");
+            println!("       aegis-boot add /path/to/distro.iso");
+            println!("     (or — for a curated bundle in one command —)");
             println!(
-                "       sudo mount {}2 /mnt && cp *.iso /mnt/ && sudo umount /mnt",
+                "       aegis-boot init {} --profile panic-room",
                 drive.dev.display()
             );
-            println!("  2. Boot from the stick (UEFI boot menu, select the USB entry).");
-            println!("  3. In rescue-tui, pick an ISO and press Enter.");
+            println!("  2. Safely power-off the stick before removal:");
+            println!("       aegis-boot eject {}", drive.dev.display());
+            println!("  3. Boot the target machine from the stick (UEFI boot menu),");
+            println!("     pick an ISO in rescue-tui, and press Enter.");
+            println!();
+            println!(
+                "Manual fallback: sudo mount {}2 /mnt && cp *.iso /mnt/ && sudo umount /mnt",
+                drive.dev.display()
+            );
             Ok(())
         }
         Err(e) => {

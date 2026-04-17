@@ -324,7 +324,8 @@ fn print_success(profile: &Profile) {
     );
     println!();
     println!("Next steps:");
-    println!("  1. Eject: sudo sync && sudo eject /dev/sdX");
+    println!("  1. Eject the stick safely: aegis-boot eject /dev/sdX");
+    println!("     (manual fallback: sudo sync && sudo eject /dev/sdX)");
     println!("  2. Boot the target machine (UEFI boot menu → USB entry).");
     println!("  3. In rescue-tui, pick an ISO and press Enter.");
     println!();
