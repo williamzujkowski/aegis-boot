@@ -168,8 +168,8 @@ pub fn record_iso_added(
         sidecars,
         added_at,
     });
-    let json = serde_json::to_string_pretty(&manifest)
-        .map_err(|e| format!("serialize manifest: {e}"))?;
+    let json =
+        serde_json::to_string_pretty(&manifest).map_err(|e| format!("serialize manifest: {e}"))?;
     fs::write(&manifest_path, json)
         .map_err(|e| format!("write {}: {e}", manifest_path.display()))?;
     Ok(manifest_path)
@@ -242,7 +242,10 @@ fn locate_attestation_for_mount(
 /// resolves to /dev/sdc2 rather than the underlying / mount).
 fn device_for_mount(target: &Path) -> Option<PathBuf> {
     let mounts = fs::read_to_string("/proc/mounts").ok()?;
-    let target_s = target.canonicalize().ok().unwrap_or_else(|| target.to_path_buf());
+    let target_s = target
+        .canonicalize()
+        .ok()
+        .unwrap_or_else(|| target.to_path_buf());
     let target_str = target_s.to_string_lossy();
     let mut best: Option<(usize, PathBuf)> = None;
     for line in mounts.lines() {
@@ -283,8 +286,7 @@ fn disk_for_partition(part: &Path) -> Option<PathBuf> {
         // separator. Loop devices without partitions return None
         // (caller passed a whole disk).
         if let Some(idx) = name.rfind('p') {
-            let prev_is_digit = idx > 0
-                && name.as_bytes()[idx - 1].is_ascii_digit();
+            let prev_is_digit = idx > 0 && name.as_bytes()[idx - 1].is_ascii_digit();
             let suffix = &name[idx + 1..];
             let suffix_all_digits =
                 !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit());
@@ -350,15 +352,18 @@ pub fn record_flash(drive: &Drive, img_path: &Path, img_size: u64) -> Result<Pat
     // a sortable timestamp, so multiple flashes of the same stick produce
     // a chronological history rather than overwriting each other.
     let id = if disk_guid.is_empty() {
-        format!("unknown-{}", sanitize_for_filename(&drive.dev.display().to_string()))
+        format!(
+            "unknown-{}",
+            sanitize_for_filename(&drive.dev.display().to_string())
+        )
     } else {
         disk_guid.to_lowercase()
     };
     let ts_for_filename = timestamp.replace(':', "-");
     let dest = dest_dir.join(format!("{id}-{ts_for_filename}.json"));
 
-    let json = serde_json::to_string_pretty(&manifest)
-        .map_err(|e| format!("serialize manifest: {e}"))?;
+    let json =
+        serde_json::to_string_pretty(&manifest).map_err(|e| format!("serialize manifest: {e}"))?;
     fs::write(&dest, json).map_err(|e| format!("write {}: {e}", dest.display()))?;
 
     Ok(dest)
@@ -423,7 +428,11 @@ fn run_list() -> ExitCode {
     println!("Attestations in {}:", dir.display());
     println!();
     println!("  {:<30}  {:<24}  TARGET MODEL", "DEVICE", "FLASHED");
-    println!("  {:<30}  {:<24}  ------------", "-".repeat(30), "-".repeat(24));
+    println!(
+        "  {:<30}  {:<24}  ------------",
+        "-".repeat(30),
+        "-".repeat(24)
+    );
     for entry in &entries {
         let path = entry.path();
         match read_attestation(&path) {
@@ -437,7 +446,10 @@ fn run_list() -> ExitCode {
         }
     }
     println!();
-    println!("{} total. Use `aegis-boot attest show <FILE>` for full detail.", entries.len());
+    println!(
+        "{} total. Use `aegis-boot attest show <FILE>` for full detail.",
+        entries.len()
+    );
     ExitCode::SUCCESS
 }
 
@@ -473,18 +485,42 @@ fn print_attestation(path: &Path, att: &Attestation) {
     println!("Target stick:");
     println!("  device:        {}", att.target.device);
     println!("  model:         {}", att.target.model);
-    println!("  size:          {} ({} bytes)", humanize(att.target.size_bytes), att.target.size_bytes);
-    println!("  disk GUID:     {}", if att.target.disk_guid.is_empty() { "(not captured)" } else { &att.target.disk_guid });
-    println!("  image SHA-256: {}", if att.target.image_sha256.is_empty() { "(not captured)" } else { &att.target.image_sha256 });
-    println!("  image size:    {} ({} bytes)", humanize(att.target.image_size_bytes), att.target.image_size_bytes);
+    println!(
+        "  size:          {} ({} bytes)",
+        humanize(att.target.size_bytes),
+        att.target.size_bytes
+    );
+    println!(
+        "  disk GUID:     {}",
+        if att.target.disk_guid.is_empty() {
+            "(not captured)"
+        } else {
+            &att.target.disk_guid
+        }
+    );
+    println!(
+        "  image SHA-256: {}",
+        if att.target.image_sha256.is_empty() {
+            "(not captured)"
+        } else {
+            &att.target.image_sha256
+        }
+    );
+    println!(
+        "  image size:    {} ({} bytes)",
+        humanize(att.target.image_size_bytes),
+        att.target.image_size_bytes
+    );
     println!();
     println!("ISOs ({} added since flash):", att.isos.len());
     if att.isos.is_empty() {
         println!("  (none yet — append with `aegis-boot add` once supported in a follow-up)");
     } else {
         for iso in &att.isos {
-            println!("  - {} (added {}, {} bytes, sidecars: {:?})",
-                iso.filename, iso.added_at, iso.size_bytes, iso.sidecars);
+            println!(
+                "  - {} (added {}, {} bytes, sidecars: {:?})",
+                iso.filename, iso.added_at, iso.size_bytes, iso.sidecars
+            );
         }
     }
 }
@@ -550,7 +586,11 @@ fn current_sb_state() -> String {
             if name.to_string_lossy().starts_with("SecureBoot-") {
                 if let Ok(bytes) = fs::read(e.path()) {
                     if bytes.len() >= 5 {
-                        return if bytes[4] == 1 { "enforcing".to_string() } else { "disabled".to_string() };
+                        return if bytes[4] == 1 {
+                            "enforcing".to_string()
+                        } else {
+                            "disabled".to_string()
+                        };
                     }
                 }
             }
@@ -565,7 +605,10 @@ fn sha256_file(path: &Path) -> Result<String, String> {
         .output()
         .map_err(|e| format!("sha256sum exec: {e}"))?;
     if !out.status.success() {
-        return Err(format!("sha256sum failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
+        return Err(format!(
+            "sha256sum failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
     }
     let stdout = String::from_utf8_lossy(&out.stdout);
     // Output: "<hex>  <path>"
@@ -593,7 +636,13 @@ fn read_disk_guid(dev: &Path) -> Option<String> {
 
 fn sanitize_for_filename(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -699,7 +748,10 @@ mod tests {
         std::env::remove_var("XDG_DATA_HOME");
         std::env::set_var("HOME", "/tmp/aegis-test-home2");
         let p = data_dir();
-        assert_eq!(p, PathBuf::from("/tmp/aegis-test-home2/.local/share/aegis-boot"));
+        assert_eq!(
+            p,
+            PathBuf::from("/tmp/aegis-test-home2/.local/share/aegis-boot")
+        );
         match prev_xdg {
             Some(v) => std::env::set_var("XDG_DATA_HOME", v),
             None => std::env::remove_var("XDG_DATA_HOME"),

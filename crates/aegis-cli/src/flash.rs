@@ -16,29 +16,51 @@ use std::process::{Command, ExitCode};
 use crate::attest;
 use crate::detect::{self, Drive};
 
-/// Entry point for `aegis-boot flash [device]`.
+/// Entry point for `aegis-boot flash [device] [--yes]`.
 pub fn run(args: &[String]) -> ExitCode {
-    if args.first().map(String::as_str) == Some("--help")
-        || args.first().map(String::as_str) == Some("-h")
-    {
-        println!("aegis-boot flash — write aegis-boot to a USB stick");
-        println!();
-        println!("USAGE: aegis-boot flash [/dev/sdX]");
-        println!("  No argument = auto-detect removable drives.");
-        println!("  Explicit device = flash to that drive.");
-        return ExitCode::SUCCESS;
+    match try_run(args) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(code) => ExitCode::from(code),
     }
-    let explicit_dev = args.first().map(std::string::String::as_str);
+}
+
+/// Inner runner that returns a Result so callers (`aegis-boot init`)
+/// can branch on success/failure without comparing opaque `ExitCode`s.
+/// Shape matches the public `run` surface — same args, same semantics —
+/// just with a typed error channel.
+pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
+    let mut explicit_dev: Option<&str> = None;
+    let mut assume_yes = false;
+    for a in args {
+        match a.as_str() {
+            "--help" | "-h" => {
+                print_help();
+                return Ok(());
+            }
+            "--yes" | "-y" => assume_yes = true,
+            arg if arg.starts_with("--") => {
+                eprintln!("aegis-boot flash: unknown option '{arg}'");
+                return Err(2);
+            }
+            other => {
+                if explicit_dev.is_some() {
+                    eprintln!("aegis-boot flash: only one device allowed");
+                    return Err(2);
+                }
+                explicit_dev = Some(other);
+            }
+        }
+    }
 
     // Step 1: select drive.
     let Some(drive) = select_drive(explicit_dev) else {
-        return ExitCode::from(1);
+        return Err(1);
     };
 
-    // Step 2: typed confirmation.
-    if !confirm_destructive(&drive) {
+    // Step 2: typed confirmation (skipped under --yes).
+    if !assume_yes && !confirm_destructive(&drive) {
         eprintln!("Cancelled.");
-        return ExitCode::SUCCESS;
+        return Ok(());
     }
 
     // Step 3: build + write + verify.
@@ -53,13 +75,22 @@ pub fn run(args: &[String]) -> ExitCode {
             );
             println!("  2. Boot from the stick (UEFI boot menu, select the USB entry).");
             println!("  3. In rescue-tui, pick an ISO and press Enter.");
-            ExitCode::SUCCESS
+            Ok(())
         }
         Err(e) => {
             eprintln!("flash failed: {e}");
-            ExitCode::from(1)
+            Err(1)
         }
     }
+}
+
+fn print_help() {
+    println!("aegis-boot flash — write aegis-boot to a USB stick");
+    println!();
+    println!("USAGE: aegis-boot flash [/dev/sdX] [--yes]");
+    println!("  No argument   = auto-detect removable drives.");
+    println!("  /dev/sdX      = flash to that drive.");
+    println!("  --yes / -y    = skip the 'type flash to confirm' prompt (DESTRUCTIVE).");
 }
 
 fn select_drive(explicit: Option<&str>) -> Option<Drive> {
@@ -246,7 +277,10 @@ fn flash(drive: &Drive) -> Result<(), String> {
     match attest::record_flash(drive, &img_path, img_size) {
         Ok(att_path) => {
             println!("Attestation receipt: {}", att_path.display());
-            println!("  Inspect with: aegis-boot attest show {}", att_path.display());
+            println!(
+                "  Inspect with: aegis-boot attest show {}",
+                att_path.display()
+            );
         }
         Err(e) => {
             eprintln!("warning: attestation receipt could not be recorded: {e}");

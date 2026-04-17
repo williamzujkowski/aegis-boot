@@ -43,6 +43,18 @@ aegis-boot doctor          # 0–100 health score for host + stick
 
 If `aegis-boot doctor` reports anything FAIL, fix that first — its NEXT ACTION line tells you exactly what.
 
+## The one-command path (recommended for new users)
+
+If you want the whole "empty stick → rescue-ready with sensible ISOs" experience in one command:
+
+```bash
+sudo aegis-boot init /dev/sdc
+```
+
+That composes the four steps below (flash + three catalog fetches + adds) behind a single verb using the default `panic-room` profile (Alpine 3.20 + Ubuntu 24.04 Server + Rocky 9). See [`aegis-boot init`](./CLI.md#aegis-boot-init) for flags and alternative profiles.
+
+The rest of this guide walks through the same flow step-by-step — useful when you want a custom ISO set, or when a step fails and you need to resume at a specific stage.
+
 ## Step 1 — write aegis-boot to the stick
 
 ```bash
