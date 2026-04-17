@@ -11,10 +11,13 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 - **`doctor` machine identity row** ([#194](https://github.com/williamzujkowski/aegis-boot/pull/194)) — reads `/sys/class/dmi/id/*` (non-privileged) and prints the operator's vendor + model + firmware so filing a hardware report is copy-paste. Filters common OEM placeholders (`To Be Filled By O.E.M.`, etc.). Linux-only; verdict is Pass or Skip.
 - **`doctor` compat-DB cross-check** ([#195](https://github.com/williamzujkowski/aegis-boot/pull/195)) — after the identity row, `doctor` runs the DMI string through `find_entry(COMPAT_DB)` and emits a `compat DB coverage` row. Pass when documented, Warn when not (with the report URL inlined into the detail line).
 - **Guided MOK enrollment on errno 61** ([#202](https://github.com/williamzujkowski/aegis-boot/pull/202), closes the child in [#136](https://github.com/williamzujkowski/aegis-boot/issues/136)) — rescue-tui's `SignatureRejected` remedy is now three explicit steps (STEP 1/3 `sudo mokutil --import`, STEP 2/3 describing the blue-on-black "Perform MOK management" screen, STEP 3/3 with firmware boot-menu keys for the top 5 vendors). Replaces a single dense paragraph; no new screens required.
+- **`compat --my-machine`** ([#206](https://github.com/williamzujkowski/aegis-boot/pull/206)) — auto-fills the lookup query from `/sys/class/dmi/id/*` for single-purpose "is MY machine documented?" flow. Symmetric with `doctor`'s compat-DB cross-check but as a dedicated subcommand. Shares `read_dmi_field` + `dmi_product_label` with doctor so both surfaces agree on the machine label. Exit codes: 0 match, 1 DB miss, 2 DMI unavailable OR mixed with explicit query.
 
 ### Scriptable surfaces
 
 - **Uniform `--json` across every read-mostly subcommand** ([#191](https://github.com/williamzujkowski/aegis-boot/pull/191)) — `update --json` emits an eligibility envelope + host-chain (sha256 per slot) or a reason-for-ineligible; `recommend --json [slug]` emits the full catalog or a single entry. Completes the sweep alongside prior `--json` additions to `doctor`, `list`, `attest list`, `attest show`, `verify`, `fetch --dry-run`. Every surface shares the `schema_version: 1` envelope and the `doctor::json_escape` helper.
+- **`aegis-boot --version --json`** ([#205](https://github.com/williamzujkowski/aegis-boot/pull/205)) — completes the --json sweep across every CLI output path including the version surface. Emits `{ schema_version, tool, version }` so scripted consumers (install one-liner assertions, Homebrew formula tests, ansible-verified installs) can parse the version without regex on the human string.
+- **`aegis-boot completions bash | zsh`** ([#207](https://github.com/williamzujkowski/aegis-boot/pull/207)) — hand-rolled completion script generator for the 13-subcommand surface. Completes top-level subcommands, catalog slugs on `recommend`/`fetch` (via existing `recommend --slugs-only`), compat vendor tokens via `jq` graceful-fallback, shared flag sets on `doctor`/`list`/`attest`/`verify`/`update`, device paths on `init`/`flash`. zsh uses bashcompinit shim.
 
 ### Quality gates (epic [#138](https://github.com/williamzujkowski/aegis-boot/issues/138) — closed)
 
@@ -30,6 +33,10 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 - **CLI.md coverage refresh** ([#199](https://github.com/williamzujkowski/aegis-boot/pull/199)) — added the missing `compat` / `update` / `verify` subcommand sections, documented `--json` across all seven supported commands in one table, refreshed the `doctor` example output to include the new machine-identity + compat DB rows.
 - **Theme names + accessibility recipes** ([#200](https://github.com/williamzujkowski/aegis-boot/pull/200)) — `README.md`'s `AEGIS_THEME` row now lists all five shipped themes (default/monochrome/high-contrast/okabe-ito/aegis); `TROUBLESHOOTING.md` gets a new "Accessibility" section pairing each symptom (low-contrast / color vision / serial / screen-reader) with the appropriate theme + `AEGIS_A11Y` flag. Closes the operator-discoverability half of the Okabe-Ito item in [#93](https://github.com/williamzujkowski/aegis-boot/issues/93) (code already shipped in [#76](https://github.com/williamzujkowski/aegis-boot/issues/76)).
 - **2026-04-17 content audit log** ([#201](https://github.com/williamzujkowski/aegis-boot/pull/201)) — recorded today's audit findings + PRs in `docs/content-audit.md` per the [#78](https://github.com/williamzujkowski/aegis-boot/issues/78) cadence.
+
+### Accessibility + ergonomics
+
+- **`Home`/`End` as layout-agnostic first/last binds** ([#204](https://github.com/williamzujkowski/aegis-boot/pull/204)) — addresses the [#93](https://github.com/williamzujkowski/aegis-boot/issues/93) P2 keybind-audit item. `g`/`G` land on weird physical positions under AZERTY and Dvorak; crossterm maps `Home`/`End` identically across every OS layout. Help overlay shows both lines.
 
 ### Bugs
 
