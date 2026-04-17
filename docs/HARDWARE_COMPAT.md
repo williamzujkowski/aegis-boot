@@ -4,6 +4,8 @@ A community-curated table of machines aegis-boot has been seen to boot on (or fa
 
 If you successfully boot — or fail to boot — aegis-boot on a machine not listed here, please **submit a report** (see [How to report](#how-to-report) below). One report from one operator is more useful than zero from many.
 
+> **Looking up a specific machine?** `aegis-boot compat [query]` queries the same data from the CLI (e.g. `aegis-boot compat thinkpad`). `--json` output is stable (schema_version=1) for scripting.
+
 ## How to read this
 
 | Column | Meaning |

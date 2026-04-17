@@ -12,6 +12,7 @@
 //!   * `eject`     — safely power-off and prepare a USB stick for removal
 //!   * `update`    — in-place signed-chain rotation (phase 1: eligibility check)
 //!   * `verify`    — re-run sha256 verification on every ISO on the stick
+//!   * `compat`    — hardware compatibility lookup (verified reports only)
 //!
 //! This replaces the developer workflow of running shell scripts
 //! manually. The binary is named `aegis-boot` so operators type
@@ -21,6 +22,7 @@
 
 mod attest;
 mod catalog;
+mod compat;
 mod detect;
 mod doctor;
 mod eject;
@@ -54,6 +56,7 @@ fn main() -> ExitCode {
         Some("eject") => eject::run(&args[1..]),
         Some("update") => update::run(&args[1..]),
         Some("verify") => verify::run(&args[1..]),
+        Some("compat") => compat::run(&args[1..]),
         Some("-h" | "--help" | "help") | None => {
             print_help();
             ExitCode::SUCCESS
@@ -85,6 +88,7 @@ fn print_help() {
     println!("  aegis-boot eject [device]     Safely power-off a stick before removal");
     println!("  aegis-boot update <device>    Check eligibility for in-place update");
     println!("  aegis-boot verify [device]    Re-verify every ISO's sha256 against its sidecar");
+    println!("  aegis-boot compat [query]     Hardware compatibility lookup");
     println!("  aegis-boot --version          Print version");
     println!("  aegis-boot --help             This message");
     println!();
@@ -98,4 +102,5 @@ fn print_help() {
     println!("  aegis-boot add ubuntu.iso     # validate + copy to stick");
     println!("  aegis-boot attest list        # show recorded flashes");
     println!("  aegis-boot eject /dev/sdc     # sync + power-off before removal");
+    println!("  aegis-boot compat thinkpad    # lookup hardware reports");
 }
