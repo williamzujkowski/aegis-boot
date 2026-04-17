@@ -24,6 +24,10 @@ _aegis-boot() {
         'fetch:Download + verify a catalog ISO'
         'attest:Attestation receipts for past flashes'
         'eject:Safely power-off a stick before removal'
+        'update:Check eligibility for in-place signed-chain update'
+        'verify:Re-verify every ISO on the stick against its sidecar'
+        'compat:Hardware compatibility lookup (verified reports only)'
+        'completions:Emit bash/zsh completion script'
     )
 
     _arguments -C \
@@ -66,13 +70,21 @@ _aegis-boot() {
                     ;;
                 list|eject)
                     _arguments \
+                        '--json[machine-readable output (schema_version=1)]' \
                         '--help[show help]' \
                         '*:device:_files -g "/dev/sd*"'
                     ;;
                 doctor)
                     _arguments \
                         '--stick[stick device]:device:_files -g "/dev/sd*"' \
+                        '--json[machine-readable output (schema_version=1)]' \
                         '--help[show help]'
+                    ;;
+                update|verify)
+                    _arguments \
+                        '--json[machine-readable output (schema_version=1)]' \
+                        '--help[show help]' \
+                        '*:device:_files -g "/dev/sd*"'
                     ;;
                 recommend|fetch)
                     local -a slugs
@@ -81,17 +93,36 @@ _aegis-boot() {
                         _arguments \
                             '--out[destination directory]:dir:_directories' \
                             '--no-gpg[skip GPG verification]' \
+                            '--dry-run[print plan without downloading]' \
                             '--help[show help]' \
                             "*:ISO slug:($slugs)"
                     else
                         _arguments \
                             '--slugs-only[machine-readable slug list]' \
+                            '--json[machine-readable output (schema_version=1)]' \
                             '--help[show help]' \
                             "*:ISO slug:($slugs)"
                     fi
                     ;;
                 attest)
+                    _arguments \
+                        '--json[machine-readable output (schema_version=1)]'
                     _values 'attest action' list show --help
+                    ;;
+                compat)
+                    local -a vendors
+                    if (( $+commands[jq] )); then
+                        vendors=(${(f)"$(aegis-boot compat --json 2>/dev/null \
+                            | jq -r '.entries[]?.vendor' 2>/dev/null | sort -u)"})
+                    fi
+                    _arguments \
+                        '--my-machine[auto-lookup from DMI]' \
+                        '--json[machine-readable output (schema_version=1)]' \
+                        '--help[show help]' \
+                        "*:vendor:($vendors)"
+                    ;;
+                completions)
+                    _values 'shell' bash zsh --help
                     ;;
             esac
             ;;
