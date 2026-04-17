@@ -17,17 +17,30 @@ ENV TZ=UTC
 ENV SOURCE_DATE_EPOCH=1700000000
 
 # sbsigntool lives in universe; enable it before installing.
+#
+# apt retries: archive.ubuntu.com is periodically unreachable from GitHub
+# Actions runners (every few CI builds). We add Acquire::Retries=5 plus
+# a retry loop around apt-get itself so a transient mirror outage
+# doesn't fail the whole reproducible-build job. Up to 3 attempts with
+# a 15-second pause between each — empirically this absorbs the ~60s
+# mirror blips we see in practice without masking genuine "package
+# doesn't exist" errors (those fail identically on every attempt).
 RUN sed -i 's/^# deb \(.*universe\)/deb \1/' /etc/apt/sources.list && \
-    apt-get update && apt-get install -y --no-install-recommends \
-      build-essential \
-      curl \
-      ca-certificates \
-      git \
-      pkg-config \
-      libssl-dev \
-      cpio \
-      sbsigntool \
-      xz-utils \
+    echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries && \
+    for i in 1 2 3; do \
+      apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        curl \
+        ca-certificates \
+        git \
+        pkg-config \
+        libssl-dev \
+        cpio \
+        sbsigntool \
+        xz-utils \
+      && break \
+      || if [ "$i" = 3 ]; then exit 1; else echo "apt attempt $i failed; sleeping 15s before retry"; sleep 15; fi; \
+    done \
     && rm -rf /var/lib/apt/lists/*
 
 ENV RUSTUP_HOME=/opt/rust/rustup
