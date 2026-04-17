@@ -43,6 +43,14 @@ aegis-boot doctor          # 0–100 health score for host + stick
 
 If `aegis-boot doctor` reports anything FAIL, fix that first — its NEXT ACTION line tells you exactly what.
 
+Check whether your machine is in the hardware-compatibility database:
+
+```bash
+aegis-boot compat --my-machine   # DMI auto-lookup, Linux only
+```
+
+If it's not (common until the database grows), the Warn row from `doctor` will already tell you to run `aegis-boot compat --submit`, which gathers the same DMI values and generates a pre-filled GitHub issue URL — one click, four fields already populated. See [HARDWARE_COMPAT.md](./HARDWARE_COMPAT.md) for the criteria the database uses.
+
 Optional — install shell completions for tab-complete on subcommands, catalog slugs, and compat-DB vendors:
 
 ```bash
