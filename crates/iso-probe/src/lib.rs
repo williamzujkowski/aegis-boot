@@ -36,6 +36,15 @@ pub struct DiscoveredIso {
     pub iso_path: PathBuf,
     /// Human label (e.g. "Ubuntu 24.04 LTS").
     pub label: String,
+    /// Full distro name + version read from the mounted ISO's
+    /// `/etc/os-release` (`PRETTY_NAME`), `/.disk/info`, or
+    /// `/etc/alpine-release`. `None` when none of those files
+    /// resolved (older installers, unfamiliar layouts). Downstream
+    /// UIs should prefer this over `label` when present so operators
+    /// see "Ubuntu 24.04.2 LTS (Noble Numbat)" instead of just
+    /// "Ubuntu". (#119)
+    #[serde(default)]
+    pub pretty_name: Option<String>,
     /// Detected distribution family.
     pub distribution: Distribution,
     /// Kernel path relative to the ISO root.
@@ -268,6 +277,7 @@ fn boot_entry_to_discovered(entry: &BootEntry, search_root: &Path) -> Discovered
     DiscoveredIso {
         iso_path,
         label: entry.label.clone(),
+        pretty_name: entry.pretty_name.clone(),
         distribution: entry.distribution,
         kernel: entry.kernel.clone(),
         initrd: entry.initrd.clone(),
@@ -278,6 +288,15 @@ fn boot_entry_to_discovered(entry: &BootEntry, search_root: &Path) -> Discovered
         size_bytes,
         contains_installer,
     }
+}
+
+/// Preferred human label for display. Returns `pretty_name` when set,
+/// otherwise falls back to `label`. Downstream UIs that want a single
+/// "always non-empty" name should call this instead of reading the
+/// fields directly. (#119)
+#[must_use]
+pub fn display_name(iso: &DiscoveredIso) -> &str {
+    iso.pretty_name.as_deref().unwrap_or(&iso.label)
 }
 
 /// Heuristic detection: does this ISO contain an installer that can
@@ -483,6 +502,7 @@ mod tests {
             kernel_args: Some("boot=casper".to_string()),
             distribution: Distribution::Debian,
             source_iso: "ubuntu-24.04.iso".to_string(),
+            pretty_name: Some("Ubuntu 24.04.2 LTS (Noble Numbat)".to_string()),
         };
         let root = PathBuf::from("/run/media/usb1");
         let discovered = boot_entry_to_discovered(&entry, &root);
@@ -495,6 +515,30 @@ mod tests {
         assert_eq!(discovered.initrd, Some(PathBuf::from("casper/initrd")));
         assert_eq!(discovered.cmdline.as_deref(), Some("boot=casper"));
         assert_eq!(discovered.distribution, Distribution::Debian);
+        assert_eq!(
+            discovered.pretty_name.as_deref(),
+            Some("Ubuntu 24.04.2 LTS (Noble Numbat)"),
+        );
+        // display_name prefers pretty_name when present
+        assert_eq!(
+            display_name(&discovered),
+            "Ubuntu 24.04.2 LTS (Noble Numbat)"
+        );
+    }
+
+    #[test]
+    fn display_name_falls_back_to_label_when_no_pretty_name() {
+        let entry = BootEntry {
+            label: "Alpine".to_string(),
+            kernel: PathBuf::from("boot/vmlinuz-lts"),
+            initrd: Some(PathBuf::from("boot/initramfs-lts")),
+            kernel_args: None,
+            distribution: Distribution::Alpine,
+            source_iso: "alpine.iso".to_string(),
+            pretty_name: None,
+        };
+        let discovered = boot_entry_to_discovered(&entry, &PathBuf::from("/run/media/usb1"));
+        assert_eq!(display_name(&discovered), "Alpine");
     }
 
     #[test]
@@ -522,6 +566,7 @@ mod tests {
             signature_verification: SignatureVerification::NotPresent,
             size_bytes: None,
             contains_installer: false,
+            pretty_name: None,
         };
         // Sanity-check the path-joining we'd perform on a real mount.
         let mount = PathBuf::from("/mnt/test");

@@ -191,7 +191,7 @@ fn draw_verifying(
                 "Verifying:  ",
                 Style::default().add_modifier(Modifier::BOLD),
             ),
-            Span::raw(&iso.label),
+            Span::raw(iso_probe::display_name(iso)),
         ])),
         label_area,
     );
@@ -586,10 +586,13 @@ fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usiz
                 let iso = &state.isos[*i];
                 let glyph = status_glyph(iso);
                 let qs = quirks_summary(iso);
+                // Prefer pretty_name over label when present so operators see
+                // the version (e.g. "Ubuntu 24.04.2 LTS" vs just "Ubuntu"). (#119)
+                let display = iso_probe::display_name(iso);
                 let line = if qs.is_empty() {
-                    format!("{glyph} {}  ({})", iso.label, iso.distribution_name())
+                    format!("{glyph} {}  ({})", display, iso.distribution_name())
                 } else {
-                    format!("{glyph} {}  ({})  {qs}", iso.label, iso.distribution_name())
+                    format!("{glyph} {}  ({})  {qs}", display, iso.distribution_name())
                 };
                 ListItem::new(line)
             }
@@ -705,7 +708,7 @@ fn draw_confirm(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: u
         Line::from(""),
         Line::from(vec![
             Span::styled("Label:    ", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(&iso.label),
+            Span::raw(iso_probe::display_name(iso)),
         ]),
         Line::from(vec![
             Span::styled("ISO:      ", Style::default().add_modifier(Modifier::BOLD)),
@@ -947,7 +950,7 @@ fn draw_error(
                 "ISO label:  ",
                 Style::default().add_modifier(Modifier::BOLD),
             ),
-            Span::raw(iso.label.clone()),
+            Span::raw(iso_probe::display_name(iso).to_string()),
         ]));
         lines.push(Line::from(vec![
             Span::styled(
@@ -1043,6 +1046,7 @@ mod tests {
         iso_probe::DiscoveredIso {
             iso_path: PathBuf::from(format!("/run/media/{label}.iso")),
             label: label.to_string(),
+            pretty_name: None,
             distribution: Distribution::Debian,
             kernel: PathBuf::from("casper/vmlinuz"),
             initrd: Some(PathBuf::from("casper/initrd")),

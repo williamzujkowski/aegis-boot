@@ -939,6 +939,7 @@ mod tests {
             signature_verification: iso_probe::SignatureVerification::NotPresent,
             size_bytes: None,
             contains_installer: false,
+            pretty_name: None,
         }
     }
 

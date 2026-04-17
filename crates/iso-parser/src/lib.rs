@@ -72,6 +72,15 @@ pub struct BootEntry {
     pub distribution: Distribution,
     /// ISO filename (for reference)
     pub source_iso: String,
+    /// Full distro name with version, extracted from `/etc/os-release`
+    /// (`PRETTY_NAME`) or fallback files on the mounted ISO. Populated
+    /// by `scan_directory`; `None` when none of the probe paths exist
+    /// (older installers or unfamiliar layouts). Surfaced as the
+    /// primary label in downstream UI when present so operators see
+    /// "Ubuntu 24.04.2 LTS (Noble Numbat)" instead of just "Ubuntu".
+    /// (#119)
+    #[serde(default)]
+    pub pretty_name: Option<String>,
 }
 
 /// Supported distribution families.
@@ -549,6 +558,17 @@ impl<E: IsoEnvironment> IsoParser<E> {
         entries.extend(self.try_debian_layout(mount_point, source_iso)?);
         entries.extend(self.try_fedora_layout(mount_point, source_iso)?);
 
+        // Populate pretty_name from the mounted ISO's release files
+        // before the caller unmounts. Best-effort — if none of the
+        // known paths resolve, the field stays None and downstream UI
+        // falls back to the distribution-family label. (#119)
+        let pretty = read_pretty_name(mount_point);
+        if pretty.is_some() {
+            for entry in &mut entries {
+                entry.pretty_name.clone_from(&pretty);
+            }
+        }
+
         Ok(entries)
     }
 
@@ -641,6 +661,7 @@ impl<E: IsoEnvironment> IsoParser<E> {
                         .and_then(|n| n.to_str())
                         .unwrap_or("unknown")
                         .to_string(),
+                    pretty_name: None,
                 });
             }
         }
@@ -748,6 +769,7 @@ impl<E: IsoEnvironment> IsoParser<E> {
                             .and_then(|n| n.to_str())
                             .unwrap_or("unknown")
                             .to_string(),
+                        pretty_name: None,
                     });
                 }
             }
@@ -829,6 +851,7 @@ impl<E: IsoEnvironment> IsoParser<E> {
                         .and_then(|n| n.to_str())
                         .unwrap_or("unknown")
                         .to_string(),
+                    pretty_name: None,
                 });
             }
         }
@@ -890,12 +913,91 @@ impl<E: IsoEnvironment> IsoParser<E> {
                         .and_then(|n| n.to_str())
                         .unwrap_or("unknown")
                         .to_string(),
+                    pretty_name: None,
                 });
             }
         }
 
         Ok(entries)
     }
+}
+
+/// Best-effort "friendly" distro name for a mounted ISO.
+///
+/// Reads the first file in this priority order and returns the first
+/// useful value found:
+///
+/// 1. `/etc/os-release` `PRETTY_NAME` — systemd convention; all
+///    modern distros ship this (Ubuntu, Fedora, Rocky, Alma, Debian 12+,
+///    openSUSE, Arch, NixOS 22+, Alpine 3.17+).
+/// 2. `/lib/os-release` `PRETTY_NAME` — symlink target on some distros;
+///    handled independently in case the `/etc` copy is missing.
+/// 3. `/.disk/info` — single line of free text, Ubuntu + Debian live/install
+///    media tradition since circa Debian 6. Form: "Ubuntu 24.04.2 LTS ...".
+/// 4. `/etc/alpine-release` — single version string (e.g. "3.20.3") on
+///    Alpine. We prepend "Alpine " so the returned value is self-contained.
+///
+/// Returns `None` if none of the paths exist or all attempts produce an
+/// empty string. This is advisory — every caller must tolerate `None`
+/// and fall back to the `Distribution`-family label.
+#[must_use]
+pub fn read_pretty_name(mount_point: &Path) -> Option<String> {
+    for rel in ["etc/os-release", "lib/os-release", "usr/lib/os-release"] {
+        if let Some(name) = read_os_release(&mount_point.join(rel)) {
+            return Some(name);
+        }
+    }
+    if let Some(first_line) = read_first_nonempty_line(&mount_point.join(".disk/info")) {
+        return Some(first_line);
+    }
+    if let Some(version) = read_first_nonempty_line(&mount_point.join("etc/alpine-release")) {
+        return Some(format!("Alpine Linux {version}"));
+    }
+    None
+}
+
+/// Parse a systemd-style `os-release` file for the value of `PRETTY_NAME`.
+/// Strips surrounding double quotes if present. Returns `None` on any
+/// read error or if the key is missing / empty.
+fn read_os_release(path: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    parse_os_release_pretty_name(&content)
+}
+
+/// Pure-string version of the `os-release` parser — split out so we can
+/// unit-test without touching the filesystem.
+#[must_use]
+pub(crate) fn parse_os_release_pretty_name(content: &str) -> Option<String> {
+    for line in content.lines() {
+        let Some(rest) = line.strip_prefix("PRETTY_NAME=") else {
+            continue;
+        };
+        // Strip surrounding " or ' (systemd spec allows either, and we
+        // want to be forgiving of wild-in-the-field variants).
+        let trimmed = rest
+            .trim()
+            .trim_matches(|c| c == '"' || c == '\'')
+            .to_string();
+        if trimmed.is_empty() {
+            return None;
+        }
+        return Some(trimmed);
+    }
+    None
+}
+
+/// Read the first non-empty trimmed line of a file. Used for free-text
+/// release files (`/.disk/info`, `/etc/alpine-release`) that don't
+/// follow the `KEY=VALUE` shape.
+fn read_first_nonempty_line(path: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -1188,6 +1290,7 @@ mod tests {
             kernel_args: Some("quiet".to_string()),
             distribution: Distribution::Arch,
             source_iso: "test.iso".to_string(),
+            pretty_name: None,
         };
 
         let json = serde_json::to_string(&entry).unwrap();
@@ -1195,5 +1298,135 @@ mod tests {
 
         assert_eq!(decoded.label, "Test Linux");
         assert_eq!(decoded.distribution, Distribution::Arch);
+    }
+
+    // ---- #119: pretty-name detection --------------------------------
+
+    #[test]
+    fn parse_pretty_name_systemd_shape() {
+        let content = r#"
+NAME="Ubuntu"
+VERSION_ID="24.04"
+PRETTY_NAME="Ubuntu 24.04.2 LTS (Noble Numbat)"
+ID=ubuntu
+"#;
+        assert_eq!(
+            parse_os_release_pretty_name(content).as_deref(),
+            Some("Ubuntu 24.04.2 LTS (Noble Numbat)"),
+        );
+    }
+
+    #[test]
+    fn parse_pretty_name_strips_single_quotes() {
+        let content = "PRETTY_NAME='Alpine Linux v3.20'";
+        assert_eq!(
+            parse_os_release_pretty_name(content).as_deref(),
+            Some("Alpine Linux v3.20"),
+        );
+    }
+
+    #[test]
+    fn parse_pretty_name_unquoted_value() {
+        // Some distros omit the quotes; spec allows either.
+        let content = "PRETTY_NAME=Arch Linux";
+        assert_eq!(
+            parse_os_release_pretty_name(content).as_deref(),
+            Some("Arch Linux"),
+        );
+    }
+
+    #[test]
+    fn parse_pretty_name_empty_returns_none() {
+        assert!(parse_os_release_pretty_name("PRETTY_NAME=\"\"").is_none());
+        assert!(parse_os_release_pretty_name("").is_none());
+    }
+
+    #[test]
+    fn parse_pretty_name_missing_returns_none() {
+        let content = "NAME=\"Ubuntu\"\nID=ubuntu";
+        assert!(parse_os_release_pretty_name(content).is_none());
+    }
+
+    #[test]
+    fn parse_pretty_name_first_match_wins() {
+        // Defensive: if a file has two PRETTY_NAME lines, take the first.
+        let content = "PRETTY_NAME=\"First\"\nPRETTY_NAME=\"Second\"";
+        assert_eq!(
+            parse_os_release_pretty_name(content).as_deref(),
+            Some("First"),
+        );
+    }
+
+    #[test]
+    fn read_pretty_name_finds_etc_os_release() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("etc")).unwrap();
+        std::fs::write(
+            tmp.path().join("etc/os-release"),
+            "PRETTY_NAME=\"Rocky Linux 9.3 (Blue Onyx)\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            read_pretty_name(tmp.path()).as_deref(),
+            Some("Rocky Linux 9.3 (Blue Onyx)"),
+        );
+    }
+
+    #[test]
+    fn read_pretty_name_falls_back_to_disk_info() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".disk")).unwrap();
+        std::fs::write(
+            tmp.path().join(".disk/info"),
+            "Ubuntu 24.04.2 LTS \"Noble Numbat\" - Release amd64 (20250215)\n",
+        )
+        .unwrap();
+        assert_eq!(
+            read_pretty_name(tmp.path()).as_deref(),
+            Some("Ubuntu 24.04.2 LTS \"Noble Numbat\" - Release amd64 (20250215)"),
+        );
+    }
+
+    #[test]
+    fn read_pretty_name_alpine_release_prepends_alpine_linux() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("etc")).unwrap();
+        std::fs::write(tmp.path().join("etc/alpine-release"), "3.20.3\n").unwrap();
+        assert_eq!(
+            read_pretty_name(tmp.path()).as_deref(),
+            Some("Alpine Linux 3.20.3"),
+        );
+    }
+
+    #[test]
+    fn read_pretty_name_prefers_etc_over_lib() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("etc")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("usr/lib")).unwrap();
+        std::fs::write(
+            tmp.path().join("etc/os-release"),
+            "PRETTY_NAME=\"Etc Wins\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("usr/lib/os-release"),
+            "PRETTY_NAME=\"Lib Loses\"\n",
+        )
+        .unwrap();
+        assert_eq!(read_pretty_name(tmp.path()).as_deref(), Some("Etc Wins"),);
+    }
+
+    #[test]
+    fn read_pretty_name_returns_none_for_empty_mount() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(read_pretty_name(tmp.path()).is_none());
+    }
+
+    #[test]
+    fn read_pretty_name_skips_empty_disk_info_line() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".disk")).unwrap();
+        std::fs::write(tmp.path().join(".disk/info"), "\n\n   \nDebian 12.8\n").unwrap();
+        assert_eq!(read_pretty_name(tmp.path()).as_deref(), Some("Debian 12.8"),);
     }
 }
