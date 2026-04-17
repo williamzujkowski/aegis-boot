@@ -194,6 +194,18 @@ pub enum TpmStatus {
 impl SecureBootStatus {
     /// Detect SB status from /sys/firmware/efi/efivars. Best-effort —
     /// returns Unknown on any read error so the TUI can boot anywhere.
+    ///
+    /// Checks, in order:
+    ///   1. Global-variables-namespace GUID suffix
+    ///      (`SecureBoot-8be4df61-…`) — the upstream spec name.
+    ///   2. Plain `SecureBoot` — seen on some older kernels / distros
+    ///      that rename on mount.
+    ///   3. Directory scan for anything starting with `SecureBoot-` —
+    ///      catches OVMF firmware builds that use a different-looking
+    ///      suffix (observed under our QEMU `SecBoot` shakedown, #118).
+    ///
+    /// EFI var wire format for all three cases is identical: 4 bytes
+    /// of attributes, then one byte of data (0/1). We read `bytes[4]`.
     #[must_use]
     pub fn detect() -> Self {
         // EFI var format: 4 bytes attributes, 1 byte data (0/1).
@@ -202,17 +214,40 @@ impl SecureBootStatus {
             "/sys/firmware/efi/efivars/SecureBoot",
         ];
         for path in candidates {
-            if let Ok(bytes) = std::fs::read(path) {
-                if let Some(&value) = bytes.get(4) {
-                    return if value == 1 {
-                        Self::Enforcing
-                    } else {
-                        Self::Disabled
-                    };
+            if let Some(s) = Self::read_sb_bit(std::path::Path::new(path)) {
+                return s;
+            }
+        }
+        // Fallback: scan the efivars directory for any variable whose
+        // filename starts with "SecureBoot-". Covers OVMF firmware
+        // builds that publish the variable under a different suffix
+        // than the upstream-spec one we check above. (#118)
+        if let Ok(entries) = std::fs::read_dir("/sys/firmware/efi/efivars") {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_s = name.to_string_lossy();
+                if name_s.starts_with("SecureBoot-") {
+                    if let Some(s) = Self::read_sb_bit(&entry.path()) {
+                        return s;
+                    }
                 }
             }
         }
         Self::Unknown
+    }
+
+    /// Read and interpret the 5-byte `[attrs][value]` layout at `path`.
+    /// Returns `None` if the file can't be read or is truncated.
+    /// Extracted so `detect`'s scan-fallback can reuse the same parse
+    /// without duplicating the magic-offset read.
+    fn read_sb_bit(path: &std::path::Path) -> Option<Self> {
+        let bytes = std::fs::read(path).ok()?;
+        let value = *bytes.get(4)?;
+        Some(if value == 1 {
+            Self::Enforcing
+        } else {
+            Self::Disabled
+        })
     }
 
     /// Short user-facing label for the TUI header banner.

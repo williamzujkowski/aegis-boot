@@ -4,6 +4,10 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 
 ## [Unreleased]
 
+### Bugs
+
+- **OVMF SB detection fallback** ([#118](https://github.com/williamzujkowski/aegis-boot/issues/118)) — `rescue-tui`'s `SecureBootStatus::detect()` now scans `/sys/firmware/efi/efivars` for any filename starting with `SecureBoot-` when the two upstream-spec paths (global-GUID and plain) miss. Handles OVMF firmware builds that publish the variable under a non-spec suffix — observed under QEMU+OVMF SecBoot shakedown where rescue-tui's header showed `SB:unknown` despite SB enforcing. Parallels the existing scan fallback in `aegis-cli doctor` (doctor.rs:371).
+
 ### Operator experience
 
 - **Two more `init` profiles** — `minimal` (alpine-only, ~200 MiB, fastest) and `server` (ubuntu-server + rocky + almalinux, ~6 GiB, enterprise RHEL + Ubuntu rescue triple). Operators can now pick `aegis-boot init --profile <panic-room|minimal|server>` to fit the target-environment shape. Every profile slug is enforced to be in the verified catalog at test time (`every_profile_slug_is_in_catalog`).
