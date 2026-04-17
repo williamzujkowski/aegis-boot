@@ -37,11 +37,20 @@ Option B (Homebrew) auto-installs the Brew-tracked runtime deps (`curl`, `gnupg`
 Sanity check:
 
 ```bash
-aegis-boot --version       # → aegis-boot v0.12.0
+aegis-boot --version       # → aegis-boot v0.13.0
 aegis-boot doctor          # 0–100 health score for host + stick
 ```
 
 If `aegis-boot doctor` reports anything FAIL, fix that first — its NEXT ACTION line tells you exactly what.
+
+Optional — install shell completions for tab-complete on subcommands, catalog slugs, and compat-DB vendors:
+
+```bash
+# bash
+aegis-boot completions bash | sudo tee /etc/bash_completion.d/aegis-boot >/dev/null
+# zsh
+aegis-boot completions zsh > ~/.zsh/completions/_aegis-boot
+```
 
 ## The one-command path (recommended for new users)
 
