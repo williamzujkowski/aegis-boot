@@ -376,8 +376,12 @@ fn event_loop<B: ratatui::backend::Backend>(
             // Vim navigation aliases for arrow keys (#85).
             (Screen::List { .. }, KeyCode::Up | KeyCode::Char('k')) => state.move_selection(-1),
             (Screen::List { .. }, KeyCode::Down | KeyCode::Char('j')) => state.move_selection(1),
-            (Screen::List { .. }, KeyCode::Char('g')) => state.move_to_first(),
-            (Screen::List { .. }, KeyCode::Char('G')) => state.move_to_last(),
+            // `g`/`G` are the vim aliases; `Home`/`End` are the layout-
+            // agnostic equivalents — crossterm maps them identically
+            // under AZERTY, Dvorak, and any other layout, whereas the
+            // letter keys follow the OS's logical remapping. (#93)
+            (Screen::List { .. }, KeyCode::Char('g') | KeyCode::Home) => state.move_to_first(),
+            (Screen::List { .. }, KeyCode::Char('G') | KeyCode::End) => state.move_to_last(),
             (Screen::List { .. }, KeyCode::Enter | KeyCode::Char('l')) => {
                 if state.is_shell_selected() {
                     // #90: rescue shell picked. Signal the shell-drop
