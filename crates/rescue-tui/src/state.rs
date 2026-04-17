@@ -913,38 +913,57 @@ fn prev_char_boundary(buffer: &str, cursor: usize) -> usize {
         .map_or(0, |step| cursor - step)
 }
 
-/// Build the MOK enrollment remedy text, naming the specific key file if
-/// one is discoverable alongside the ISO. The operator should be able to
-/// copy-paste the resulting command verbatim.
+/// Build the MOK enrollment remedy text as a three-step walkthrough.
+/// Split from a single dense paragraph into numbered steps + a
+/// firmware-boot-key hint table so operators can execute without
+/// context-switching to external docs. (#136)
+///
+/// When the ISO has a discoverable sibling key file, step 1 becomes a
+/// literal copy-paste `mokutil --import` command. When it doesn't, step 1
+/// tells the operator how to place the key so the next run will name it.
 fn build_mokutil_remedy(iso: Option<&DiscoveredIso>) -> String {
     let key_hint = iso.and_then(|iso| find_sibling_key(&iso.iso_path));
-    match key_hint {
-        Some(key_path) => format!(
-            "Enroll this ISO's signing key:\n  \
-             sudo mokutil --import {}\n\
-             Reboot and complete enrollment via MOK Manager (set a temporary \
-             password at --import; MOK Manager will prompt for it on the \
-             next boot). Then retry. Do NOT disable Secure Boot.",
+    let step_one = match key_hint {
+        Some(ref key_path) => format!(
+            "STEP 1/3 — Enroll the key (run on the host, not here):\n  \
+             sudo mokutil --import {}\n  \
+             (mokutil will prompt you to set a temporary password — you'll \
+             need this exact password in step 2.)",
             key_path.display()
         ),
-        None => "This ISO's kernel is not signed by any trusted CA. Two paths forward:\n\
-                 \n\
-                 1. DISTRO-SIGNED ISO (preferred): pick an ISO whose kernel is\n\
-                    signed by a CA the firmware trusts (Ubuntu, Fedora, Debian).\n\
-                    Those boot under Secure Boot without any enrollment.\n\
-                 \n\
-                 2. ENROLL A KEY (for distros that ship unsigned — Alpine, Arch,\n\
-                    NixOS): obtain the distro's signing public key, place it\n\
-                    next to the ISO as `<iso>.pub`, `<iso>.key`, or `<iso>.der`,\n\
-                    reboot, and aegis-boot will suggest the exact\n\
-                    `sudo mokutil --import` command.\n\
-                 \n\
-                 Do NOT disable Secure Boot. Do NOT enroll a global MOK (that's\n\
-                 Ventoy's approach and defeats the chain of trust).\n\
-                 \n\
-                 See docs/UNSIGNED_KERNEL.md for the full guide (#126)."
+        None => "STEP 1/3 — Get the signing key, then enroll it (run on the host, not here):\n  \
+                 • Find the distro's signing public key (usually a `.pub`, `.key`, or\n    \
+                 `.der` file on the distro's download page).\n  \
+                 • Place it alongside the ISO using any of these filenames:\n    \
+                 `<iso>.pub`, `<iso>.key`, `<iso>.der` — aegis-boot will then\n    \
+                 generate the exact `sudo mokutil --import <path>` command\n    \
+                 for you on the next kexec attempt.\n  \
+                 • After running `mokutil --import`, mokutil will prompt you to\n    \
+                 set a temporary password. You'll need it in step 2."
             .to_string(),
-    }
+    };
+    format!(
+        "{step_one}\n\
+         \n\
+         STEP 2/3 — Reboot and complete enrollment in MOK Manager:\n  \
+         • Reboot the machine.\n  \
+         • The firmware will show a blue-on-black screen titled\n    \
+         \"Perform MOK management\" before the normal boot.\n  \
+         • Choose \"Enroll MOK\" → \"Continue\" → \"Yes\" → enter the\n    \
+         temporary password from step 1 → \"Reboot\".\n  \
+         • If the machine skips straight past the blue screen, power-cycle\n    \
+         within 10 seconds of the firmware splash; the MOK window is short.\n\
+         \n\
+         STEP 3/3 — Boot back into aegis-boot and retry:\n  \
+         • Tap your firmware's boot-menu key at power-on:\n    \
+         Lenovo/Dell: F12    HP: F9    ASUS: F8    MSI: F11    Apple: Option\n  \
+         • Re-select the aegis-boot USB → re-select this ISO → Enter.\n  \
+         • The kernel's signature now verifies against the MOK you enrolled.\n\
+         \n\
+         Do NOT disable Secure Boot. Do NOT enroll a global MOK (that's\n\
+         Ventoy's approach and defeats the chain of trust). See\n\
+         docs/UNSIGNED_KERNEL.md for the full guide (#126)."
+    )
 }
 
 /// Look for a sibling key file alongside the ISO. Accepts `.pub`, `.key`,
@@ -1131,6 +1150,28 @@ mod tests {
         // fine; the ADR 0001 commitment is no *suggestion* to disable.
         let lc = r.to_lowercase();
         assert!(!lc.contains("disable secure boot") || lc.contains("not disable"));
+    }
+
+    #[test]
+    fn signature_rejected_remedy_is_three_step_walkthrough() {
+        // Remedy must be structured as STEP 1/3, STEP 2/3, STEP 3/3 so
+        // operators can execute it without reading a dense paragraph.
+        // Also must mention MOK Manager's blue-screen cue and list
+        // firmware boot-menu keys for the top vendors. (#136)
+        let (_, remedy) = error_diagnostic_with_iso(&KexecError::SignatureRejected, None);
+        let r = unwrap_remedy(remedy);
+        assert!(r.contains("STEP 1/3"), "missing STEP 1/3 header in: {r}");
+        assert!(r.contains("STEP 2/3"), "missing STEP 2/3 header in: {r}");
+        assert!(r.contains("STEP 3/3"), "missing STEP 3/3 header in: {r}");
+        assert!(
+            r.contains("MOK management") || r.contains("MOK Manager"),
+            "remedy must reference MOK Manager by name so operators know what to expect on the reboot"
+        );
+        let lower = r.to_ascii_lowercase();
+        assert!(
+            lower.contains("f12") || lower.contains("f9") || lower.contains("f11"),
+            "remedy must mention firmware boot-menu keys to close the 'how do I get back?' loop"
+        );
     }
 
     #[test]
