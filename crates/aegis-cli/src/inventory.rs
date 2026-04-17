@@ -285,10 +285,14 @@ pub(crate) fn resolve_mount(arg: Option<&str>) -> Result<Mount, String> {
     if let Some(raw) = arg {
         let p = PathBuf::from(raw);
         if p.is_dir() {
+            // Reverse-lookup the backing device via /proc/mounts so
+            // later error messages (FAT32 preflight) can name the
+            // specific disk to reflash instead of a generic /dev/sdX.
+            let device = device_for_mount_path(&p);
             return Ok(Mount {
                 path: p,
                 temporary: false,
-                device: None,
+                device,
             });
         }
         if raw.starts_with("/dev/") {
@@ -482,6 +486,31 @@ fn filesystem_type(path: &Path) -> Option<String> {
     best_match.map(|(fs, _)| fs.to_string())
 }
 
+/// Reverse-lookup the backing device for a mount path via /proc/mounts.
+/// Returns the longest-matching mount entry's device field, which is
+/// the partition path (`/dev/sda2`, `/dev/nvme0n1p2`) — callers can
+/// strip the partition suffix via `parent_disk_path` when they need
+/// the whole-disk form.
+fn device_for_mount_path(path: &Path) -> Option<PathBuf> {
+    let mounts = std::fs::read_to_string("/proc/mounts").ok()?;
+    let target = path.to_string_lossy();
+    let mut best: Option<(&str, usize)> = None;
+    for line in mounts.lines() {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() < 2 {
+            continue;
+        }
+        let dev = fields[0];
+        let mp = fields[1];
+        if (target == mp || target.starts_with(&format!("{mp}/")))
+            && best.is_none_or(|(_, prev)| mp.len() > prev)
+        {
+            best = Some((dev, mp.len()));
+        }
+    }
+    best.map(|(d, _)| PathBuf::from(d))
+}
+
 /// True when the filesystem type reported by /proc/mounts indicates a
 /// FAT32-family layout with the 4 GiB per-file ceiling.
 fn is_fat32_family(fs_type: &str) -> bool {
@@ -503,6 +532,16 @@ fn check_fat32_ceiling(mount: &Mount, iso_filename: &str, iso_size: u64) -> Resu
     if !is_fat32_family(&fs_type) || iso_size <= FAT32_MAX_FILE_SIZE {
         return Ok(());
     }
+    // Derive the parent disk path from the mount's partition device
+    // so the error names the exact disk the operator needs to reflash.
+    // Falls back to the generic `/dev/sdX` placeholder when the mount
+    // wasn't backed by a resolvable block device (e.g., bind mount,
+    // operator supplied a path instead of /dev/sdX).
+    let flash_target = mount
+        .device
+        .as_deref()
+        .and_then(parent_disk_path)
+        .unwrap_or_else(|| "/dev/sdX".to_string());
     eprintln!(
         "aegis-boot add: {} is {} — exceeds FAT32's 4 GiB per-file ceiling.",
         iso_filename,
@@ -511,13 +550,70 @@ fn check_fat32_ceiling(mount: &Mount, iso_filename: &str, iso_size: u64) -> Resu
     eprintln!("  The AEGIS_ISOS partition is formatted as {fs_type}, which cannot store");
     eprintln!("  files at or above 4 GiB. Reflash with ext4 to lift the ceiling:");
     eprintln!();
-    eprintln!("      DATA_FS=ext4 sudo aegis-boot flash /dev/sdX");
+    eprintln!("      DATA_FS=ext4 sudo aegis-boot flash {flash_target}");
     eprintln!();
     eprintln!("  (Current contents will be wiped — back up first.)");
     if mount.temporary {
         unmount_temp(mount);
     }
     Err(1)
+}
+
+/// Strip the trailing partition suffix from a device path so operators
+/// see the disk path `aegis-boot flash` wants, not the partition path.
+/// Two naming conventions to handle:
+///
+///   * **sata / virtio / etc.** — whole disk ends in a letter (`sda`);
+///     partition appends digits directly (`sda2`, `sdb15`).
+///   * **nvme / mmcblk / loop** — whole disk ends in a digit
+///     (`nvme0n1`); partition uses a `p` separator (`nvme0n1p2`,
+///     `mmcblk0p1`, `loop0p1`).
+///
+/// Returns `None` when the input is already a whole-disk path or the
+/// name doesn't match either convention. Keeping the placeholder is
+/// safer than emitting a wrong disk — the operator corrects the hint
+/// instead of scripting a destructive reflash of the wrong drive.
+fn parent_disk_path(partition: &Path) -> Option<String> {
+    let s = partition.to_str()?;
+    let stem = s.strip_prefix("/dev/")?;
+    let bytes = stem.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+    // Find the length of the trailing digit run.
+    let mut digits_start = bytes.len();
+    while digits_start > 0 && bytes[digits_start - 1].is_ascii_digit() {
+        digits_start -= 1;
+    }
+    if digits_start == bytes.len() || digits_start == 0 {
+        // No trailing digits, or the whole name is digits.
+        return None;
+    }
+    let char_before_digits = bytes[digits_start - 1];
+
+    // nvme / mmcblk / loop convention: "stem_ending_in_digit" + "p" +
+    // "partition_digits". Strip the `p<digits>` suffix to recover the
+    // whole-disk stem.
+    if char_before_digits == b'p' && digits_start >= 2 && bytes[digits_start - 2].is_ascii_digit() {
+        let parent = &stem[..digits_start - 1];
+        return Some(format!("/dev/{parent}"));
+    }
+
+    // sata-style: alpha + digits. But nvme whole disks like `nvme0n1`
+    // also end in "alpha + digit" (the `n` is the namespace letter).
+    // Discriminate via a tighter check: sata partitions have at least
+    // TWO alpha chars before the digits (sd-a, vd-a, hd-a, xvd-a) —
+    // which nvme/mmcblk/loop whole-disk names *don't* have between the
+    // namespace letter and the trailing namespace digit.
+    if char_before_digits.is_ascii_alphabetic()
+        && digits_start >= 2
+        && bytes[digits_start - 2].is_ascii_alphabetic()
+    {
+        let parent = &stem[..digits_start];
+        return Some(format!("/dev/{parent}"));
+    }
+
+    None
 }
 
 #[allow(clippy::cast_precision_loss)]
@@ -583,6 +679,65 @@ mod tests {
         // catches a real-world operator input, not a compile-time truism.
         let size = std::hint::black_box(7_900_000_000u64);
         assert!(size > FAT32_MAX_FILE_SIZE);
+    }
+
+    #[test]
+    fn parent_disk_path_strips_sata_partition_digit() {
+        assert_eq!(
+            parent_disk_path(Path::new("/dev/sda2")).as_deref(),
+            Some("/dev/sda")
+        );
+        assert_eq!(
+            parent_disk_path(Path::new("/dev/sdc1")).as_deref(),
+            Some("/dev/sdc")
+        );
+        assert_eq!(
+            parent_disk_path(Path::new("/dev/sdb15")).as_deref(),
+            Some("/dev/sdb")
+        );
+        // Three-letter device path (vd, hd, etc.)
+        assert_eq!(
+            parent_disk_path(Path::new("/dev/vda3")).as_deref(),
+            Some("/dev/vda")
+        );
+    }
+
+    #[test]
+    fn parent_disk_path_strips_nvme_p_partition() {
+        assert_eq!(
+            parent_disk_path(Path::new("/dev/nvme0n1p2")).as_deref(),
+            Some("/dev/nvme0n1")
+        );
+        assert_eq!(
+            parent_disk_path(Path::new("/dev/nvme1n1p15")).as_deref(),
+            Some("/dev/nvme1n1")
+        );
+        // mmcblk same convention
+        assert_eq!(
+            parent_disk_path(Path::new("/dev/mmcblk0p1")).as_deref(),
+            Some("/dev/mmcblk0")
+        );
+        // loop devices
+        assert_eq!(
+            parent_disk_path(Path::new("/dev/loop0p1")).as_deref(),
+            Some("/dev/loop0")
+        );
+    }
+
+    #[test]
+    fn parent_disk_path_declines_whole_disk_input() {
+        // When the operator (or mount resolver) already passed a whole
+        // disk, don't mangle it — return None so the caller keeps the
+        // generic placeholder rather than emitting the wrong path.
+        assert_eq!(parent_disk_path(Path::new("/dev/sda")), None);
+        assert_eq!(parent_disk_path(Path::new("/dev/nvme0n1")), None);
+    }
+
+    #[test]
+    fn parent_disk_path_declines_non_dev_paths() {
+        assert_eq!(parent_disk_path(Path::new("/tmp/fake-stick2")), None);
+        assert_eq!(parent_disk_path(Path::new("sda2")), None); // no /dev/ prefix
+        assert_eq!(parent_disk_path(Path::new("")), None);
     }
 
     #[test]
