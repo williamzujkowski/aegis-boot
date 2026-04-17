@@ -123,8 +123,68 @@ if (( DRY_RUN )); then
     exit 0
 fi
 
+# Resolve the host sysfs path for the target device (e.g. "1-3") so
+# we can force a re-bind after QEMU exits. xhci_hcd sometimes logs a
+# reset but doesn't rebind scsi, leaving /sys/block without an sdX
+# node even though lsusb still shows the device (#121). Capturing
+# the path BEFORE QEMU takes over avoids having to re-walk sysfs
+# when the device is in an intermediate state.
+resolve_usb_sysfs_path() {
+    for devdir in /sys/bus/usb/devices/*-*; do
+        [[ -r "$devdir/idVendor" && -r "$devdir/idProduct" ]] || continue
+        local vid pid
+        vid=$(cat "$devdir/idVendor")
+        pid=$(cat "$devdir/idProduct")
+        if [[ "$vid:$pid" == "${VENDOR_PRODUCT,,}" ]]; then
+            basename "$devdir"
+            return 0
+        fi
+    done
+    return 1
+}
+
+USB_SYSFS_ID=""
+if ! USB_SYSFS_ID=$(resolve_usb_sysfs_path); then
+    warn "could not resolve sysfs path for $VENDOR_PRODUCT; post-exit re-bind will be skipped"
+fi
+
+rebind_usb() {
+    # Issue #121 workaround. Unbind → bind kicks a fresh enumeration
+    # so xhci_hcd re-attaches scsi drivers and /dev/sd* reappears.
+    # Errors are non-fatal — the operator can always physically
+    # replug — so we log and continue regardless.
+    [[ -n "$USB_SYSFS_ID" ]] || return 0
+    local unbind="/sys/bus/usb/drivers/usb/unbind"
+    local bind="/sys/bus/usb/drivers/usb/bind"
+    if [[ ! -w "$unbind" || ! -w "$bind" ]]; then
+        # Root-only sysfs path. Use sudo but keep the failure soft.
+        log "re-binding $USB_SYSFS_ID via sudo (restores /dev/sdX — #121)"
+        if ! echo "$USB_SYSFS_ID" | sudo tee "$unbind" >/dev/null 2>&1; then
+            warn "unbind $USB_SYSFS_ID failed; skipping re-bind"
+            return 0
+        fi
+        # Short settle before re-bind — some controllers race otherwise.
+        sleep 0.3
+        if ! echo "$USB_SYSFS_ID" | sudo tee "$bind" >/dev/null 2>&1; then
+            warn "bind $USB_SYSFS_ID failed; physical replug may be required"
+        fi
+    else
+        log "re-binding $USB_SYSFS_ID (restores /dev/sdX — #121)"
+        echo "$USB_SYSFS_ID" > "$unbind" || warn "unbind failed"
+        sleep 0.3
+        echo "$USB_SYSFS_ID" > "$bind" || warn "bind failed"
+    fi
+}
+
+# Extend the existing EXIT trap so rebind runs even when QEMU is
+# killed via signal (Ctrl-C, SIGTERM, etc.) — not just clean exits.
+trap 'rebind_usb; cleanup' EXIT
+
 log "booting VM with passthrough; QEMU needs root to claim the device"
 log "  * VM will boot OVMF Secure Boot firmware"
 log "  * operator picks the USB entry from UEFI menu (hit F12 or esc at OVMF splash)"
 log "  * Ctrl-A X exits QEMU; stick returns to host on exit"
-exec sudo "${QEMU_ARGS[@]}"
+# Note: not using `exec sudo ...` here. The trap handler needs to run
+# after QEMU exits to issue the sysfs rebind (#121). `exec` replaces
+# bash, preventing the trap from firing.
+sudo "${QEMU_ARGS[@]}"
