@@ -23,6 +23,7 @@
 mod attest;
 mod catalog;
 mod compat;
+mod completions;
 mod detect;
 mod doctor;
 mod eject;
@@ -57,6 +58,7 @@ fn main() -> ExitCode {
         Some("update") => update::run(&args[1..]),
         Some("verify") => verify::run(&args[1..]),
         Some("compat") => compat::run(&args[1..]),
+        Some("completions") => completions::run(&args[1..]),
         Some("-h" | "--help" | "help") | None => {
             print_help();
             ExitCode::SUCCESS
@@ -100,6 +102,7 @@ fn print_help() {
     println!("  aegis-boot update <device>    Check eligibility for in-place update");
     println!("  aegis-boot verify [device]    Re-verify every ISO's sha256 against its sidecar");
     println!("  aegis-boot compat [query]     Hardware compatibility lookup");
+    println!("  aegis-boot completions <shell> Emit bash/zsh completion script");
     println!("  aegis-boot --version [--json] Print version (--json emits schema_version=1)");
     println!("  aegis-boot --help             This message");
     println!();
