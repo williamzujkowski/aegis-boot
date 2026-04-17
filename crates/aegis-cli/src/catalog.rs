@@ -189,6 +189,16 @@ pub fn run(args: &[String]) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    // --json [slug]: structured full-catalog output (or single-entry
+    // when a slug follows the flag). Complements --slugs-only (line-
+    // per-slug) with the full field set — each entry's URLs, size,
+    // and Secure-Boot posture in one document. Stable schema_version=1.
+    let json_mode = args.iter().any(|a| a == "--json");
+    if json_mode {
+        let slug_arg = args.iter().find(|a| !a.starts_with("--"));
+        return run_json(slug_arg.map(String::as_str));
+    }
+
     let Some(slug) = args.first() else {
         print_table();
         return ExitCode::SUCCESS;
@@ -203,18 +213,86 @@ pub fn run(args: &[String]) -> ExitCode {
     }
 }
 
+/// `aegis-boot recommend --json [slug]` — emit catalog entries as
+/// structured JSON. No slug → full catalog (count + array); one slug
+/// → single-entry envelope with the same entry shape. Stable schema
+/// so downstream tooling can drive `aegis-boot fetch` from the output.
+fn run_json(slug: Option<&str>) -> ExitCode {
+    use crate::doctor::json_escape;
+    match slug {
+        None => {
+            println!("{{");
+            println!("  \"schema_version\": 1,");
+            println!("  \"tool_version\": \"{}\",", env!("CARGO_PKG_VERSION"));
+            println!("  \"count\": {},", CATALOG.len());
+            println!("  \"entries\": [");
+            let last = CATALOG.len().saturating_sub(1);
+            for (i, entry) in CATALOG.iter().enumerate() {
+                let comma = if i == last { "" } else { "," };
+                emit_entry_json(entry, "    ", comma);
+            }
+            println!("  ]");
+            println!("}}");
+            ExitCode::SUCCESS
+        }
+        Some(slug) => {
+            let Some(entry) = find_entry(slug) else {
+                println!(
+                    "{{ \"schema_version\": 1, \"error\": \"{}\" }}",
+                    json_escape(&format!("no catalog entry matching '{slug}'"))
+                );
+                return ExitCode::from(1);
+            };
+            println!("{{");
+            println!("  \"schema_version\": 1,");
+            println!("  \"tool_version\": \"{}\",", env!("CARGO_PKG_VERSION"));
+            println!("  \"entry\":");
+            emit_entry_json(entry, "  ", "");
+            println!("}}");
+            ExitCode::SUCCESS
+        }
+    }
+}
+
+/// Emit one catalog Entry as a JSON object. `indent` is the leading
+/// whitespace for the opening brace; `comma` is appended after the
+/// closing brace (empty string for the last item in an array).
+fn emit_entry_json(entry: &Entry, indent: &str, comma: &str) {
+    use crate::doctor::json_escape;
+    let sb = match entry.sb {
+        SbStatus::Signed(vendor) => format!("signed:{vendor}"),
+        SbStatus::UnsignedNeedsMok => "unsigned-needs-mok".to_string(),
+        SbStatus::Unknown => "unknown".to_string(),
+    };
+    println!("{indent}{{");
+    println!("{indent}  \"slug\": \"{}\",", json_escape(entry.slug));
+    println!("{indent}  \"name\": \"{}\",", json_escape(entry.name));
+    println!("{indent}  \"arch\": \"{}\",", json_escape(entry.arch));
+    println!("{indent}  \"size_mib\": {},", entry.size_mib);
+    println!("{indent}  \"iso_url\": \"{}\",", json_escape(entry.iso_url));
+    println!(
+        "{indent}  \"sha256_url\": \"{}\",",
+        json_escape(entry.sha256_url)
+    );
+    println!("{indent}  \"sig_url\": \"{}\",", json_escape(entry.sig_url));
+    println!("{indent}  \"sb\": \"{}\",", json_escape(&sb));
+    println!("{indent}  \"purpose\": \"{}\"", json_escape(entry.purpose));
+    println!("{indent}}}{comma}");
+}
+
 fn print_help() {
     println!("aegis-boot recommend — curated ISO catalog");
     println!();
     println!("USAGE:");
-    println!("  aegis-boot recommend              List all catalog entries (human table)");
-    println!("  aegis-boot recommend <slug>       Show download + verify recipe");
-    println!("  aegis-boot recommend --slugs-only One slug per line (for shell completion)");
+    println!("  aegis-boot recommend               List all catalog entries (human table)");
+    println!("  aegis-boot recommend <slug>        Show download + verify recipe");
+    println!("  aegis-boot recommend --slugs-only  One slug per line (for shell completion)");
+    println!("  aegis-boot recommend --json [slug] Full entry details as JSON");
     println!();
     println!("EXAMPLES:");
     println!("  aegis-boot recommend");
     println!("  aegis-boot recommend ubuntu-24.04-live-server");
-    println!("  aegis-boot recommend alpine-3.20-standard");
+    println!("  aegis-boot recommend --json | jq '.entries[].slug'");
 }
 
 fn print_table() {

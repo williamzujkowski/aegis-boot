@@ -46,12 +46,14 @@ pub fn run(args: &[String]) -> ExitCode {
 /// Inner runner returning a typed result. Same contract as `run`.
 pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
     let mut explicit_dev: Option<&str> = None;
+    let mut json_mode = false;
     for a in args {
         match a.as_str() {
             "--help" | "-h" => {
                 print_help();
                 return Ok(());
             }
+            "--json" => json_mode = true,
             arg if arg.starts_with("--") => {
                 eprintln!("aegis-boot update: unknown option '{arg}'");
                 eprintln!("(in-place update is under active development — only the");
@@ -69,70 +71,145 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
     }
 
     let Some(d) = explicit_dev else {
-        eprintln!("aegis-boot update: missing <device> argument");
-        eprintln!("usage: aegis-boot update /dev/sdX");
+        if json_mode {
+            println!("{{ \"schema_version\": 1, \"error\": \"missing <device> argument\" }}");
+        } else {
+            eprintln!("aegis-boot update: missing <device> argument");
+            eprintln!("usage: aegis-boot update /dev/sdX");
+        }
         return Err(2);
     };
     let dev = PathBuf::from(d);
 
-    println!("aegis-boot update — eligibility check");
-    println!();
-    println!("Target device: {}", dev.display());
-    println!();
+    if !json_mode {
+        println!("aegis-boot update — eligibility check");
+        println!();
+        println!("Target device: {}", dev.display());
+        println!();
+    }
 
     match check_eligibility(&dev) {
         Eligibility::Eligible {
             attestation_path,
             disk_guid,
         } => {
-            println!("Status: ELIGIBLE for in-place update.");
-            println!();
-            println!("  disk GUID:        {disk_guid}");
-            println!("  attestation:      {}", attestation_path.display());
-            println!("  AEGIS_ISOS:       will be preserved byte-for-byte");
-            println!();
-            // Phase 1.5 of #181: show the operator the host-side signed
-            // chain that a future `aegis-boot update` would install.
-            // No writes, no /tmp, no sudo — just reads host paths.
-            print_host_chain_preview();
-            println!();
-            println!("NOTE: this is a read-only eligibility check (phase 1 of #181).");
-            println!("The actual in-place update lands in a follow-up PR. No writes");
-            println!("were made to {} during this command.", dev.display());
+            let chain = resolve_host_chain();
+            if json_mode {
+                print_update_json_eligible(&dev, &disk_guid, &attestation_path, &chain);
+            } else {
+                println!("Status: ELIGIBLE for in-place update.");
+                println!();
+                println!("  disk GUID:        {disk_guid}");
+                println!("  attestation:      {}", attestation_path.display());
+                println!("  AEGIS_ISOS:       will be preserved byte-for-byte");
+                println!();
+                // Phase 1.5 of #181: show the operator the host-side signed
+                // chain that a future `aegis-boot update` would install.
+                print_host_chain(&chain);
+                println!();
+                println!("NOTE: this is a read-only eligibility check (phase 1 of #181).");
+                println!("The actual in-place update lands in a follow-up PR. No writes");
+                println!("were made to {} during this command.", dev.display());
+            }
             Ok(())
         }
         Eligibility::Ineligible(reason) => {
-            eprintln!("Status: NOT ELIGIBLE for in-place update.");
-            eprintln!();
-            eprintln!("Reason: {reason}");
-            eprintln!();
-            eprintln!("Your options:");
-            eprintln!("  1. If this is a genuine aegis-boot stick but lacks an attestation,");
-            eprintln!("     it was flashed before v0.13.0. Re-flash with `aegis-boot flash`");
-            eprintln!("     to create a new attestation; your ISOs will be lost, so back");
-            eprintln!("     them up first.");
-            eprintln!("  2. If this is a fresh / non-aegis-boot USB stick, run");
-            eprintln!("     `aegis-boot init {}` to initialize it.", dev.display());
+            if json_mode {
+                print_update_json_ineligible(&dev, &reason);
+            } else {
+                eprintln!("Status: NOT ELIGIBLE for in-place update.");
+                eprintln!();
+                eprintln!("Reason: {reason}");
+                eprintln!();
+                eprintln!("Your options:");
+                eprintln!("  1. If this is a genuine aegis-boot stick but lacks an attestation,");
+                eprintln!("     it was flashed before v0.13.0. Re-flash with `aegis-boot flash`");
+                eprintln!("     to create a new attestation; your ISOs will be lost, so back");
+                eprintln!("     them up first.");
+                eprintln!("  2. If this is a fresh / non-aegis-boot USB stick, run");
+                eprintln!("     `aegis-boot init {}` to initialize it.", dev.display());
+            }
             Err(1)
         }
     }
 }
 
-/// Resolve + print the host-side signed chain — the shim/grub/kernel/
-/// initrd files mkusb.sh would install if the operator re-ran the
-/// flash today. sha256 each so the operator has concrete bytes to
-/// compare against (phase 2 will add stick-side hashing + diff; for
-/// now this is a one-sided preview).
+/// Emit the eligible-case JSON envelope. `schema_version=1`; additive
+/// only. The `host_chain` entries mirror the human-readable output but
+/// carry full 64-char sha256 (no truncation) and an explicit `error`
+/// field per slot when the file couldn't be hashed.
+fn print_update_json_eligible(
+    dev: &Path,
+    disk_guid: &str,
+    attestation_path: &Path,
+    chain: &[HostChainEntry],
+) {
+    use crate::doctor::json_escape;
+    println!("{{");
+    println!("  \"schema_version\": 1,");
+    println!("  \"tool_version\": \"{}\",", env!("CARGO_PKG_VERSION"));
+    println!(
+        "  \"device\": \"{}\",",
+        json_escape(&dev.display().to_string())
+    );
+    println!("  \"eligibility\": \"ELIGIBLE\",");
+    println!("  \"disk_guid\": \"{}\",", json_escape(disk_guid));
+    println!(
+        "  \"attestation_path\": \"{}\",",
+        json_escape(&attestation_path.display().to_string())
+    );
+    println!("  \"host_chain\": [");
+    let last = chain.len().saturating_sub(1);
+    for (i, entry) in chain.iter().enumerate() {
+        let comma = if i == last { "" } else { "," };
+        let path_str = entry.path.display().to_string();
+        match &entry.sha256 {
+            Ok(hash) => println!(
+                "    {{ \"role\": \"{}\", \"path\": \"{}\", \"sha256\": \"{}\" }}{comma}",
+                entry.role,
+                json_escape(&path_str),
+                hash,
+            ),
+            Err(reason) => println!(
+                "    {{ \"role\": \"{}\", \"path\": \"{}\", \"error\": \"{}\" }}{comma}",
+                entry.role,
+                json_escape(&path_str),
+                json_escape(reason),
+            ),
+        }
+    }
+    println!("  ]");
+    println!("}}");
+}
+
+fn print_update_json_ineligible(dev: &Path, reason: &str) {
+    use crate::doctor::json_escape;
+    println!("{{");
+    println!("  \"schema_version\": 1,");
+    println!("  \"tool_version\": \"{}\",", env!("CARGO_PKG_VERSION"));
+    println!(
+        "  \"device\": \"{}\",",
+        json_escape(&dev.display().to_string())
+    );
+    println!("  \"eligibility\": \"INELIGIBLE\",");
+    println!("  \"reason\": \"{}\"", json_escape(reason));
+    println!("}}");
+}
+
+/// Print the host-side signed chain — the shim/grub/kernel/initrd
+/// files mkusb.sh would install if the operator re-ran the flash
+/// today. sha256 each so the operator has concrete bytes to compare
+/// against (phase 2 will add stick-side hashing + diff; for now this
+/// is a one-sided preview).
 ///
 /// Failures to locate / hash a specific file are surfaced inline
 /// (not fatal) — the operator can still see which files are missing.
 /// This makes the "kernel not on PATH" case actionable: "shim: OK,
 /// grub: OK, kernel: MISSING at /boot/vmlinuz-*-virtual".
-fn print_host_chain_preview() {
+fn print_host_chain(chain: &[HostChainEntry]) {
     println!("Host-side signed chain (what update would install):");
-    let chain = resolve_host_chain();
     for entry in chain {
-        match entry.sha256 {
+        match &entry.sha256 {
             Ok(hash) => {
                 let short = &hash[..hash.len().min(16)];
                 println!(
