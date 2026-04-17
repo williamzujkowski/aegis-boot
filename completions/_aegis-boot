@@ -26,9 +26,6 @@ _aegis-boot() {
         'eject:Safely power-off a stick before removal'
     )
 
-    local -a profiles
-    profiles=(panic-room minimal server)
-
     _arguments -C \
         '1: :->subcmd' \
         '*:: :->args'
@@ -41,12 +38,17 @@ _aegis-boot() {
         args)
             case "$line[1]" in
                 init)
+                    # Pull live profile list from the binary so zsh
+                    # completion stays in sync with the installed catalog.
+                    local -a profiles
+                    profiles=(${(f)"$(aegis-boot init --list-profiles 2>/dev/null)"})
                     _arguments \
-                        '--profile[profile name]:profile:('"${profiles[*]}"')' \
+                        "--profile[profile name]:profile:($profiles)" \
                         '--yes[skip interactive confirmations]' \
                         '-y[skip interactive confirmations]' \
                         '--no-doctor[skip doctor preflight]' \
                         '--no-gpg[skip GPG verification]' \
+                        '--list-profiles[machine-readable profile list]' \
                         '--help[show help]' \
                         '*:device:_files -g "/dev/sd*"'
                     ;;

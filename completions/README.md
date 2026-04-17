@@ -63,5 +63,5 @@ aegis-boot uses raw argv parsing (not clap) to keep the static-musl binary small
 
 - The bash completion hardcodes the subcommand list — if a new subcommand is added to `main.rs`, add it to the `subcommands` variable at the top of `aegis-boot.bash`.
 - Same for zsh's `subcommands` array.
-- The profile list (`panic-room minimal server`) is hardcoded — it'd be ideal to have `aegis-boot init --list-profiles` but the count is small and drift would be obvious (PR CI surfaces it).
-- Catalog slugs are ALWAYS dynamic via `--slugs-only`, so they can't drift.
+- Profile names are dynamic via `aegis-boot init --list-profiles`.
+- Catalog slugs are dynamic via `aegis-boot recommend --slugs-only`.

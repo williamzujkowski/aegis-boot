@@ -18,7 +18,6 @@ _aegis_boot() {
     _init_completion || return
 
     local subcommands="init flash list add doctor recommend fetch attest eject --help --version"
-    local profiles="panic-room minimal server"
     local attest_actions="list show"
 
     # Top-level subcommand or global flag.
@@ -34,7 +33,13 @@ _aegis_boot() {
             # Device arg — complete block device paths + typical flags.
             case "$prev" in
                 --profile)
-                    COMPREPLY=($(compgen -W "$profiles" -- "$cur"))
+                    # Pull live profile list from the binary; stays in
+                    # sync with whatever the installed aegis-boot ships.
+                    local profiles
+                    profiles="$(aegis-boot init --list-profiles 2>/dev/null)"
+                    if [[ -n "$profiles" ]]; then
+                        COMPREPLY=($(compgen -W "$profiles" -- "$cur"))
+                    fi
                     return 0
                     ;;
             esac

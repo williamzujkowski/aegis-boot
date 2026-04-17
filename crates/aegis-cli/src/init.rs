@@ -92,6 +92,17 @@ pub fn run(args: &[String]) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    // Machine-readable profile enumeration for shell completion scripts
+    // (complements `aegis-boot recommend --slugs-only`). One profile name
+    // per line, nothing else on stdout. Stable contract — completion
+    // scripts parse this line-for-line.
+    if args.iter().any(|a| a == "--list-profiles") {
+        for profile in PROFILES {
+            println!("{}", profile.name);
+        }
+        return ExitCode::SUCCESS;
+    }
+
     let parsed = match parse_flags(args) {
         Ok(p) => p,
         Err(msg) => {
@@ -346,11 +357,12 @@ fn print_help() {
     println!("  aegis-boot init [/dev/sdX] [OPTIONS]");
     println!();
     println!("OPTIONS:");
-    println!("  --profile NAME    Profile to install (default: panic-room)");
-    println!("  --yes, -y         Skip interactive confirmations (destructive)");
-    println!("  --no-doctor       Skip doctor preflight (not recommended)");
-    println!("  --no-gpg          Skip GPG verification on fetched ISOs");
-    println!("  --help, -h        This message");
+    println!("  --profile NAME     Profile to install (default: panic-room)");
+    println!("  --yes, -y          Skip interactive confirmations (destructive)");
+    println!("  --no-doctor        Skip doctor preflight (not recommended)");
+    println!("  --no-gpg           Skip GPG verification on fetched ISOs");
+    println!("  --list-profiles    Print profile names, one per line (for completion)");
+    println!("  --help, -h         This message");
     println!();
     println!("PROFILES:");
     for p in PROFILES {
