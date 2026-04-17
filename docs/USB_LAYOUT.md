@@ -40,20 +40,30 @@ FAT32 caps individual files at **4 GB minus 1 byte**. Typical distro ISOs:
 
 | ISO | Size | Fits on FAT32? |
 |---|---|---|
-| Ubuntu LTS desktop | ~5.8 GB | ❌ exceeds |
-| Fedora Workstation | ~2.3 GB | ✅ |
-| Debian netinst / live standard | ~1 GB | ✅ |
-| Arch | ~1.2 GB | ✅ |
 | Alpine standard | ~200 MB | ✅ |
 | NixOS minimal | ~900 MB | ✅ |
+| Debian netinst / live standard | ~1 GB | ✅ |
+| Arch | ~1.2 GB | ✅ |
+| Fedora Workstation | ~2.3 GB | ✅ |
+| Ubuntu Server LTS | ~2.6 GB | ✅ |
+| Ubuntu LTS Desktop | ~5.8 GB | ❌ exceeds |
+| Windows 10 installer | ~5.5 GB | ❌ exceeds |
+| Windows 11 installer | ~7.9 GB | ❌ exceeds |
+| Rocky 9 DVD | ~10 GB | ❌ exceeds |
 
-If you need to ship the full Ubuntu LTS desktop image: rebuild with:
+`aegis-boot add` refuses oversized ISOs on FAT32 before the copy starts, with a message naming the ext4 rebuild path. See [TROUBLESHOOTING.md § "ISO too large for FAT32"](./TROUBLESHOOTING.md#iso-too-large-for-fat32) for the exact error text.
+
+If you need to ship a >4 GB image, reflash the stick with ext4:
 
 ```bash
+DATA_FS=ext4 sudo aegis-boot flash /dev/sdX
+# or via mkusb.sh directly:
 DATA_FS=ext4 ./scripts/mkusb.sh
 ```
 
 Trade-off: ext4 isn't natively writable from macOS or Windows, so the "drop files on the host" workflow requires Linux (or FUSE drivers like `ext4fuse` on macOS, `Ext2Fsd`/`Paragon` on Windows). Pick based on where you're dropping ISOs onto the stick.
+
+**Windows installer caveat.** Win10/Win11 ISOs now get past `aegis-boot add` (on ext4 sticks) and surface in rescue-tui's list with the `[X] not kexec-bootable` glyph. They cannot actually be kexec-booted — Windows uses `bootmgr.efi` + the NT loader, not a Linux kernel. aegis-boot surfaces them as a specific diagnostic rather than silently hiding them so the operator isn't left wondering where their ISO went.
 
 The data-partition GUID changes with the filesystem: FAT32 gets `0700` (Microsoft Basic Data, cross-OS friendly) and ext4 gets `8300` (Linux filesystem). Both mount fine from Linux; the type only matters for auto-mount behavior on other OSes.
 

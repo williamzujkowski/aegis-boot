@@ -40,7 +40,33 @@ You're trying to add an ISO larger than what's free on `AEGIS_ISOS`. Either:
 
 - Free space: `rm` something via the host mount, or use `aegis-boot list` to see what's there and decide.
 - Reflash with a larger image: `DISK_SIZE_MB=8192 sudo aegis-boot flash` (or set the env on `mkusb.sh` if you build manually).
-- For ISOs > 4 GB on FAT32: rebuild with `DATA_FS=ext4 ./scripts/mkusb.sh`. Trade-off: ext4 isn't natively writable from macOS / Windows.
+
+### ISO too large for FAT32
+
+You hit an error like:
+
+```
+aegis-boot add: Win11_25H2_English_x64_v2.iso is 7.4 GiB — exceeds
+  FAT32's 4 GiB per-file ceiling.
+  The AEGIS_ISOS partition is formatted as vfat, which cannot store
+  files at or above 4 GiB. Reflash with ext4 to lift the ceiling:
+
+      DATA_FS=ext4 sudo aegis-boot flash /dev/sdX
+```
+
+FAT32 caps individual files at 4 GiB minus one byte — this affects Ubuntu LTS Desktop (~5.8 GB), Rocky 9 DVD (~10 GB), Windows 10 installer (~5.5 GB), and Windows 11 installer (~7.9 GB). Rebuild the stick with ext4:
+
+```bash
+DATA_FS=ext4 sudo aegis-boot flash /dev/sdX
+```
+
+The destructive reflash will wipe existing ISOs — back up first with `aegis-boot list /dev/sdX` to see what's there. Trade-off: ext4 isn't natively writable from macOS / Windows (Linux-only "drop files on the host" workflow, or use `ext4fuse` on macOS / `Ext2Fsd` on Windows).
+
+### Windows installer ISO on the stick doesn't boot
+
+Expected. Windows installers use `bootmgr.efi` + the NT loader, not a Linux kernel — they can't be kexec-booted through aegis-boot's signed chain. rescue-tui surfaces them with an `[X] not kexec-bootable` glyph for exactly this reason (rather than silently hiding them).
+
+To install Windows on a target machine, write the Windows ISO directly to a separate stick using `dd` or Rufus. aegis-boot's signed-chain model is specific to Linux kernels that participate in Secure Boot's PE signature check.
 
 ---
 
