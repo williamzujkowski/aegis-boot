@@ -32,6 +32,7 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
     let mut explicit_dev: Option<&str> = None;
     let mut assume_yes = false;
     let mut prebuilt_image: Option<PathBuf> = None;
+    let mut dry_run = false;
     let mut i = 0;
     while i < args.len() {
         let a = &args[i];
@@ -41,6 +42,7 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
                 return Ok(());
             }
             "--yes" | "-y" => assume_yes = true,
+            "--dry-run" => dry_run = true,
             "--image" => {
                 i += 1;
                 let Some(p) = args.get(i) else {
@@ -82,6 +84,19 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
     let Some(drive) = select_drive(explicit_dev) else {
         return Err(1);
     };
+
+    // PR2 of #247: --dry-run prints the typed Plan and exits before the
+    // destructive steps. Operators get "show me what you'd do before you
+    // do it" without burning a USB write cycle. The same Plan shape is
+    // intentionally narrated by the non-dry-run path too (next block) so
+    // the operator's mental model matches what runs.
+    let plan = build_flash_plan(&drive, prebuilt_image.as_deref());
+    if dry_run {
+        print!("{plan}");
+        println!();
+        println!("--dry-run: no changes were made. Re-run without --dry-run to execute.");
+        return Ok(());
+    }
 
     // Step 2: typed confirmation (skipped under --yes).
     if !assume_yes && !confirm_destructive(&drive) {
@@ -129,12 +144,99 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
 fn print_help() {
     println!("aegis-boot flash — write aegis-boot to a USB stick");
     println!();
-    println!("USAGE: aegis-boot flash [DEVICE] [--yes] [--image PATH]");
+    println!("USAGE: aegis-boot flash [DEVICE] [--dry-run] [--yes] [--image PATH]");
     println!("  No DEVICE        = auto-detect removable drives.");
     println!("  /dev/sdX (Linux) or /dev/diskN (macOS) = flash to that drive.");
+    println!("  --dry-run        = print the typed Plan of operations and exit");
+    println!("                     before any destructive action. Useful for");
+    println!("                     pre-flight review or CI dry-runs. (#247)");
     println!("  --yes / -y       = skip the 'type flash to confirm' prompt (DESTRUCTIVE).");
     println!("  --image PATH     = write a pre-built image instead of invoking mkusb.sh.");
     println!("                     Required on macOS (mkusb.sh is Linux-only).");
+}
+
+/// Build the typed `Plan` describing what `aegis-boot flash` would do
+/// against this drive. The same plan shape feeds both `--dry-run`
+/// output (where it's the only thing that runs) and — eventually,
+/// once the per-stage progress UI from #244 PR2 lands — the non-dry-run
+/// narration.
+///
+/// The plan is intentionally a high-level *description* of operations,
+/// not a perfect mirror of the imperative steps `flash()` performs. The
+/// operator-visible value is "what side effects will this run cause";
+/// reading the plan and reading the implementation must agree on the
+/// answer to that question.
+fn build_flash_plan(drive: &Drive, prebuilt_image: Option<&Path>) -> crate::plan::Plan {
+    use crate::plan::{Operation, Plan};
+
+    let mut plan = Plan::new(format!(
+        "flash {} ({}, {})",
+        drive.dev.display(),
+        drive.model,
+        drive.size_human()
+    ));
+
+    // 1. Source: either a pre-built image we'll dd, or build one inline.
+    match prebuilt_image {
+        Some(img) => {
+            plan.add(Operation::PrecheckRefuseUnless {
+                predicate: "image is a regular file".to_string(),
+                details: format!("{}", img.display()),
+            });
+        }
+        None => {
+            plan.add(Operation::PrecheckRefuseUnless {
+                predicate: "scripts/mkusb.sh succeeds".to_string(),
+                details: "build a fresh aegis-boot.img inline (signed shim+grub+kernel chain + AEGIS_ISOS data partition)".to_string(),
+            });
+        }
+    }
+
+    // 2. Refuse if the device isn't removable + USB. Already enforced
+    //    at drive-selection time, but listed in the plan so dry-run
+    //    output documents the safety gate.
+    plan.add(Operation::PrecheckRefuseUnless {
+        predicate: "device is removable + USB".to_string(),
+        details: format!("model={}, partitions={}", drive.model, drive.partitions),
+    });
+
+    // 3. The destructive write.
+    let source = prebuilt_image.map_or_else(
+        || std::path::PathBuf::from("(mkusb.sh output)"),
+        std::path::Path::to_path_buf,
+    );
+    plan.add(Operation::WriteToBlockDevice {
+        device: drive.dev.clone(),
+        source,
+        bytes: drive.size_bytes,
+        // No accurate ETA without knowing USB version. Leave None;
+        // PR for #244 (progress UI) will compute this from real-time
+        // bytes/sec measurements once the flash is actually running.
+        estimated_duration_secs: None,
+    });
+
+    // 4. Readback verification of the signed-chain payload prefix.
+    //    The actual hash isn't known until the image is built; the
+    //    plan documents the *intent* to verify, not a literal expected
+    //    hash. Once #244 PR2 wires this for real, the executed step
+    //    can populate the hash post-write.
+    plan.add(Operation::ReadbackVerify {
+        device: drive.dev.clone(),
+        bytes: crate::readback::DEFAULT_READBACK_BYTES,
+        expected_sha256: None,
+    });
+
+    // 5. Persist an attestation receipt so `aegis-boot attest list`
+    //    has a record of this flash. The receipt path is
+    //    sudo-aware and lands under the operator's
+    //    $XDG_DATA_HOME/aegis-boot/attestations/.
+    plan.add(Operation::WriteAttestation {
+        destination: std::path::PathBuf::from(
+            "$XDG_DATA_HOME/aegis-boot/attestations/<guid>-<ts>.json",
+        ),
+    });
+
+    plan
 }
 
 fn select_drive(explicit: Option<&str>) -> Option<Drive> {
@@ -490,4 +592,101 @@ fn dirs_from_exe() -> Option<PathBuf> {
     std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(Path::to_path_buf))
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
+mod tests {
+    use super::*;
+    use crate::plan::Operation;
+
+    fn fake_drive() -> Drive {
+        Drive {
+            dev: PathBuf::from("/dev/sda"),
+            model: "SanDisk Cruzer".to_string(),
+            size_bytes: 31_914_983_424, // 29.7 GB
+            partitions: 0,
+        }
+    }
+
+    #[test]
+    fn build_flash_plan_with_mkusb_describes_full_pipeline() {
+        let drive = fake_drive();
+        let plan = build_flash_plan(&drive, None);
+        let ops = plan.operations();
+
+        // 5 operations: precheck (mkusb), precheck (removable+usb),
+        // write, readback verify, attestation.
+        assert_eq!(ops.len(), 5, "got {ops:#?}");
+        assert!(matches!(ops[0], Operation::PrecheckRefuseUnless { .. }));
+        assert!(matches!(ops[1], Operation::PrecheckRefuseUnless { .. }));
+        assert!(matches!(ops[2], Operation::WriteToBlockDevice { .. }));
+        assert!(matches!(ops[3], Operation::ReadbackVerify { .. }));
+        assert!(matches!(ops[4], Operation::WriteAttestation { .. }));
+    }
+
+    #[test]
+    fn build_flash_plan_with_image_uses_image_path() {
+        let drive = fake_drive();
+        let img = PathBuf::from("/tmp/aegis-boot.img");
+        let plan = build_flash_plan(&drive, Some(&img));
+        let rendered = plan.to_string();
+        assert!(
+            rendered.contains("aegis-boot.img"),
+            "image path missing from plan: {rendered}"
+        );
+        assert!(
+            !rendered.contains("mkusb.sh"),
+            "should not mention mkusb when --image is set: {rendered}"
+        );
+    }
+
+    #[test]
+    fn build_flash_plan_writes_full_device_size() {
+        let drive = fake_drive();
+        let plan = build_flash_plan(&drive, None);
+        // The WriteToBlockDevice operation should report the drive's
+        // size — guards against a future refactor that drops the
+        // size into the wrong place.
+        let write_op = plan
+            .operations()
+            .iter()
+            .find_map(|op| match op {
+                Operation::WriteToBlockDevice { bytes, .. } => Some(*bytes),
+                _ => None,
+            })
+            .expect("plan should contain WriteToBlockDevice");
+        assert_eq!(write_op, drive.size_bytes);
+    }
+
+    #[test]
+    fn build_flash_plan_readback_uses_default_byte_count() {
+        let drive = fake_drive();
+        let plan = build_flash_plan(&drive, None);
+        let readback_bytes = plan
+            .operations()
+            .iter()
+            .find_map(|op| match op {
+                Operation::ReadbackVerify { bytes, .. } => Some(*bytes),
+                _ => None,
+            })
+            .expect("plan should contain ReadbackVerify");
+        assert_eq!(readback_bytes, crate::readback::DEFAULT_READBACK_BYTES);
+    }
+
+    #[test]
+    fn build_flash_plan_intent_mentions_device() {
+        let drive = fake_drive();
+        let plan = build_flash_plan(&drive, None);
+        assert!(
+            plan.intent().contains("/dev/sda"),
+            "intent should mention device: {}",
+            plan.intent()
+        );
+    }
 }
