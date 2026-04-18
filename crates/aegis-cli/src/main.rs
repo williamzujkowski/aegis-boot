@@ -28,6 +28,7 @@ mod detect;
 mod doctor;
 mod eject;
 mod fetch;
+mod fetch_image;
 mod flash;
 mod init;
 mod inventory;
@@ -55,6 +56,7 @@ fn main() -> ExitCode {
         Some("doctor") => doctor::run(&args[1..]),
         Some("recommend") => catalog::run(&args[1..]),
         Some("fetch") => fetch::run(&args[1..]),
+        Some("fetch-image") => fetch_image::run(&args[1..]),
         Some("attest") => attest::run(&args[1..]),
         Some("eject") => eject::run(&args[1..]),
         Some("update") => update::run(&args[1..]),
@@ -100,6 +102,8 @@ fn print_help() {
     println!("  aegis-boot doctor [--stick D] Health check (host + stick)");
     println!("  aegis-boot recommend [slug]   Curated catalog of known-good ISOs");
     println!("  aegis-boot fetch <slug>       Download + verify a catalog ISO");
+    println!("  aegis-boot fetch-image --url URL [--sha256 HEX]");
+    println!("                                Download + sha256-verify a pre-built aegis-boot.img");
     println!("  aegis-boot attest [list|show] Attestation receipts for past flashes");
     println!("  aegis-boot eject [device]     Safely power-off a stick before removal");
     println!("  aegis-boot update <device>    Check eligibility for in-place update");
