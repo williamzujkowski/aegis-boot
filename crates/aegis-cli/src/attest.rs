@@ -869,8 +869,17 @@ mod tests {
         let _: Attestation = serde_json::from_str(with_extra).expect("tolerates unknown fields");
     }
 
+    /// Mutex serializing the env-mutating tests below. Without it,
+    /// cargo's parallel test runner interleaves their `set_var` /
+    /// `remove_var` calls and the assertions race — surfaced 2026-04-18
+    /// in CI as `data_dir_falls_back_to_home_local_share` returning the
+    /// XDG path because the sibling test had set `XDG_DATA_HOME` and
+    /// not yet reverted it.
+    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn data_dir_uses_xdg_data_home_when_set() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let prev = std::env::var_os("XDG_DATA_HOME");
         std::env::set_var("XDG_DATA_HOME", "/tmp/aegis-test-xdg-data");
         let p = data_dir();
@@ -883,6 +892,7 @@ mod tests {
 
     #[test]
     fn data_dir_falls_back_to_home_local_share() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let prev_xdg = std::env::var_os("XDG_DATA_HOME");
         let prev_home = std::env::var_os("HOME");
         std::env::remove_var("XDG_DATA_HOME");
