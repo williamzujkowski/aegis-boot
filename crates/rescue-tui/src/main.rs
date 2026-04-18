@@ -1008,6 +1008,7 @@ mod tests {
             size_bytes: None,
             contains_installer: false,
             pretty_name: None,
+            sidecar: None,
         }
     }
 

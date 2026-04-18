@@ -23,6 +23,10 @@ pollster = "0.4"
 sha2 = "0.10"
 hex = "0.4"
 minisign-verify = "0.2"
+# Operator-curated metadata sidecar (#246). default-features = false
+# drops the indexmap/serde_spanned tree we don't use; we only need
+# `parse` (deserialize) and `display` (serialize back to TOML).
+toml = { version = "0.8", default-features = false, features = ["parse", "display"] }
 
 [dev-dependencies]
 tempfile = "3.14"

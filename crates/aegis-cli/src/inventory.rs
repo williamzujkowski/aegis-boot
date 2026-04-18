@@ -60,17 +60,30 @@ pub fn run_list(args: &[String]) -> ExitCode {
             for iso in &isos {
                 let sha_marker = if iso.has_sha256 { "\u{2713}" } else { " " };
                 let sig_marker = if iso.has_minisig { "\u{2713}" } else { " " };
+                let label = iso.display_name.as_deref().unwrap_or(&iso.name);
                 println!(
                     "  [{sha_marker} sha256] [{sig_marker} minisig]  {:>8}  {}",
                     humanize(iso.size),
-                    iso.name
+                    label
                 );
+                // Two-line layout when the sidecar provides both a custom
+                // display name AND a description: row 1 shows the curated
+                // name, row 2 indents the description so it's visually
+                // grouped with its parent ISO. Sidecar-less rows render
+                // exactly as before. (#246)
+                if iso.display_name.is_some() && iso.name != label {
+                    println!("                                          ({})", iso.name);
+                }
+                if let Some(desc) = &iso.description {
+                    println!("                                          {desc}");
+                }
             }
             println!();
             println!("{} ISO(s) total. Legend:", isos.len());
             println!("  \u{2713} sha256   sibling <iso>.sha256 present");
             println!("  \u{2713} minisig  sibling <iso>.minisig present");
             println!("  (missing sidecars mean the ISO will show GRAY verdict in rescue-tui)");
+            println!("  Display name/description from <iso>.aegis.toml when present (#246)");
         }
     }
 
@@ -113,8 +126,20 @@ fn print_list_json(mount_path: &Path, isos: &[IsoEntry]) {
     let last = isos.len().saturating_sub(1);
     for (i, iso) in isos.iter().enumerate() {
         let comma = if i == last { "" } else { "," };
+        // display_name + description default to JSON null when no sidecar
+        // populated them. Keeping them in the schema (rather than
+        // omitting on absence) means downstream parsers see a stable
+        // shape across ISOs with and without sidecars. (#246)
+        let display_name = iso
+            .display_name
+            .as_deref()
+            .map_or_else(|| "null".to_string(), |s| format!("\"{}\"", json_escape(s)));
+        let description = iso
+            .description
+            .as_deref()
+            .map_or_else(|| "null".to_string(), |s| format!("\"{}\"", json_escape(s)));
         println!(
-            "    {{ \"name\": \"{}\", \"size_bytes\": {}, \"has_sha256\": {}, \"has_minisig\": {} }}{comma}",
+            "    {{ \"name\": \"{}\", \"size_bytes\": {}, \"has_sha256\": {}, \"has_minisig\": {}, \"display_name\": {display_name}, \"description\": {description} }}{comma}",
             json_escape(&iso.name),
             iso.size,
             iso.has_sha256,
@@ -140,13 +165,18 @@ pub(crate) fn try_run_add(args: &[String]) -> Result<(), u8> {
         || args.first().map(String::as_str) == Some("--help")
         || args.first().map(String::as_str) == Some("-h")
     {
-        println!("aegis-boot add — copy an ISO onto the stick with verification");
-        println!();
-        println!("USAGE: aegis-boot add <iso-file> [/dev/sdX | /mnt/aegis-isos]");
+        print_add_help();
         return if args.is_empty() { Err(2) } else { Ok(()) };
     }
 
-    let iso_arg = PathBuf::from(&args[0]);
+    let AddArgs {
+        iso_path: iso_arg,
+        mount_arg,
+        description,
+        version,
+        category,
+    } = parse_add_args(args)?;
+
     if !iso_arg.is_file() {
         eprintln!("aegis-boot add: not a file: {}", iso_arg.display());
         return Err(1);
@@ -156,7 +186,7 @@ pub(crate) fn try_run_add(args: &[String]) -> Result<(), u8> {
         .and_then(|n| n.to_str())
         .unwrap_or("unknown.iso");
 
-    let mount = match resolve_mount(args.get(1).map(String::as_str)) {
+    let mount = match resolve_mount(mount_arg.as_deref()) {
         Ok(m) => m,
         Err(e) => {
             eprintln!("aegis-boot add: {e}");
@@ -206,17 +236,18 @@ pub(crate) fn try_run_add(args: &[String]) -> Result<(), u8> {
         return Err(1);
     }
 
-    let mut sidecars_copied: Vec<String> = Vec::new();
-    for suffix in ["sha256", "SHA256SUMS", "minisig"] {
-        let sidecar_src = iso_arg.with_extension(format!("iso.{suffix}"));
-        if sidecar_src.is_file() {
-            let sidecar_dest = mount.path.join(format!("{iso_filename}.{suffix}"));
-            if copy_with_sudo(&sidecar_src, &sidecar_dest).is_ok() {
-                println!("  Copied sidecar: .{suffix}");
-                sidecars_copied.push(suffix.to_string());
-            }
-        }
-    }
+    let mut sidecars_copied = copy_classic_sidecars(&iso_arg, iso_filename, &mount.path);
+
+    maybe_write_aegis_sidecar(
+        &mount.path,
+        iso_filename,
+        AegisSidecarFlags {
+            description,
+            version,
+            category,
+        },
+        &mut sidecars_copied,
+    );
 
     let _ = Command::new("sync").status();
     println!();
@@ -385,6 +416,204 @@ struct IsoEntry {
     size: u64,
     has_sha256: bool,
     has_minisig: bool,
+    /// Operator-curated display name from `<iso>.aegis.toml`, when present. (#246)
+    display_name: Option<String>,
+    /// Operator-curated description from `<iso>.aegis.toml`, when present. (#246)
+    description: Option<String>,
+}
+
+/// Parsed flags for `aegis-boot add`.
+#[derive(Debug)]
+struct AddArgs {
+    iso_path: PathBuf,
+    mount_arg: Option<String>,
+    description: Option<String>,
+    version: Option<String>,
+    category: Option<String>,
+}
+
+/// Parse the argv tail of `aegis-boot add`. Recognizes positional
+/// `<iso>` (required) + `[mount]` and three optional `--description`,
+/// `--version`, `--category` flags (each accepting either `--flag VALUE`
+/// or `--flag=VALUE` form). Returns `Err(2)` for usage errors so the
+/// caller surfaces the standard "exit 2 = bad args" code.
+fn parse_add_args(args: &[String]) -> Result<AddArgs, u8> {
+    let mut iso_path: Option<PathBuf> = None;
+    let mut mount_arg: Option<String> = None;
+    let mut description: Option<String> = None;
+    let mut version: Option<String> = None;
+    let mut category: Option<String> = None;
+    let mut i = 0;
+    while i < args.len() {
+        let a = &args[i];
+        match a.as_str() {
+            "--description" => {
+                i += 1;
+                let Some(v) = args.get(i) else {
+                    eprintln!("aegis-boot add: --description requires a value");
+                    return Err(2);
+                };
+                description = Some(v.clone());
+            }
+            s if s.starts_with("--description=") => {
+                description = Some(s["--description=".len()..].to_string());
+            }
+            "--version" => {
+                i += 1;
+                let Some(v) = args.get(i) else {
+                    eprintln!("aegis-boot add: --version requires a value");
+                    return Err(2);
+                };
+                version = Some(v.clone());
+            }
+            s if s.starts_with("--version=") => {
+                version = Some(s["--version=".len()..].to_string());
+            }
+            "--category" => {
+                i += 1;
+                let Some(v) = args.get(i) else {
+                    eprintln!("aegis-boot add: --category requires a value");
+                    return Err(2);
+                };
+                category = Some(v.clone());
+            }
+            s if s.starts_with("--category=") => {
+                category = Some(s["--category=".len()..].to_string());
+            }
+            s if s.starts_with("--") => {
+                eprintln!("aegis-boot add: unknown option '{s}'");
+                return Err(2);
+            }
+            other => {
+                if iso_path.is_none() {
+                    iso_path = Some(PathBuf::from(other));
+                } else if mount_arg.is_none() {
+                    mount_arg = Some(other.to_string());
+                } else {
+                    eprintln!("aegis-boot add: unexpected extra argument '{other}'");
+                    return Err(2);
+                }
+            }
+        }
+        i += 1;
+    }
+    let Some(iso_path) = iso_path else {
+        eprintln!("aegis-boot add: missing required <iso-file> argument");
+        return Err(2);
+    };
+    Ok(AddArgs {
+        iso_path,
+        mount_arg,
+        description,
+        version,
+        category,
+    })
+}
+
+/// Copy any sibling `.sha256`, `.SHA256SUMS`, and `.minisig` files that
+/// live next to the source ISO onto the stick. Returns the list of
+/// copied suffixes for the per-add summary line.
+fn copy_classic_sidecars(iso_src: &Path, iso_filename: &str, mount: &Path) -> Vec<String> {
+    let mut copied = Vec::new();
+    for suffix in ["sha256", "SHA256SUMS", "minisig"] {
+        let sidecar_src = iso_src.with_extension(format!("iso.{suffix}"));
+        if sidecar_src.is_file() {
+            let sidecar_dest = mount.join(format!("{iso_filename}.{suffix}"));
+            if copy_with_sudo(&sidecar_src, &sidecar_dest).is_ok() {
+                println!("  Copied sidecar: .{suffix}");
+                copied.push(suffix.to_string());
+            }
+        }
+    }
+    copied
+}
+
+/// Help text for `aegis-boot add`. Extracted so `try_run_add` stays
+/// under clippy's per-function line ceiling.
+fn print_add_help() {
+    println!("aegis-boot add — copy an ISO onto the stick with verification");
+    println!();
+    println!("USAGE: aegis-boot add <iso-file> [/dev/sdX | /mnt/aegis-isos]");
+    println!("                  [--description TEXT] [--version VER] [--category CAT]");
+    println!();
+    println!("Optional sidecar metadata (#246) is written next to the ISO as");
+    println!("<iso>.aegis.toml so rescue-tui can show 'Network-install Debian 12'");
+    println!("instead of the bare filename. The sidecar is unsigned cosmetic");
+    println!("metadata — boot decisions still key off the sha256-attested manifest.");
+}
+
+/// Operator-supplied aegis sidecar fields collected from `--description`,
+/// `--version`, `--category`. Wrapping these in a small struct lets
+/// `maybe_write_aegis_sidecar` take a stable signature without growing
+/// past clippy's `too_many_arguments` ceiling as more curated fields
+/// land. (#246)
+struct AegisSidecarFlags {
+    description: Option<String>,
+    version: Option<String>,
+    category: Option<String>,
+}
+
+/// Write an aegis sidecar TOML to the stick if any curated metadata was
+/// provided on the command line. Cosmetic only — does not affect what
+/// boots. Failures degrade to a warning so the ISO add itself succeeds
+/// even if the sidecar can't be persisted (matches the existing
+/// "attestation update failed" behaviour). (#246)
+fn maybe_write_aegis_sidecar(
+    mount: &Path,
+    iso_filename: &str,
+    flags: AegisSidecarFlags,
+    sidecars_copied: &mut Vec<String>,
+) {
+    if flags.description.is_none() && flags.version.is_none() && flags.category.is_none() {
+        return;
+    }
+    let sidecar = iso_probe::IsoSidecar {
+        display_name: None,
+        description: flags.description,
+        version: flags.version,
+        category: flags.category,
+        last_verified_at: None,
+        last_verified_on: None,
+        notes: None,
+    };
+    match write_sidecar_via_sudo(mount, iso_filename, &sidecar) {
+        Ok(()) => {
+            println!("  Wrote sidecar: {iso_filename}.aegis.toml");
+            sidecars_copied.push("aegis.toml".to_string());
+        }
+        Err(e) => eprintln!("warning: aegis sidecar write failed: {e}"),
+    }
+}
+
+/// Write a sidecar TOML to the sudo-mounted `AEGIS_ISOS` partition by
+/// staging it locally, then routing through `copy_with_sudo` (same path
+/// the sha256/minisig sidecars take). The staging file is created with
+/// a random name via `tempfile::NamedTempFile` (atomic `O_EXCL` + 6-char
+/// random suffix in `$TMPDIR`) so a local attacker cannot pre-create
+/// a symlink at a predictable path and trick `fs::write` into writing
+/// the body elsewhere. The temp file is deleted on success and on
+/// failure (`NamedTempFile`'s Drop handles both).
+fn write_sidecar_via_sudo(
+    mount: &Path,
+    iso_filename: &str,
+    sidecar: &iso_probe::IsoSidecar,
+) -> Result<(), String> {
+    use std::io::Write as _;
+    let body = iso_probe::sidecar_to_toml(sidecar).map_err(|e| format!("serialize: {e}"))?;
+    let mut staging = tempfile::Builder::new()
+        .prefix("aegis-sidecar-")
+        .suffix(".toml")
+        .tempfile()
+        .map_err(|e| format!("staging tempfile: {e}"))?;
+    staging
+        .write_all(body.as_bytes())
+        .map_err(|e| format!("staging write: {e}"))?;
+    staging
+        .as_file()
+        .sync_all()
+        .map_err(|e| format!("staging sync: {e}"))?;
+    let dest = mount.join(format!("{iso_filename}.aegis.toml"));
+    copy_with_sudo(staging.path(), &dest)
 }
 
 fn scan_isos(dir: &Path) -> Vec<IsoEntry> {
@@ -416,11 +645,19 @@ fn scan_isos(dir: &Path) -> Vec<IsoEntry> {
         let has_minisig = sidecar_names
             .iter()
             .any(|s| s.eq_ignore_ascii_case(&format!("{name}.minisig")));
+        // Aegis sidecar (#246) — cosmetic operator-curated metadata.
+        // Failures degrade silently to "no sidecar" (matches iso-probe's
+        // scan-time behavior); the menu falls back to the bare filename.
+        let sidecar = iso_probe::load_sidecar(&dir.join(&name)).ok().flatten();
+        let display_name = sidecar.as_ref().and_then(|s| s.display_name.clone());
+        let description = sidecar.as_ref().and_then(|s| s.description.clone());
         out.push(IsoEntry {
             name,
             size,
             has_sha256,
             has_minisig,
+            display_name,
+            description,
         });
     }
     out
@@ -583,5 +820,144 @@ mod tests {
                 "size {size} should fit FAT32 but ceiling is {FAT32_MAX_FILE_SIZE}"
             );
         }
+    }
+
+    // ---- #246 sidecar parsing tests ----------------------------------------
+
+    fn s(v: &str) -> String {
+        v.to_string()
+    }
+
+    #[test]
+    fn parse_add_args_minimum_takes_iso_only() {
+        let parsed = parse_add_args(&[s("debian.iso")]).unwrap();
+        assert_eq!(parsed.iso_path, PathBuf::from("debian.iso"));
+        assert!(parsed.mount_arg.is_none());
+        assert!(parsed.description.is_none());
+        assert!(parsed.version.is_none());
+        assert!(parsed.category.is_none());
+    }
+
+    #[test]
+    fn parse_add_args_iso_then_mount() {
+        let parsed = parse_add_args(&[s("debian.iso"), s("/mnt/aegis-isos")]).unwrap();
+        assert_eq!(parsed.mount_arg.as_deref(), Some("/mnt/aegis-isos"));
+    }
+
+    #[test]
+    fn parse_add_args_recognises_description_separate_form() {
+        let parsed = parse_add_args(&[
+            s("debian.iso"),
+            s("--description"),
+            s("Network-install Debian 12"),
+        ])
+        .unwrap();
+        assert_eq!(
+            parsed.description.as_deref(),
+            Some("Network-install Debian 12")
+        );
+    }
+
+    #[test]
+    fn parse_add_args_recognises_description_equals_form() {
+        let parsed =
+            parse_add_args(&[s("debian.iso"), s("--description=Headless server")]).unwrap();
+        assert_eq!(parsed.description.as_deref(), Some("Headless server"));
+    }
+
+    #[test]
+    fn parse_add_args_handles_all_three_curated_flags_in_any_order() {
+        let parsed = parse_add_args(&[
+            s("--version=12.5.0"),
+            s("debian.iso"),
+            s("--category"),
+            s("install"),
+            s("/mnt/aegis-isos"),
+            s("--description=netinst"),
+        ])
+        .unwrap();
+        assert_eq!(parsed.iso_path, PathBuf::from("debian.iso"));
+        assert_eq!(parsed.mount_arg.as_deref(), Some("/mnt/aegis-isos"));
+        assert_eq!(parsed.description.as_deref(), Some("netinst"));
+        assert_eq!(parsed.version.as_deref(), Some("12.5.0"));
+        assert_eq!(parsed.category.as_deref(), Some("install"));
+    }
+
+    #[test]
+    fn parse_add_args_rejects_missing_iso() {
+        let err = parse_add_args(&[s("--description=x")]).unwrap_err();
+        assert_eq!(err, 2);
+    }
+
+    #[test]
+    fn parse_add_args_rejects_unknown_flag() {
+        let err = parse_add_args(&[s("debian.iso"), s("--bogus")]).unwrap_err();
+        assert_eq!(err, 2);
+    }
+
+    #[test]
+    fn parse_add_args_rejects_third_positional() {
+        let err = parse_add_args(&[s("a.iso"), s("/mnt"), s("extra")]).unwrap_err();
+        assert_eq!(err, 2);
+    }
+
+    #[test]
+    fn parse_add_args_rejects_dangling_value_flag() {
+        // --description without a following value should error rather
+        // than silently consume the next positional.
+        let err = parse_add_args(&[s("debian.iso"), s("--description")]).unwrap_err();
+        assert_eq!(err, 2);
+    }
+
+    #[test]
+    fn scan_isos_attaches_sidecar_when_present() {
+        use std::fs;
+        let dir = tempfile::tempdir().unwrap();
+        let iso_path = dir.path().join("debian.iso");
+        fs::write(&iso_path, b"fake iso bytes").unwrap();
+        let sidecar_path = iso_probe::sidecar_path_for(&iso_path);
+        fs::write(
+            &sidecar_path,
+            "display_name = \"Network-install Debian 12\"\ndescription = \"netinst variant\"\n",
+        )
+        .unwrap();
+
+        let entries = scan_isos(dir.path());
+        assert_eq!(entries.len(), 1);
+        let e = &entries[0];
+        assert_eq!(e.name, "debian.iso");
+        assert_eq!(e.display_name.as_deref(), Some("Network-install Debian 12"));
+        assert_eq!(e.description.as_deref(), Some("netinst variant"));
+    }
+
+    #[test]
+    fn scan_isos_returns_no_sidecar_fields_when_absent() {
+        use std::fs;
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("plain.iso"), b"x").unwrap();
+        let entries = scan_isos(dir.path());
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].display_name.is_none());
+        assert!(entries[0].description.is_none());
+    }
+
+    #[test]
+    fn scan_isos_silently_drops_sidecar_when_malformed() {
+        // A broken sidecar shouldn't stop the ISO from listing — the
+        // operator can still see + boot it, just without the curated label.
+        use std::fs;
+        let dir = tempfile::tempdir().unwrap();
+        let iso_path = dir.path().join("ubuntu.iso");
+        fs::write(&iso_path, b"x").unwrap();
+        fs::write(
+            iso_probe::sidecar_path_for(&iso_path),
+            "this = is = not = valid\n",
+        )
+        .unwrap();
+        let entries = scan_isos(dir.path());
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "ubuntu.iso");
+        assert!(entries[0].display_name.is_none());
+        assert!(entries[0].description.is_none());
     }
 }

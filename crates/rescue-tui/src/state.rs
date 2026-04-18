@@ -1091,6 +1091,7 @@ mod tests {
             size_bytes: Some(1_500_000_000),
             contains_installer: false,
             pretty_name: None,
+            sidecar: None,
         }
     }
 
@@ -1196,6 +1197,7 @@ mod tests {
             size_bytes: Some(1_500_000_000),
             contains_installer: false,
             pretty_name: None,
+            sidecar: None,
         };
         let (_, remedy) = error_diagnostic_with_iso(&KexecError::SignatureRejected, Some(&iso));
         let r = unwrap_remedy(remedy);

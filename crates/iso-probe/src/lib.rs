@@ -18,6 +18,7 @@
 #![forbid(unsafe_code)]
 
 pub mod minisign;
+pub mod sidecar;
 pub mod signature;
 
 use std::path::{Path, PathBuf};
@@ -26,6 +27,10 @@ use serde::{Deserialize, Serialize};
 
 pub use iso_parser::{BootEntry, Distribution, IsoError};
 pub use minisign::{verify_iso_signature, SignatureVerification};
+pub use sidecar::{
+    load_sidecar, sidecar_path_for, to_toml as sidecar_to_toml, write_sidecar, IsoSidecar,
+    SidecarError,
+};
 pub use signature::{verify_iso_hash, verify_iso_hash_with_progress, HashVerification};
 
 /// Metadata for a single discovered ISO. Paths are relative to the (now
@@ -67,6 +72,16 @@ pub struct DiscoveredIso {
     /// Determined heuristically from filename patterns. rescue-tui
     /// surfaces a yellow warning strip on the Confirm screen. (#131)
     pub contains_installer: bool,
+    /// Operator-curated metadata loaded from a sibling
+    /// `<iso>.aegis.toml` file, if present. Cosmetic only —
+    /// `display_name`, `description`, `last_verified_at`, etc. The
+    /// boot decision still keys off the sha256-attested manifest.
+    /// `None` when no sidecar exists or when parsing failed (a
+    /// malformed sidecar logs at WARN and otherwise behaves as
+    /// "not present" — the menu falls back to the bare filename).
+    /// (#246)
+    #[serde(default)]
+    pub sidecar: Option<IsoSidecar>,
 }
 
 /// Compatibility quirks the TUI should surface to the user before invoking
@@ -286,6 +301,20 @@ fn boot_entry_to_discovered(entry: &BootEntry, search_root: &Path) -> Discovered
     }
     let size_bytes = std::fs::metadata(&iso_path).ok().map(|m| m.len());
     let contains_installer = detect_installer(&iso_path);
+    let sidecar = match load_sidecar(&iso_path) {
+        Ok(s) => s,
+        Err(e) => {
+            // Malformed sidecar shouldn't fail the scan — degrade to
+            // "no sidecar" with a warn-level log so operators can
+            // diagnose without blocking boot. (#246)
+            tracing::warn!(
+                iso = %iso_path.display(),
+                error = %e,
+                "iso-probe: sidecar present but unreadable — falling back to filename"
+            );
+            None
+        }
+    };
     DiscoveredIso {
         iso_path,
         label: entry.label.clone(),
@@ -299,16 +328,32 @@ fn boot_entry_to_discovered(entry: &BootEntry, search_root: &Path) -> Discovered
         signature_verification,
         size_bytes,
         contains_installer,
+        sidecar,
     }
 }
 
-/// Preferred human label for display. Returns `pretty_name` when set,
-/// otherwise falls back to `label`. Downstream UIs that want a single
-/// "always non-empty" name should call this instead of reading the
-/// fields directly. (#119)
+/// Preferred human label for display. Resolution order:
+/// 1. `sidecar.display_name` — operator-curated, wins when set (#246)
+/// 2. `pretty_name` — read from the ISO's `os-release` etc. (#119)
+/// 3. `label` — original boot-entry label
+///
+/// Downstream UIs that want a single "always non-empty" name should
+/// call this instead of reading the fields directly.
 #[must_use]
 pub fn display_name(iso: &DiscoveredIso) -> &str {
-    iso.pretty_name.as_deref().unwrap_or(&iso.label)
+    iso.sidecar
+        .as_ref()
+        .and_then(|s| s.display_name.as_deref())
+        .or(iso.pretty_name.as_deref())
+        .unwrap_or(&iso.label)
+}
+
+/// Optional one-line description for the menu's second row, sourced
+/// from the operator-curated sidecar. Returns `None` when no sidecar
+/// is present or its `description` field is unset. (#246)
+#[must_use]
+pub fn display_description(iso: &DiscoveredIso) -> Option<&str> {
+    iso.sidecar.as_ref().and_then(|s| s.description.as_deref())
 }
 
 /// Heuristic detection: does this ISO contain an installer that can
@@ -579,6 +624,7 @@ mod tests {
             size_bytes: None,
             contains_installer: false,
             pretty_name: None,
+            sidecar: None,
         };
         // Sanity-check the path-joining we'd perform on a real mount.
         let mount = PathBuf::from("/mnt/test");

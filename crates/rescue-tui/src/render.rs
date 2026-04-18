@@ -1165,6 +1165,7 @@ mod tests {
             signature_verification: iso_probe::SignatureVerification::NotPresent,
             size_bytes: Some(1_500_000_000),
             contains_installer: false,
+            sidecar: None,
         }
     }
 
