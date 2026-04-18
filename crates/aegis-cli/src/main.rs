@@ -31,6 +31,7 @@ mod fetch;
 mod fetch_image;
 mod flash;
 mod init;
+mod init_wizard;
 mod inventory;
 mod man;
 mod mounts;
