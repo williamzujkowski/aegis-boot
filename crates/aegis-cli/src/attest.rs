@@ -595,11 +595,89 @@ fn read_attestation(path: &Path) -> Result<Attestation, String> {
 }
 
 fn data_dir() -> PathBuf {
+    // When running under sudo, prefer the original user's data dir
+    // rather than root's (/root/.local/share/...). Otherwise `aegis-
+    // boot flash` (run via sudo for dd) would write attestations to
+    // root's home, but `aegis-boot attest list` (run as the operator)
+    // would look under their own home and find nothing — see the
+    // companion `sudo_aware_data_dir` in update.rs::attestation_dir.
+    if let Some(sudo_data) = sudo_aware_data_dir() {
+        return sudo_data.join("aegis-boot");
+    }
     let base = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
         .unwrap_or_else(|| PathBuf::from("/tmp"));
     base.join("aegis-boot")
+}
+
+/// When the process runs under `sudo`, the kernel preserves
+/// `SUDO_USER` (and usually `SUDO_UID`); HOME has already been
+/// rewritten to root's. Look up `SUDO_USER`'s home from `/etc/passwd`
+/// and prefer it over root's so attestations + cached state land
+/// in the operator's actual home dir.
+///
+/// Returns `Some(<user>/.local/share)` only when:
+/// - Effective UID is 0 AND
+/// - `SUDO_USER` is set AND
+/// - `getent passwd <user>` returns a valid home dir
+///
+/// Otherwise returns `None`, signaling the caller to fall back to
+/// the standard XDG/HOME resolution. Pure: shells out to `getent`
+/// (a glibc tool present on every system aegis-boot supports).
+pub(crate) fn sudo_aware_data_dir() -> Option<PathBuf> {
+    if !is_running_as_root() {
+        return None;
+    }
+    let sudo_user = std::env::var_os("SUDO_USER")?;
+    let sudo_user = sudo_user.to_str()?;
+    if sudo_user == "root" {
+        return None;
+    }
+    let home = lookup_home_via_getent(sudo_user)?;
+    Some(home.join(".local/share"))
+}
+
+fn is_running_as_root() -> bool {
+    // Read /proc/self/status to avoid an unsafe libc::geteuid() call.
+    // `Uid:` line format: "Uid:\t<real>\t<effective>\t<saved>\t<fs>".
+    // Effective UID is column 2 (0-indexed: index 2 after splitwhitespace
+    // including the Uid: prefix... actually 2 if we skip "Uid:" first).
+    let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+    for line in status.lines() {
+        if let Some(rest) = line.strip_prefix("Uid:") {
+            let mut tokens = rest.split_whitespace();
+            // tokens: <real> <effective> <saved> <fs>
+            tokens.next(); // real
+            if let Some(euid) = tokens.next() {
+                return euid == "0";
+            }
+        }
+    }
+    false
+}
+
+fn lookup_home_via_getent(user: &str) -> Option<PathBuf> {
+    // getent passwd <user> output: "<user>:<x>:<uid>:<gid>:<gecos>:<home>:<shell>"
+    // 6th field (index 5) is the home dir.
+    let out = Command::new("getent")
+        .args(["passwd", user])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let line = String::from_utf8_lossy(&out.stdout);
+    let line = line.trim();
+    let fields: Vec<&str> = line.split(':').collect();
+    if fields.len() < 6 {
+        return None;
+    }
+    let home = fields[5];
+    if home.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(home))
 }
 
 fn current_iso_timestamp() -> String {
