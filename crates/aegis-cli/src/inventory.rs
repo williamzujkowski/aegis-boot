@@ -587,24 +587,33 @@ fn maybe_write_aegis_sidecar(
 
 /// Write a sidecar TOML to the sudo-mounted `AEGIS_ISOS` partition by
 /// staging it locally, then routing through `copy_with_sudo` (same path
-/// the sha256/minisig sidecars take). Cleans up the temp staging file
-/// regardless of success.
+/// the sha256/minisig sidecars take). The staging file is created with
+/// a random name via `tempfile::NamedTempFile` (atomic `O_EXCL` + 6-char
+/// random suffix in `$TMPDIR`) so a local attacker cannot pre-create
+/// a symlink at a predictable path and trick `fs::write` into writing
+/// the body elsewhere. The temp file is deleted on success and on
+/// failure (`NamedTempFile`'s Drop handles both).
 fn write_sidecar_via_sudo(
     mount: &Path,
     iso_filename: &str,
     sidecar: &iso_probe::IsoSidecar,
 ) -> Result<(), String> {
+    use std::io::Write as _;
     let body = iso_probe::sidecar_to_toml(sidecar).map_err(|e| format!("serialize: {e}"))?;
-    let staging = std::env::temp_dir().join(format!(
-        "aegis-sidecar-{}-{}.toml",
-        std::process::id(),
-        iso_filename
-    ));
-    std::fs::write(&staging, body).map_err(|e| format!("staging write: {e}"))?;
+    let mut staging = tempfile::Builder::new()
+        .prefix("aegis-sidecar-")
+        .suffix(".toml")
+        .tempfile()
+        .map_err(|e| format!("staging tempfile: {e}"))?;
+    staging
+        .write_all(body.as_bytes())
+        .map_err(|e| format!("staging write: {e}"))?;
+    staging
+        .as_file()
+        .sync_all()
+        .map_err(|e| format!("staging sync: {e}"))?;
     let dest = mount.join(format!("{iso_filename}.aegis.toml"));
-    let result = copy_with_sudo(&staging, &dest);
-    let _ = std::fs::remove_file(&staging);
-    result
+    copy_with_sudo(staging.path(), &dest)
 }
 
 fn scan_isos(dir: &Path) -> Vec<IsoEntry> {
