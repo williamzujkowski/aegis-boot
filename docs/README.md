@@ -2,6 +2,8 @@
 
 | Audience | Doc | What's in it |
 |---|---|---|
+| **Operator (new)** | [`HOW_IT_WORKS.md`](./HOW_IT_WORKS.md) | "aegis-boot in 5 minutes" — what it does, why other tools require disabling Secure Boot, the trust chain |
+| **Operator (new)** | [`TOUR.md`](./TOUR.md) | First-time procedural walkthrough: doctor → init → fetch → add → boot. ~10 minutes hands-on |
 | **Operator** | [`INSTALL.md`](./INSTALL.md) | End-to-end: flash → add ISOs → boot → select. The first thing to read. |
 | **Operator** | [`CLI.md`](./CLI.md) | `aegis-boot` CLI reference — `flash`, `list`, `add` subcommand details |
 | **Operator** | [`TROUBLESHOOTING.md`](./TROUBLESHOOTING.md) | Common errors and fixes (errno 61, won't-boot, mount issues, MOK pitfalls) |

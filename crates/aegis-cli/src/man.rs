@@ -144,6 +144,7 @@ mod tests {
             "verify",
             "compat",
             "completions",
+            "tour",
         ] {
             let marker = format!(".B {sub}");
             assert!(

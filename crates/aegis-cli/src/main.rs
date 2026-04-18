@@ -13,6 +13,7 @@
 //!   * `update`    — in-place signed-chain rotation (phase 1: eligibility check)
 //!   * `verify`    — re-run sha256 verification on every ISO on the stick
 //!   * `compat`    — hardware compatibility lookup (verified reports only)
+//!   * `tour`      — 30-second in-terminal walkthrough (#248)
 //!
 //! This replaces the developer workflow of running shell scripts
 //! manually. The binary is named `aegis-boot` so operators type
@@ -36,6 +37,7 @@ mod inventory;
 mod man;
 mod mounts;
 mod plan;
+mod tour;
 mod update;
 mod userfacing;
 mod verify;
@@ -67,6 +69,7 @@ fn main() -> ExitCode {
         Some("compat") => compat::run(&args[1..]),
         Some("completions") => completions::run(&args[1..]),
         Some("man") => man::run(&args[1..]),
+        Some("tour") => tour::run(&args[1..]),
         Some("-h" | "--help" | "help") | None => {
             print_help();
             ExitCode::SUCCESS
@@ -114,8 +117,11 @@ fn print_help() {
     println!("  aegis-boot compat [query]     Hardware compatibility lookup");
     println!("  aegis-boot completions <shell> Emit bash/zsh completion script");
     println!("  aegis-boot man                 Emit the aegis-boot(1) man page to stdout");
+    println!("  aegis-boot tour                30-second in-terminal walkthrough (#248)");
     println!("  aegis-boot --version [--json] Print version (--json emits schema_version=1)");
     println!("  aegis-boot --help             This message");
+    println!();
+    println!("NEW HERE? Run `aegis-boot tour` or read docs/HOW_IT_WORKS.md.");
     println!();
     println!("EXAMPLES:");
     println!("  aegis-boot init /dev/sdc      # panic-room profile: flash + 3 rescue ISOs");

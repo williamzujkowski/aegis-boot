@@ -41,6 +41,7 @@ const SUBCOMMANDS: &[&str] = &[
     "compat",
     "completions",
     "man",
+    "tour",
     "version",
     "help",
 ];
