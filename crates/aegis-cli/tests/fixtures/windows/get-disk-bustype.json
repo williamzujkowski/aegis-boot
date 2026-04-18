@@ -1,0 +1,47 @@
+[
+  {
+    "Number": 0,
+    "FriendlyName": "Samsung SSD 970 EVO Plus 1TB",
+    "Model": "Samsung SSD 970 EVO Plus 1TB",
+    "BusType": "NVMe",
+    "Size": 1000204886016,
+    "PartitionStyle": "GPT",
+    "NumberOfPartitions": 4,
+    "IsBoot": true,
+    "IsSystem": true,
+    "IsReadOnly": false,
+    "IsOffline": false,
+    "SerialNumber": "S6P9NS0TA01234J",
+    "UniqueId": "{NVMe SN:S6P9NS0TA01234J}"
+  },
+  {
+    "Number": 2,
+    "FriendlyName": "SanDisk Ultra USB 3.0 USB Device",
+    "Model": "SanDisk Ultra USB 3.0 USB Device",
+    "BusType": "USB",
+    "Size": 16102883328,
+    "PartitionStyle": "GPT",
+    "NumberOfPartitions": 2,
+    "IsBoot": false,
+    "IsSystem": false,
+    "IsReadOnly": false,
+    "IsOffline": false,
+    "SerialNumber": "4C530001210731114521",
+    "UniqueId": "{USB SN:4C530001210731114521}"
+  },
+  {
+    "Number": 3,
+    "FriendlyName": "Samsung T7 Shield 2TB",
+    "Model": "Samsung T7 Shield 2TB",
+    "BusType": "USB",
+    "Size": 2000398934016,
+    "PartitionStyle": "GPT",
+    "NumberOfPartitions": 1,
+    "IsBoot": false,
+    "IsSystem": false,
+    "IsReadOnly": false,
+    "IsOffline": false,
+    "SerialNumber": "S6P2NS0TA04567X",
+    "UniqueId": "{USB SN:S6P2NS0TA04567X}"
+  }
+]
