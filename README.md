@@ -50,7 +50,15 @@ aegis-boot is the right pick when you need to boot operator-supplied ISOs **with
 
 ## Quickstart — operators
 
-Install the operator CLI (Linux x86_64 today; cross-platform tracked in [#123](https://github.com/williamzujkowski/aegis-boot/issues/123)):
+Install the operator CLI:
+
+| Platform | Status |
+|---|---|
+| Linux x86_64 | Full support — flash + build, add ISOs, kexec, attest, doctor, compat |
+| macOS (Apple Silicon + Intel) | Drive detection + `flash --image PATH` ([#229](https://github.com/williamzujkowski/aegis-boot/pull/229)). Image *building* requires Linux (mkusb.sh deps); use `aegis-boot fetch-image --url ... --sha256 ...` ([#232](https://github.com/williamzujkowski/aegis-boot/pull/232)) to pull a pre-built `.img` then pipe to `flash --image $(...)` |
+| Windows | Drive enumeration via `Get-Disk` ([#230](https://github.com/williamzujkowski/aegis-boot/pull/230)). Raw-disk writing deferred — combine `aegis-boot list` with Rufus or `dd-for-Windows` for the write |
+
+Pre-built binaries below are Linux-only today; macOS/Windows users build with `cargo install --path crates/aegis-cli` until a darwin/windows release artifact ships.
 
 ```bash
 # Cosign-verified install from the latest GitHub release.
