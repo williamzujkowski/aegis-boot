@@ -135,7 +135,13 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
             Ok(())
         }
         Err(e) => {
-            eprintln!("flash failed: {e}");
+            // PR3 of #247: classify the flash failure into a typed
+            // UserFacing error and render via the structured template.
+            // Keeps the internal flash() -> Result<(), String> surface
+            // intact while giving operators the cause/detail/try/see
+            // format from the epic's spec.
+            let classified = FlashError::classify(&e);
+            eprint!("{}", crate::userfacing::render_string(&classified));
             Err(1)
         }
     }
@@ -637,6 +643,130 @@ fn dirs_from_exe() -> Option<PathBuf> {
         .and_then(|p| p.parent().map(Path::to_path_buf))
 }
 
+// ---- structured errors for operator rendering (#247 PR3) ---------------------
+
+/// Operator-visible failure modes of `aegis-boot flash`. Classified
+/// from the internal `Result<(), String>` at the top-level boundary so
+/// operators see the cause/detail/try/see shape from #247 instead of a
+/// bare `flash failed: <string>` line.
+///
+/// Keeping `flash()` on `Result<(), String>` is deliberate for PR3:
+/// the alternative (propagating a typed enum through every `.map_err`
+/// site) is a meaningfully larger refactor. Classification via string
+/// pattern-matching at the boundary demonstrates the `UserFacing`
+/// surface without touching the error-plumbing of every helper. The
+/// narrow surface is unit-tested (see tests at the bottom of this
+/// file), so the patterns don't silently drift.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum FlashError {
+    /// `mkusb.sh` failed to build the source image (Linux-only path).
+    #[error("image build failed: {0}")]
+    ImageBuild(String),
+    /// `dd` exited non-zero while writing to the device.
+    #[error("dd write failed: {0}")]
+    DdFailed(String),
+    /// The sha256 of the first 64 MB read back from the device did
+    /// not match the same region of the source image.
+    #[error("readback verification failed: {0}")]
+    ReadbackMismatch(String),
+    /// The readback dd returned fewer bytes than requested — almost
+    /// always a silent short-write on a failing / counterfeit stick.
+    #[error("short readback: {0}")]
+    ShortReadback(String),
+    /// Any other internal failure (stat, sync, attestation write, ...).
+    /// Preserved verbatim so operators can grep it; the suggestion is
+    /// generic ("re-run with `RUST_LOG=debug`" / "file an issue").
+    #[error("{0}")]
+    Other(String),
+}
+
+impl FlashError {
+    /// Classify a flash-failure message string into a typed variant
+    /// with a specific operator suggestion. Pure function; unit-tested.
+    pub(crate) fn classify(msg: &str) -> Self {
+        let lower = msg.to_lowercase();
+        if lower.contains("mkusb.sh") || lower.starts_with("image build") {
+            Self::ImageBuild(msg.to_string())
+        } else if lower.contains("dd exited") || lower.contains("dd exec failed") {
+            Self::DdFailed(msg.to_string())
+        } else if lower.contains("sha256 mismatch") || lower.contains("readback verification") {
+            Self::ReadbackMismatch(msg.to_string())
+        } else if lower.contains("readback short") || lower.contains("short readback") {
+            Self::ShortReadback(msg.to_string())
+        } else {
+            Self::Other(msg.to_string())
+        }
+    }
+}
+
+impl crate::userfacing::UserFacing for FlashError {
+    fn summary(&self) -> &str {
+        match self {
+            Self::ImageBuild(_) => "image build failed (mkusb.sh)",
+            Self::DdFailed(_) => "write to stick failed (dd)",
+            Self::ReadbackMismatch(_) => {
+                "readback verification failed — bytes on stick don't match source"
+            }
+            Self::ShortReadback(_) => "readback short — stick returned fewer bytes than requested",
+            Self::Other(_) => "flash failed",
+        }
+    }
+    fn detail(&self) -> &str {
+        match self {
+            Self::ImageBuild(s)
+            | Self::DdFailed(s)
+            | Self::ReadbackMismatch(s)
+            | Self::ShortReadback(s)
+            | Self::Other(s) => s,
+        }
+    }
+    fn suggestion(&self) -> Option<&str> {
+        Some(match self {
+            Self::ImageBuild(_) => {
+                "Check the mkusb.sh prerequisites (mtools, dosfstools, exfatprogs, gdisk); \
+                 ensure /boot/vmlinuz-* and /boot/initrd.img-* are world-readable \
+                 (sudo chmod 0644 /boot/vmlinuz-* /boot/initrd.img-*); re-run flash."
+            }
+            Self::DdFailed(_) => {
+                "The write to the device failed. Unplug, replug, and retry. If it happens \
+                 again on the same offset, the stick is failing — try a different stick."
+            }
+            Self::ReadbackMismatch(_) | Self::ShortReadback(_) => {
+                "The stick accepted dd but doesn't hold what was written — typically a \
+                 counterfeit or failing flash chip. Try a different stick or a different \
+                 USB port (some hubs drop bytes under load). If a new stick also fails, \
+                 run `aegis-boot doctor` and file an issue with the report."
+            }
+            Self::Other(_) => {
+                "Re-run with RUST_LOG=debug for more detail. If the error persists, \
+                 `aegis-boot doctor --report` captures the host state for a bug report."
+            }
+        })
+    }
+    fn docs_url(&self) -> Option<&str> {
+        Some(match self {
+            Self::ImageBuild(_) => {
+                "https://github.com/williamzujkowski/aegis-boot/blob/main/docs/TROUBLESHOOTING.md#mkusbsh-exited-with-n"
+            }
+            Self::DdFailed(_) | Self::ReadbackMismatch(_) | Self::ShortReadback(_) => {
+                "https://github.com/williamzujkowski/aegis-boot/blob/main/docs/TROUBLESHOOTING.md#dd-exited-with-a-non-zero-status-partway-through"
+            }
+            Self::Other(_) => {
+                "https://github.com/williamzujkowski/aegis-boot/blob/main/docs/TROUBLESHOOTING.md"
+            }
+        })
+    }
+    fn code(&self) -> Option<&str> {
+        Some(match self {
+            Self::ImageBuild(_) => "FLASH_IMAGE_BUILD",
+            Self::DdFailed(_) => "FLASH_DD_FAILED",
+            Self::ReadbackMismatch(_) => "FLASH_READBACK_MISMATCH",
+            Self::ShortReadback(_) => "FLASH_READBACK_SHORT",
+            Self::Other(_) => "FLASH_OTHER",
+        })
+    }
+}
+
 // ---- post-write readback verification (#244 PR2) -----------------------------
 
 /// Open the source image and compute the sha256 of its first
@@ -839,5 +969,89 @@ mod tests {
             ),
             Ok(_) => panic!("expected error on short image"),
         }
+    }
+
+    // ---- #247 PR3: FlashError classifier -----------------------------------
+
+    #[test]
+    fn classify_mkusb_string_into_image_build_variant() {
+        let cases = [
+            "mkusb.sh exec failed: No such file or directory",
+            "mkusb.sh exited with exit status: 1",
+            "image build failed: missing dosfstools",
+        ];
+        for msg in cases {
+            assert!(
+                matches!(FlashError::classify(msg), FlashError::ImageBuild(_)),
+                "classify({msg:?}) did not return ImageBuild"
+            );
+        }
+    }
+
+    #[test]
+    fn classify_dd_strings_into_dd_failed_variant() {
+        let cases = [
+            "dd exited with exit status: 1",
+            "dd exec failed: sudo: permission denied",
+        ];
+        for msg in cases {
+            assert!(
+                matches!(FlashError::classify(msg), FlashError::DdFailed(_)),
+                "classify({msg:?}) did not return DdFailed"
+            );
+        }
+    }
+
+    #[test]
+    fn classify_readback_mismatch() {
+        assert!(matches!(
+            FlashError::classify(
+                "readback verification FAILED — sha256 mismatch: expected a, got b"
+            ),
+            FlashError::ReadbackMismatch(_)
+        ));
+    }
+
+    #[test]
+    fn classify_short_readback() {
+        assert!(matches!(
+            FlashError::classify(
+                "readback short: device returned 1048576 bytes, expected 67108864"
+            ),
+            FlashError::ShortReadback(_)
+        ));
+    }
+
+    #[test]
+    fn classify_unknown_falls_back_to_other() {
+        let msg = "something weird happened during stat()";
+        assert!(matches!(FlashError::classify(msg), FlashError::Other(_)));
+    }
+
+    #[test]
+    fn flash_error_rendered_output_has_all_sections() {
+        use crate::userfacing::render_string;
+        let err = FlashError::DdFailed("dd exited with exit status: 1".to_string());
+        let s = render_string(&err);
+        // Check the full structured shape: error code, summary, what,
+        // try, see.
+        assert!(s.contains("error[FLASH_DD_FAILED]"), "missing code: {s}");
+        assert!(s.contains("write to stick failed"), "missing summary: {s}");
+        assert!(s.contains("what happened:"), "missing detail line: {s}");
+        assert!(s.contains("try:"), "missing try line: {s}");
+        assert!(s.contains("see: https://"), "missing docs URL: {s}");
+    }
+
+    #[test]
+    fn flash_error_readback_and_short_share_suggestion_and_docs() {
+        // Both variants describe a stick that accepted dd but doesn't
+        // hold what was written. The suggestion + docs URL should be
+        // the same — a future refactor that makes them diverge needs
+        // explicit rationale.
+        use crate::userfacing::UserFacing;
+        let mismatch = FlashError::ReadbackMismatch("x".into());
+        let short = FlashError::ShortReadback("y".into());
+        assert_eq!(mismatch.suggestion(), short.suggestion());
+        assert_eq!(mismatch.docs_url(), short.docs_url());
     }
 }
