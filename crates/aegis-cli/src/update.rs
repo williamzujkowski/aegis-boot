@@ -375,10 +375,28 @@ pub(crate) fn check_eligibility(dev: &Path) -> Eligibility {
     let sgdisk = match Command::new("sgdisk").args(["-p"]).arg(dev).output() {
         Ok(o) if o.status.success() => o,
         Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            // Sniff for the permission-denied case. sgdisk surfaces it
+            // as "Problem opening /dev/sdX for reading! Error is 13."
+            // (errno 13 = EACCES) plus "You must run this program as
+            // root or use sudo!". Detecting this lets us tell the
+            // operator to retry with sudo instead of leaving them
+            // confused that their stick is "NOT ELIGIBLE".
+            if stderr.contains("must run this program as root")
+                || stderr.contains("Error is 13")
+                || stderr.contains("Permission denied")
+            {
+                return Eligibility::Ineligible(format!(
+                    "permission denied reading {} (need root for raw block-device read). \
+                     Re-run with sudo: `sudo aegis-boot update {}`.",
+                    dev.display(),
+                    dev.display()
+                ));
+            }
             return Eligibility::Ineligible(format!(
                 "`sgdisk -p {}` exited non-zero: {}",
                 dev.display(),
-                String::from_utf8_lossy(&o.stderr).trim()
+                stderr.trim()
             ));
         }
         Err(e) => {
@@ -527,7 +545,18 @@ pub(crate) fn body_contains_guid(body: &str, target_guid: &str) -> bool {
 /// Same resolution rules as `attest::attestation_dir()` — duplicated here
 /// to avoid exporting a new pub surface in attest.rs this PR. Kept
 /// `pub(crate)` so a future `mv` into attest.rs is a mechanical rename.
+///
+/// Sudo handling: when running as root with `SUDO_USER` set (the
+/// typical `sudo aegis-boot update` flow — sudo needed to read the
+/// raw block device), prefer the original user's data dir rather
+/// than root's. Otherwise update-via-sudo would never find the
+/// attestations that flash-via-sudo wrote under the same user's
+/// home — that's the exact bug this fix closes (caught 2026-04-18
+/// during real-stick testing of #181).
 pub(crate) fn attestation_dir() -> Option<PathBuf> {
+    if let Some(sudo_data) = crate::attest::sudo_aware_data_dir() {
+        return Some(sudo_data.join("aegis-boot").join("attestations"));
+    }
     let base = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
