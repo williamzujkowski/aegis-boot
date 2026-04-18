@@ -411,6 +411,25 @@ fn flash(drive: &Drive, prebuilt_image: Option<&Path>) -> Result<(), String> {
         drive.dev.display()
     );
 
+    // PR2 of #244: precompute the sha256 of the source image's first
+    // DEFAULT_READBACK_BYTES bytes so we can verify the device matches
+    // post-dd. Done BEFORE dd while we still have local-only file I/O —
+    // means readback failures land as a clean error after the write
+    // instead of "couldn't even read the source for comparison".
+    let expected_prefix_hash = match precompute_image_prefix_hash(&img_path) {
+        Ok(h) => Some(h),
+        Err(e) => {
+            // Soft-fail: dd still runs, we just can't readback-verify.
+            // Operator sees the warning so a silent skip doesn't look
+            // like a successful verification.
+            eprintln!(
+                "warning: could not precompute source-image prefix hash for readback verify: {e}"
+            );
+            eprintln!("(dd will proceed; post-write readback verification SKIPPED)");
+            None
+        }
+    };
+
     // On macOS, /dev/diskN is buffered; /dev/rdiskN is raw and 10x
     // faster. We rewrite the target here so the operator doesn't need
     // to know the trick.
@@ -435,6 +454,30 @@ fn flash(drive: &Drive, prebuilt_image: Option<&Path>) -> Result<(), String> {
     let _ = Command::new("sudo")
         .args(["partprobe", &drive.dev.display().to_string()])
         .status();
+
+    // PR2 of #244: post-write readback verification. Reads back the
+    // first DEFAULT_READBACK_BYTES bytes of the device and compares
+    // against the precomputed source hash. Catches silent USB write
+    // failures: cheap sticks sometimes accept a dd happily, return
+    // success, and hold zeros in the boot sector — the next boot then
+    // fails with a Secure Boot violation that's impossible to diagnose
+    // from the rescue UI. Reading back ~64 MB and re-checking sha256
+    // catches that BEFORE the operator pulls the stick.
+    if let Some(expected) = expected_prefix_hash.as_deref() {
+        match readback_verify_device(&dd_target, expected) {
+            Ok(()) => {
+                println!("✓ readback verified — first 64 MB on stick matches the source image");
+            }
+            Err(e) => {
+                return Err(format!(
+                    "readback verification FAILED — the stick's first 64 MB does not \
+                     match the source image. This usually means a silent USB write \
+                     failure on the stick (often a counterfeit/failing flash chip). \
+                     Try a different stick or USB port. ({e})"
+                ));
+            }
+        }
+    }
 
     println!();
     println!(
@@ -594,6 +637,73 @@ fn dirs_from_exe() -> Option<PathBuf> {
         .and_then(|p| p.parent().map(Path::to_path_buf))
 }
 
+// ---- post-write readback verification (#244 PR2) -----------------------------
+
+/// Open the source image and compute the sha256 of its first
+/// `DEFAULT_READBACK_BYTES`. Used to seed the post-dd readback
+/// comparison. No sudo needed — the image is a regular file the
+/// operator owns.
+fn precompute_image_prefix_hash(img_path: &Path) -> Result<String, String> {
+    use crate::readback::{sha256_of_first_bytes, DEFAULT_READBACK_BYTES};
+    let mut f =
+        std::fs::File::open(img_path).map_err(|e| format!("open {}: {e}", img_path.display()))?;
+    let (hex, consumed) = sha256_of_first_bytes(&mut f, DEFAULT_READBACK_BYTES)
+        .map_err(|e| format!("hash source-image prefix: {e}"))?;
+    if consumed < DEFAULT_READBACK_BYTES {
+        return Err(format!(
+            "source image is shorter than the {DEFAULT_READBACK_BYTES}-byte readback window \
+             (got {consumed}); image likely truncated"
+        ));
+    }
+    Ok(hex)
+}
+
+/// Read back the first `DEFAULT_READBACK_BYTES` bytes of `device` and
+/// verify the sha256 matches `expected_hex`. Shells out to `sudo dd`
+/// to read since the device is root-owned; the dd output is held in
+/// memory (~64 MB) and hashed in-process via `sha256_of_first_bytes`.
+fn readback_verify_device(device: &Path, expected_hex: &str) -> Result<(), String> {
+    use crate::readback::{sha256_of_first_bytes, DEFAULT_READBACK_BYTES};
+    println!(
+        "Reading back first {} MB of {} for verification...",
+        DEFAULT_READBACK_BYTES / 1024 / 1024,
+        device.display()
+    );
+    let count_mb = DEFAULT_READBACK_BYTES / (1024 * 1024);
+    let dd = Command::new("sudo")
+        .args([
+            "dd",
+            &format!("if={}", device.display()),
+            "bs=1M",
+            &format!("count={count_mb}"),
+            "status=none",
+        ])
+        .output()
+        .map_err(|e| format!("readback dd exec: {e}"))?;
+    if !dd.status.success() {
+        return Err(format!(
+            "readback dd exited with {} ({})",
+            dd.status,
+            String::from_utf8_lossy(&dd.stderr).trim()
+        ));
+    }
+    let mut cursor = std::io::Cursor::new(dd.stdout);
+    let (actual_hex, consumed) = sha256_of_first_bytes(&mut cursor, DEFAULT_READBACK_BYTES)
+        .map_err(|e| format!("hash device prefix: {e}"))?;
+    if consumed < DEFAULT_READBACK_BYTES {
+        return Err(format!(
+            "readback short: device returned {consumed} bytes, expected {DEFAULT_READBACK_BYTES} \
+             (likely a truncated write — the stick may have failed)"
+        ));
+    }
+    if actual_hex != expected_hex {
+        return Err(format!(
+            "sha256 mismatch: expected {expected_hex}, got {actual_hex}"
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -688,5 +798,46 @@ mod tests {
             "intent should mention device: {}",
             plan.intent()
         );
+    }
+
+    #[test]
+    fn precompute_hash_succeeds_on_image_at_least_64mib() {
+        use std::io::Write;
+        // Write a 64 MiB + 1 byte file: the hash should be of the
+        // first 64 MiB exactly, not the whole file. Guards against a
+        // future refactor where someone "helpfully" hashes the whole
+        // image and breaks the readback contract.
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let mut f = std::fs::File::create(tmp.path()).unwrap();
+        let chunk = vec![0xAAu8; 1024 * 1024];
+        for _ in 0..64 {
+            f.write_all(&chunk).unwrap();
+        }
+        f.write_all(&[0xBBu8]).unwrap();
+        f.sync_all().unwrap();
+
+        let hash = precompute_image_prefix_hash(tmp.path()).expect("hash should succeed");
+        // sha256 hex is always 64 lowercase chars.
+        assert_eq!(hash.len(), 64);
+        assert!(hash.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')));
+    }
+
+    #[test]
+    fn precompute_hash_rejects_image_shorter_than_window() {
+        // Only 1 MB of bytes — less than the 64 MB readback window —
+        // should error out (truncated image).
+        use std::io::Write;
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let mut f = std::fs::File::create(tmp.path()).unwrap();
+        f.write_all(&vec![0xCCu8; 1024 * 1024]).unwrap();
+        f.sync_all().unwrap();
+
+        match precompute_image_prefix_hash(tmp.path()) {
+            Err(e) => assert!(
+                e.contains("truncated") || e.contains("shorter"),
+                "expected truncated/shorter error, got: {e}"
+            ),
+            Ok(_) => panic!("expected error on short image"),
+        }
     }
 }
