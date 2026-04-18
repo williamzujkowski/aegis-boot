@@ -52,7 +52,7 @@ Two partitions:
 
 ```
 /dev/sdX1   AEGIS_BOOT   ESP (FAT32, ~200 MB)   ← signed shim/grub/kernel chain
-/dev/sdX2   AEGIS_ISOS   data (FAT32, rest)     ← your .iso files
+/dev/sdX2   AEGIS_ISOS   data (exFAT, rest)     ← your .iso files (#243; opt-in fat32/ext4 also supported)
 ```
 
 `AEGIS_BOOT` is what the firmware boots from. It's tiny, signed, and **never changes** after `aegis-boot flash` writes it. `AEGIS_ISOS` is yours — drop ISOs in, copy them out, edit metadata sidecars (#246). Tampering with `AEGIS_ISOS` cannot break the boot chain because the boot chain doesn't live there.

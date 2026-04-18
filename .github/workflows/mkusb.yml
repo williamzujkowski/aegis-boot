@@ -31,7 +31,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             qemu-system-x86 ovmf \
             shim-signed grub-efi-amd64-signed linux-image-virtual \
-            mtools dosfstools gdisk \
+            mtools dosfstools exfatprogs gdisk \
             busybox-static cpio
           # Kernels mode 0600; we need them readable for mcopy.
           # linux-image-virtual is a meta-package that pulls -generic on

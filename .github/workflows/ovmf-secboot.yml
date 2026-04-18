@@ -52,7 +52,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             qemu-system-x86 ovmf \
             shim-signed grub-efi-amd64-signed linux-image-generic \
-            mtools dosfstools gdisk \
+            mtools dosfstools exfatprogs gdisk \
             busybox-static cpio
           # Kernels under /boot are typically 0600; SB E2E needs them readable.
           sudo chmod 0644 /boot/vmlinuz-*-generic /boot/initrd.img-*-generic || true

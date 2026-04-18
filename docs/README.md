@@ -8,7 +8,7 @@
 | **Operator** | [`CLI.md`](./CLI.md) | `aegis-boot` CLI reference — `flash`, `list`, `add` subcommand details |
 | **Operator** | [`TROUBLESHOOTING.md`](./TROUBLESHOOTING.md) | Common errors and fixes (errno 61, won't-boot, mount issues, MOK pitfalls) |
 | **Operator** | [`UNSIGNED_KERNEL.md`](./UNSIGNED_KERNEL.md) | What to do when an ISO ships an unsigned kernel (Alpine, Arch, NixOS) |
-| **Operator** | [`USB_LAYOUT.md`](./USB_LAYOUT.md) | GPT + ESP + AEGIS_ISOS scheme; manual loop-mount workflow; FAT32 vs ext4 trade-off |
+| **Operator** | [`USB_LAYOUT.md`](./USB_LAYOUT.md) | GPT + ESP + AEGIS_ISOS scheme; manual loop-mount workflow; exFAT (default) / FAT32 / ext4 trade-offs |
 | **Operator** | [`HARDWARE_COMPAT.md`](./HARDWARE_COMPAT.md) | Community-curated table of validated machines; how to submit your own report |
 | **Operator** | [`CATALOG_POLICY.md`](./CATALOG_POLICY.md) | What gets into the `aegis-boot recommend` catalog; how to propose additions |
 | **Operator** | [`compatibility/iso-matrix.md`](./compatibility/iso-matrix.md) | Per-distro kexec compatibility — what works, what surfaces a quirk |

@@ -359,34 +359,48 @@ fn mount_dev(dev: &Path) -> Result<Mount, String> {
         ));
     }
     let tmp = tempdir().ok_or_else(|| "mktemp failed".to_string())?;
-    // iocharset=utf8 (not cp437 — that's a codepage, not an iocharset;
-    // using cp437 as iocharset silently falls back to the default
-    // iso8859-1 and fails on kernels without nls_iso8859-1 loaded).
-    let out = Command::new("sudo")
-        .args([
-            "mount",
-            "-t",
-            "vfat",
-            "-o",
-            "rw,codepage=437,iocharset=utf8",
-            &part.display().to_string(),
-            &tmp.display().to_string(),
-        ])
-        .output()
-        .map_err(|e| format!("mount exec: {e}"))?;
-    if !out.status.success() {
-        let _ = std::fs::remove_dir(&tmp);
-        return Err(format!(
-            "mount {} failed: {}",
-            part.display(),
+    // Try filesystem types in order of how mkusb.sh formats them today:
+    // exfat first (the #243 default), then ext4 (DATA_FS=ext4 opt-in),
+    // then vfat (legacy DATA_FS=fat32 sticks). The vfat path needs the
+    // explicit codepage/iocharset because the kernel default
+    // `iocharset=iso8859-1` is a module not always loaded; cp437 is a
+    // codepage, NOT an iocharset, so the iocharset is utf8.
+    let mount_attempts: &[(&str, &str)] = &[
+        ("exfat", "rw"),
+        ("ext4", "rw"),
+        ("vfat", "rw,codepage=437,iocharset=utf8"),
+    ];
+    let mut last_err = String::new();
+    for (fstype, opts) in mount_attempts {
+        let out = Command::new("sudo")
+            .args([
+                "mount",
+                "-t",
+                fstype,
+                "-o",
+                opts,
+                &part.display().to_string(),
+                &tmp.display().to_string(),
+            ])
+            .output()
+            .map_err(|e| format!("mount exec: {e}"))?;
+        if out.status.success() {
+            return Ok(Mount {
+                path: tmp,
+                temporary: true,
+                device: Some(part),
+            });
+        }
+        last_err = format!(
+            "  -t {fstype}: {}",
             String::from_utf8_lossy(&out.stderr).trim()
-        ));
+        );
     }
-    Ok(Mount {
-        path: tmp,
-        temporary: true,
-        device: Some(part),
-    })
+    let _ = std::fs::remove_dir(&tmp);
+    Err(format!(
+        "mount {} failed (tried exfat, ext4, vfat):\n{last_err}",
+        part.display()
+    ))
 }
 
 pub(crate) fn unmount_temp(m: &Mount) {
@@ -691,8 +705,11 @@ fn free_bytes(path: &Path) -> Option<u64> {
 }
 
 /// FAT32 hard per-file ceiling: 4 GiB minus one byte. Files at or above
-/// this size cannot be written to a FAT32 filesystem — reflash with
-/// `DATA_FS=ext4` in mkusb.sh to lift the ceiling.
+/// this size cannot be written to a FAT32 filesystem. As of #243 the
+/// default is exfat, which has no per-file ceiling — this check now
+/// only fires for the opt-in `DATA_FS=fat32` path on legacy sticks.
+/// The recovery message points to both exfat (cross-OS) and ext4
+/// (Linux-only) reflash recipes.
 const FAT32_MAX_FILE_SIZE: u64 = (4 * 1024 * 1024 * 1024) - 1;
 
 /// True when the filesystem type reported by /proc/mounts indicates a
@@ -732,7 +749,12 @@ fn check_fat32_ceiling(mount: &Mount, iso_filename: &str, iso_size: u64) -> Resu
         humanize(iso_size)
     );
     eprintln!("  The AEGIS_ISOS partition is formatted as {fs_type}, which cannot store");
-    eprintln!("  files at or above 4 GiB. Reflash with ext4 to lift the ceiling:");
+    eprintln!("  files at or above 4 GiB. Reflash with the new exfat default to lift");
+    eprintln!("  the ceiling (preserves cross-OS r/w on Linux + macOS + Windows):");
+    eprintln!();
+    eprintln!("      sudo aegis-boot flash {flash_target}");
+    eprintln!();
+    eprintln!("  Or, for a Linux-only stick, use ext4:");
     eprintln!();
     eprintln!("      DATA_FS=ext4 sudo aegis-boot flash {flash_target}");
     eprintln!();

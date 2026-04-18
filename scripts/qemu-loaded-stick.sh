@@ -13,7 +13,7 @@
 #
 # Prereqs (same as dev-test.sh): qemu-system-x86, ovmf,
 # shim-signed, grub-efi-amd64-signed, linux-image-generic, mtools,
-# dosfstools, gdisk, busybox-static, cpio, xorriso, util-linux,
+# dosfstools, exfatprogs, gdisk, busybox-static, cpio, xorriso, util-linux,
 # AND sudo for the AEGIS_ISOS loop-mount step.
 #
 # Closes #66.

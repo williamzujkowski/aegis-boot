@@ -18,7 +18,7 @@
 #   sudo apt-get install -y \
 #     qemu-system-x86 ovmf \
 #     shim-signed grub-efi-amd64-signed linux-image-generic \
-#     mtools dosfstools gdisk \
+#     mtools dosfstools exfatprogs gdisk \
 #     busybox-static cpio xorriso util-linux
 #
 # Prereq (once per kernel update):
@@ -50,7 +50,7 @@ if (( ${#missing[@]} > 0 )); then
     echo "run (one-time):" >&2
     echo "  sudo apt-get install -y qemu-system-x86 ovmf shim-signed \\" >&2
     echo "       grub-efi-amd64-signed linux-image-generic mtools dosfstools \\" >&2
-    echo "       gdisk busybox-static cpio xorriso util-linux" >&2
+    echo "       exfatprogs gdisk busybox-static cpio xorriso util-linux" >&2
     exit 1
 fi
 

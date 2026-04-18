@@ -516,7 +516,7 @@ Matching logic: the destination mount path → owning device (from `/proc/mounts
 
 ## `aegis-boot eject`
 
-Safely power-off a USB stick before physical removal. Bundles the `sync + blockdev --flushbufs + udisksctl power-off / eject` recipe into one command. Pulling a stick without syncing can leave the `AEGIS_ISOS` FAT32 / ext4 state dirty, which downstream presents as "file ends mid-ISO" on the next boot or sha256 mismatch during verification.
+Safely power-off a USB stick before physical removal. Bundles the `sync + blockdev --flushbufs + udisksctl power-off / eject` recipe into one command. Pulling a stick without syncing can leave the `AEGIS_ISOS` exFAT / FAT32 / ext4 state dirty, which downstream presents as "file ends mid-ISO" on the next boot or sha256 mismatch during verification.
 
 ### Usage
 

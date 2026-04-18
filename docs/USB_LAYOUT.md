@@ -16,7 +16,7 @@ This document describes the on-disk layout of an aegis-boot USB stick built by [
 │    /vmlinuz                ← Canonical-signed kernel    │
 │    /initrd.img             ← distro initrd + aegis initramfs │
 ├─────────────────────────────────────────────────────────┤
-│  Part 2 — Data (FAT32, label AEGIS_ISOS, remainder)     │
+│  Part 2 — Data (exFAT, label AEGIS_ISOS, remainder)     │
 │    ubuntu-24.04.1-desktop-amd64.iso                     │
 │    fedora-workstation-41-x86_64.iso                     │
 │    debian-live-12.7.0-amd64-standard.iso                │
@@ -34,47 +34,44 @@ Splitting them means:
 - The signed boot chain is **immutable in practice** — reduces the surface for accidental corruption.
 - The data partition can be **reformatted** if needed without touching the ESP.
 
-## File size limit on FAT32
+## Filesystem choice for AEGIS_ISOS
 
-FAT32 caps individual files at **4 GB minus 1 byte**. Typical distro ISOs:
+The data partition defaults to **exFAT** as of [#243](https://github.com/williamzujkowski/aegis-boot/issues/243) (was FAT32 prior). exFAT is natively read/write on Linux 5.7+, macOS, and Windows, and has **no per-file size limit** — Win11 / Rocky DVD / Ubuntu Desktop drop straight onto the stick.
 
-| ISO | Size | Fits on FAT32? |
-|---|---|---|
-| Alpine standard | ~200 MB | ✅ |
-| NixOS minimal | ~900 MB | ✅ |
-| Debian netinst / live standard | ~1 GB | ✅ |
-| Arch | ~1.2 GB | ✅ |
-| Fedora Workstation | ~2.3 GB | ✅ |
-| Ubuntu Server LTS | ~2.6 GB | ✅ |
-| Ubuntu LTS Desktop | ~5.8 GB | ❌ exceeds |
-| Windows 10 installer | ~5.5 GB | ❌ exceeds |
-| Windows 11 installer | ~7.9 GB | ❌ exceeds |
-| Rocky 9 DVD | ~10 GB | ❌ exceeds |
+The `DATA_FS` environment variable selects the filesystem at mkusb time:
 
-`aegis-boot add` refuses oversized ISOs on FAT32 before the copy starts, with a message naming the ext4 rebuild path. See [TROUBLESHOOTING.md § "ISO too large for FAT32"](./TROUBLESHOOTING.md#iso-too-large-for-fat32) for the exact error text.
-
-If you need to ship a >4 GB image, reflash the stick with ext4:
+| `DATA_FS` value | Per-file limit | Linux | macOS | Windows | Use case |
+|---|---|---|---|---|---|
+| `exfat` (default) | none | r/w (5.7+) | r/w native | r/w native | the obvious default |
+| `fat32` (legacy) | **4 GB − 1 byte** | r/w native | r/w native | r/w native | maximum compatibility, capped |
+| `ext4` | none | r/w native | r/w via FUSE | r/w via Ext2Fsd / Paragon | Linux-only fleet |
 
 ```bash
+# Default (exfat, no per-file cap, cross-OS r/w):
+sudo aegis-boot flash /dev/sdX
+
+# Opt-in legacy fat32 (capped):
+DATA_FS=fat32 sudo aegis-boot flash /dev/sdX
+
+# Opt-in ext4 (Linux-only writes from the host):
 DATA_FS=ext4 sudo aegis-boot flash /dev/sdX
-# or via mkusb.sh directly:
-DATA_FS=ext4 ./scripts/mkusb.sh
 ```
 
-Trade-off: ext4 isn't natively writable from macOS or Windows, so the "drop files on the host" workflow requires Linux (or FUSE drivers like `ext4fuse` on macOS, `Ext2Fsd`/`Paragon` on Windows). Pick based on where you're dropping ISOs onto the stick.
+For an opt-in `DATA_FS=fat32` stick, `aegis-boot add` refuses oversized ISOs before the copy starts, naming both the exfat default and the ext4 escape hatch. See [TROUBLESHOOTING.md § "ISO too large for FAT32"](./TROUBLESHOOTING.md#iso-too-large-for-fat32) for the exact error text.
 
-**Windows installer caveat.** Win10/Win11 ISOs now get past `aegis-boot add` (on ext4 sticks) and surface in rescue-tui's list with the `[X] not kexec-bootable` glyph. They cannot actually be kexec-booted — Windows uses `bootmgr.efi` + the NT loader, not a Linux kernel. aegis-boot surfaces them as a specific diagnostic rather than silently hiding them so the operator isn't left wondering where their ISO went.
+**Windows installer caveat.** Win10/Win11 ISOs surface in rescue-tui's list with the `[X] not kexec-bootable` glyph. They cannot actually be kexec-booted — Windows uses `bootmgr.efi` + the NT loader, not a Linux kernel. aegis-boot surfaces them as a specific diagnostic rather than silently hiding them so the operator isn't left wondering where their ISO went.
 
-The data-partition GUID changes with the filesystem: FAT32 gets `0700` (Microsoft Basic Data, cross-OS friendly) and ext4 gets `8300` (Linux filesystem). Both mount fine from Linux; the type only matters for auto-mount behavior on other OSes.
+The data-partition GUID is `0700` (Microsoft Basic Data) for both exFAT and FAT32, and `8300` (Linux filesystem) for ext4. All three mount fine from Linux; the type only matters for auto-mount behavior on other OSes.
 
 ## Building
 
 ```bash
 # Needs: shim-signed, grub-efi-amd64-signed, linux-image-virtual or -generic,
-# mtools, dosfstools, gdisk. All in the standard Ubuntu/Debian repos.
+# mtools, dosfstools, exfatprogs (for the #243 default), gdisk. All in
+# the standard Ubuntu/Debian repos (exfatprogs is in main since 22.04).
 sudo apt-get install -y \
     shim-signed grub-efi-amd64-signed linux-image-virtual \
-    mtools dosfstools gdisk
+    mtools dosfstools exfatprogs gdisk
 
 # Kernel reads require root (kernels are mode 0600 by default on modern Ubuntu).
 # Catches both -virtual and -generic suffixes.
@@ -152,6 +149,6 @@ See [THREAT_MODEL.md](../THREAT_MODEL.md) for the full model. In short:
 
 ## Limitations
 
-- **Single-file 4 GB FAT32 cap** on the default data partition (see above).
+- **Single-file 4 GB FAT32 cap** on the opt-in `DATA_FS=fat32` legacy data partition (the default since #243 is exFAT, which has no per-file limit).
 - **User responsibility**: ISOs placed on the data partition are trusted by default. The TUI displays hash-verification and signature-verification status but doesn't block boot on a missing sidecar — that's deployment policy, not a mkusb concern.
 - **x86_64 only** — aarch64 / riscv64 variants are a separate epic.

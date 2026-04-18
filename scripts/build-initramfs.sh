@@ -204,6 +204,12 @@ if [[ -n "$KMOD_SRC" && -d "$KMOD_SRC" ]]; then
         "isofs" "CONFIG_ISO9660_FS"
     try_module "kernel/fs/udf/udf" "$MOD_DEST/kernel/fs/udf" \
         "udf" "CONFIG_UDF_FS"
+    # exfat (Linux 5.7+, mainlined in fs/exfat). Now the default for
+    # AEGIS_ISOS as of #243; without this module the rescue-tui's
+    # exfat-mount fallback in the AEGIS_ISOS auto-mount loop would
+    # silently fail on every device manufactured after that change.
+    try_module "kernel/fs/exfat/exfat" "$MOD_DEST/kernel/fs/exfat" \
+        "exfat" "CONFIG_EXFAT_FS"
     try_module "kernel/drivers/block/loop" "$MOD_DEST/kernel/drivers/block" \
         "loop" "CONFIG_BLK_DEV_LOOP"
 
@@ -455,11 +461,16 @@ if [ -n "$AEGIS_DEV" ]; then
     # themselves are never modified — iso-probe opens .iso files
     # read-only via loop-mount.
     mount_ok=0
+    # Try exfat first since it's the default for AEGIS_ISOS as of #243.
+    # ext4 second (the Linux-only DATA_FS=ext4 opt-in path). vfat last
+    # — legacy DATA_FS=fat32 sticks; the explicit codepage/iocharset
+    # variants are kept because the kernel default `iocharset=iso8859-1`
+    # is a module we don't ship (#68, #109).
     for spec in \
+        "exfat:rw" \
         "ext4:rw" \
         "vfat:rw,codepage=437,iocharset=utf8" \
-        "vfat:rw" \
-        "exfat:rw"; do
+        "vfat:rw"; do
         fstype="${spec%%:*}"
         opts="${spec#*:}"
         mount_err=$(/bin/mount -t "$fstype" -o "$opts" "$AEGIS_DEV" /run/media/aegis-isos 2>&1)

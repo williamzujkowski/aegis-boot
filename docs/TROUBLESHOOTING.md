@@ -26,7 +26,7 @@ The build script failed before `dd` ran. Inspect the script's stderr (printed in
 
 - `chmod 0644 /boot/vmlinuz-* /boot/initrd.img-*` not run after a kernel update — the script can't read the kernel.
 - Missing `shim-signed` / `grub-efi-amd64-signed` packages.
-- `mtools` / `dosfstools` / `gdisk` not installed.
+- `mtools` / `dosfstools` / `exfatprogs` / `gdisk` not installed.
 
 See [BUILDING.md](../BUILDING.md) and [LOCAL_TESTING.md § "One-time setup"](./LOCAL_TESTING.md#one-time-setup).
 
@@ -43,24 +43,33 @@ You're trying to add an ISO larger than what's free on `AEGIS_ISOS`. Either:
 
 ### ISO too large for FAT32
 
-You hit an error like:
+This only fires on **legacy `DATA_FS=fat32` sticks** — the default since [#243](https://github.com/williamzujkowski/aegis-boot/issues/243) is exFAT, which has no per-file size limit. If you hit this on a current-default stick, you've reflashed with `DATA_FS=fat32` somewhere along the way.
+
+You'll see an error like:
 
 ```
 aegis-boot add: Win11_25H2_English_x64_v2.iso is 7.4 GiB — exceeds
   FAT32's 4 GiB per-file ceiling.
   The AEGIS_ISOS partition is formatted as vfat, which cannot store
-  files at or above 4 GiB. Reflash with ext4 to lift the ceiling:
+  files at or above 4 GiB. Reflash with the new exfat default to lift
+  the ceiling (preserves cross-OS r/w on Linux + macOS + Windows):
+
+      sudo aegis-boot flash /dev/sdX
+
+  Or, for a Linux-only stick, use ext4:
 
       DATA_FS=ext4 sudo aegis-boot flash /dev/sdX
 ```
 
-FAT32 caps individual files at 4 GiB minus one byte — this affects Ubuntu LTS Desktop (~5.8 GB), Rocky 9 DVD (~10 GB), Windows 10 installer (~5.5 GB), and Windows 11 installer (~7.9 GB). Rebuild the stick with ext4:
+FAT32 caps individual files at 4 GiB minus one byte — this affects Ubuntu LTS Desktop (~5.8 GB), Rocky 9 DVD (~10 GB), Windows 10 installer (~5.5 GB), and Windows 11 installer (~7.9 GB). The cleanest fix is to drop the `DATA_FS=fat32` opt-in and reflash with the default exfat:
 
 ```bash
-DATA_FS=ext4 sudo aegis-boot flash /dev/sdX
+sudo aegis-boot flash /dev/sdX
 ```
 
-The destructive reflash will wipe existing ISOs — back up first with `aegis-boot list /dev/sdX` to see what's there. Trade-off: ext4 isn't natively writable from macOS / Windows (Linux-only "drop files on the host" workflow, or use `ext4fuse` on macOS / `Ext2Fsd` on Windows).
+The destructive reflash will wipe existing ISOs — back up first with `aegis-boot list /dev/sdX` to see what's there.
+
+If for some reason exfat is unsuitable (very old firmware that doesn't enumerate exfat partitions in its boot menu), use ext4 — but be aware ext4 isn't natively writable from macOS / Windows (Linux-only "drop files on the host" workflow, or use `ext4fuse` on macOS / `Ext2Fsd` on Windows).
 
 ### Windows installer ISO on the stick doesn't boot
 

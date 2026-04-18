@@ -12,7 +12,7 @@ While GitHub Actions CI is the primary validation gate, you can run the full mat
 sudo apt-get install -y \
     qemu-system-x86 ovmf \
     shim-signed grub-efi-amd64-signed linux-image-generic \
-    mtools dosfstools gdisk \
+    mtools dosfstools exfatprogs gdisk \
     busybox-static cpio xorriso util-linux
 
 # Make the installed kernel readable by non-root (mcopy needs to read it

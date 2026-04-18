@@ -93,7 +93,8 @@ rescue-tui ──┬──► iso-probe ──► iso-parser   (on the stick, in
 │    /vmlinuz                (Canonical-signed kernel)    │
 │    /initrd.img             (distro initrd + our /init)  │
 ├─────────────────────────────────────────────────────────┤
-│  Part 2 — Data (FAT32 or ext4, label AEGIS_ISOS)        │  ← operator content
+│  Part 2 — Data (exFAT default; FAT32/ext4 opt-in;       │  ← operator content
+│            label AEGIS_ISOS) (#243)                     │
 │    ubuntu-24.04.2-live-server-amd64.iso                 │     replaceable without
 │    ubuntu-24.04.2-live-server-amd64.iso.sha256          │     reflashing
 │    fedora-workstation-41-x86_64.iso                     │
