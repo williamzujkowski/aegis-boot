@@ -113,6 +113,30 @@ pub const COMPAT_DB: &[CompatEntry] = &[
         reported_by: "aegis-team",
         date: "2026-04-16",
     },
+    CompatEntry {
+        vendor: "Framework",
+        // Includes the board revision (`/ A6`) so doctor's
+        // dmi_product_label-derived query — which composes as
+        // `<product_name> / <product_version>` when version is
+        // shorter than name — matches every token. Board revs
+        // matter: Framework rev A6 = post-04/2024 firmware
+        // generation with INSYDE 03.x.
+        model: "Laptop (12th Gen Intel Core) / A6",
+        firmware: "INSYDE Corp. 03.19 (09/18/2025)",
+        sb_state: "enforcing",
+        boot_key: "F12",
+        level: CompatLevel::Verified,
+        notes: &[
+            "Full signed-chain validated 2026-04-18 via aegis-hwsim signed-boot-ubuntu \
+             scenario against the framework-laptop-12gen persona — verified-outcome \
+             report at #236.",
+            "Boot landmarks observed: BdsDxe → GNU GRUB → EFI stub SB-enabled → rescue-tui.",
+            "TPM 2.0 (Intel fTPM, manufacturer INTC). Fast Boot disabled by default \
+             (firmware 03.19); no operator intervention needed for USB boot.",
+        ],
+        reported_by: "@williamzujkowski",
+        date: "2026-04-18",
+    },
 ];
 
 /// URL operators visit to file a hardware report. Kept here so the

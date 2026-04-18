@@ -30,8 +30,9 @@ A row in this table represents **one** operator's outcome. Multiple rows for the
 | Machine | Firmware | SB state | Boot key | Stick → boot | kexec | Quirks | Reported by | Date |
 |---|---|---|---|---|---|---|---|---|
 | Generic SanDisk Cruzer Blade 32GB on x86_64 host | OVMF 4M (Debian package, MS-enrolled vars) | enforcing | n/a (USB-passthrough → QEMU) | ✅ | ✅ Ubuntu 24.04.2 boots; ✅ Alpine 3.20.3 correctly refused with `errno 61` | None observed in shakedown (#109) | @williamzujkowski | 2026-04-16 |
+| Framework Laptop (12th Gen Intel Core) | INSYDE Corp. 03.19 (09/18/2025) | enforcing | F12 | ✅ Full chain: BdsDxe → GNU GRUB → EFI stub SB-enabled → rescue-tui ([#236](https://github.com/williamzujkowski/aegis-boot/issues/236)) | Not exercised in this report (kexec is operator choice; chain validity established without it) | TPM 2.0 Intel fTPM (manufacturer INTC); Fast Boot disabled by default in firmware 03.19 — no operator intervention needed | @williamzujkowski | 2026-04-18 |
 
-The shakedown was performed via QEMU USB-passthrough on a real SanDisk Cruzer 32 GB stick written by `aegis-boot flash`. Direct boot on physical Framework / ThinkPad / Dell hardware is the next gate ([#51](https://github.com/williamzujkowski/aegis-boot/issues/51)) and would expand this table considerably.
+The shakedown was performed via QEMU USB-passthrough on a real SanDisk Cruzer 32 GB stick written by `aegis-boot flash`. Direct boot on physical hardware was first validated against the Framework 12th Gen entry above on 2026-04-18 via aegis-hwsim's signed-boot-ubuntu scenario (with the same physical stick, run through QEMU+OVMF with the Framework persona's DMI/firmware fields injected). ThinkPad / Dell / HP / ASUS persona testing also passed in the same matrix run; promoting those rows from persona-only to physical-hardware-Verified requires an operator with each piece of hardware to file a hardware-report.
 
 ### QEMU / virtualized
 
