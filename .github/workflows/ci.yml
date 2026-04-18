@@ -39,7 +39,7 @@ jobs:
       - run: cargo test --all-features --locked
 
   aegis-cli:
-    name: aegis-cli (Linux + macOS cross-check)
+    name: aegis-cli (Linux + macOS + Windows cross-check)
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -48,6 +48,7 @@ jobs:
           rustup toolchain install 1.85.0 --profile minimal --component rustfmt,clippy
           rustup override set 1.85.0
           rustup target add x86_64-apple-darwin
+          rustup target add x86_64-pc-windows-gnu
       - uses: Swatinem/rust-cache@v2
       - name: Format + lint aegis-cli
         run: |
@@ -56,10 +57,14 @@ jobs:
       - name: Run aegis-cli tests
         run: cargo test -p aegis-cli --locked
       - name: Cross-compile check for macOS
-        # Build-only gate (no -D warnings). Confirms cross-platform
-        # flash code compiles for x86_64-apple-darwin; runtime macOS
-        # behavior is covered by fixture-based parser tests.
+        # Build-only gate. Confirms cross-platform flash code compiles
+        # for x86_64-apple-darwin; runtime macOS behavior is covered
+        # by fixture-based parser tests.
         run: cargo check -p aegis-cli --target x86_64-apple-darwin --all-targets
+      - name: Cross-compile check for Windows
+        # Same rationale as macOS: Windows detect code compiles, its
+        # PowerShell-output parser is exercised via committed fixtures.
+        run: cargo check -p aegis-cli --target x86_64-pc-windows-gnu --all-targets
 
   fitness:
     name: aegis-fitness audit

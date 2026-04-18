@@ -23,11 +23,17 @@ mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::list_removable_drives;
 
-/// On unsupported platforms (currently Windows), return an empty list.
-/// Callers surface a platform-specific error ("not yet supported on
-/// Windows — see #228") so operators don't silently get "no drives
-/// detected."
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+// Same pattern for Windows: `parse_get_disk_json` is always compiled
+// (testable from Linux CI via committed fixtures); only
+// `list_removable_drives` is Windows-gated.
+mod windows;
+
+#[cfg(target_os = "windows")]
+pub use windows::list_removable_drives;
+
+/// Stub for unsupported platforms. Callers surface a platform-specific
+/// error so operators don't silently get "no drives detected".
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 #[must_use]
 pub fn list_removable_drives() -> Vec<Drive> {
     Vec::new()
