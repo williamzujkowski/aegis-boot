@@ -311,6 +311,85 @@ pub(crate) fn canonical_esp_paths() -> [&'static str; 6] {
     ]
 }
 
+/// sha256 a file at `path` and return the lowercase hex digest.
+/// Streaming read — constant memory regardless of file size (initrd
+/// is ~90 MB so the naive `fs::read + hash` path would allocate a
+/// full copy we don't need).
+pub(crate) fn sha256_file(path: &Path) -> Result<String, ManifestError> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+
+    // 64 KiB scratch buffer, heap-allocated to keep the stack frame
+    // small (clippy's `large_stack_arrays` flags `[u8; 64 * 1024]`).
+    let mut buf: Vec<u8> = vec![0u8; 64 * 1024];
+
+    let mut f = fs::File::open(path).map_err(|source| ManifestError::Io {
+        path: path.display().to_string(),
+        source,
+    })?;
+    let mut hasher = Sha256::new();
+    loop {
+        let n = f.read(&mut buf).map_err(|source| ManifestError::Io {
+            path: path.display().to_string(),
+            source,
+        })?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Return `size_bytes` for a file on disk. Paired with [`sha256_file`]
+/// when building [`EspFileEntry`] — both values come from the local
+/// source we're about to stage, not the post-staging ESP content, so
+/// the manifest reflects "what we intended to write" which is what
+/// the verifier then asserts against the stick.
+pub(crate) fn file_size(path: &Path) -> Result<u64, ManifestError> {
+    let meta = fs::metadata(path).map_err(|source| ManifestError::Io {
+        path: path.display().to_string(),
+        source,
+    })?;
+    Ok(meta.len())
+}
+
+/// Compute the 6 [`EspFileEntry`] rows for a manifest by sha256'ing
+/// the local staging sources in the fixed canonical order. Returns
+/// entries whose `path` is the ESP destination (from
+/// [`canonical_esp_paths`]) and whose `sha256` / `size_bytes` come
+/// from the local source file that will be mcopy'd to that path.
+///
+/// Note that `sources.grub_cfg` maps to two ESP paths
+/// (`::/EFI/BOOT/grub.cfg` and `::/EFI/ubuntu/grub.cfg`) — both
+/// entries hash the same local file, which is what direct-install's
+/// `stage_esp` will copy.
+pub(crate) fn compute_esp_file_hashes(
+    sources: &crate::direct_install::EspStagingSources<'_>,
+) -> Result<[EspFileEntry; 6], ManifestError> {
+    // Order must match canonical_esp_paths() exactly.
+    let pairs: [(&str, &Path); 6] = [
+        (ESP_DEST_SHIM, sources.shim),
+        (ESP_DEST_GRUB, sources.grub),
+        (ESP_DEST_GRUB_CFG_BOOT, sources.grub_cfg),
+        (ESP_DEST_GRUB_CFG_UBUNTU, sources.grub_cfg),
+        (ESP_DEST_KERNEL, sources.kernel),
+        (ESP_DEST_INITRD, sources.combined_initrd),
+    ];
+
+    let mut out: Vec<EspFileEntry> = Vec::with_capacity(6);
+    for (dest, src) in pairs {
+        out.push(EspFileEntry {
+            path: dest.to_string(),
+            sha256: sha256_file(src)?,
+            size_bytes: file_size(src)?,
+        });
+    }
+    out.try_into().map_err(|_| {
+        ManifestError::Minisign("internal: esp_files length != 6 after build".to_string())
+    })
+}
+
 /// Helper for the verifier (Phase 3) — returns `true` if every
 /// `esp_files` entry's path is one of the 6 canonical paths and no
 /// canonical path is missing. Callers layer the sha256 + size checks
@@ -606,5 +685,154 @@ mod tests {
             body.len(),
             MAX_MANIFEST_BYTES
         );
+    }
+
+    // ---- Phase 3a: hash + staging-source helpers -------------------
+
+    #[test]
+    fn sha256_file_matches_known_digest_for_empty_file() {
+        // sha256("") is the RFC-known empty-input hash. Guards
+        // against a streaming-read bug where the final hasher state
+        // isn't finalized correctly.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let p = tmp.path().join("empty.bin");
+        std::fs::write(&p, b"").expect("write");
+        let got = sha256_file(&p).expect("hash");
+        assert_eq!(
+            got,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn sha256_file_matches_known_digest_for_abc() {
+        // sha256("abc") = ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let p = tmp.path().join("abc.bin");
+        std::fs::write(&p, b"abc").expect("write");
+        let got = sha256_file(&p).expect("hash");
+        assert_eq!(
+            got,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn sha256_file_handles_multi_chunk_input() {
+        use sha2::{Digest, Sha256};
+
+        // The streaming reader uses a 64 KiB buffer; feed it >64 KiB
+        // to make sure the chunk-boundary path works.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let p = tmp.path().join("big.bin");
+        let body = vec![0xAAu8; (64 * 1024) + 17];
+        std::fs::write(&p, body.as_slice()).expect("write");
+
+        // Independent hasher over the same bytes.
+        let mut h = Sha256::new();
+        h.update(&body);
+        let expected = hex::encode(h.finalize());
+
+        let got = sha256_file(&p).expect("hash");
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn sha256_file_rejects_missing_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let p = tmp.path().join("does-not-exist.bin");
+        let err = sha256_file(&p).expect_err("should fail");
+        assert!(matches!(err, ManifestError::Io { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn file_size_reports_byte_length() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let p = tmp.path().join("payload.bin");
+        std::fs::write(&p, vec![0u8; 1024]).expect("write");
+        let got = file_size(&p).expect("size");
+        assert_eq!(got, 1024);
+    }
+
+    #[test]
+    fn compute_esp_file_hashes_produces_six_entries_in_canonical_order() {
+        // Set up 5 distinct source files (kernel, initrd, shim, grub,
+        // grub.cfg); grub.cfg is referenced twice in the fixed pairs
+        // array because it gets mcopy'd to two ESP destinations.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let shim = tmp.path().join("shim.efi");
+        let grub = tmp.path().join("grubx64.efi");
+        let cfg = tmp.path().join("grub.cfg");
+        let kernel = tmp.path().join("vmlinuz");
+        let initrd = tmp.path().join("combined-initrd.img");
+
+        std::fs::write(&shim, b"SHIM_BYTES").unwrap();
+        std::fs::write(&grub, b"GRUB_BYTES").unwrap();
+        std::fs::write(&cfg, b"GRUB_CFG").unwrap();
+        std::fs::write(&kernel, b"KERNEL_BYTES").unwrap();
+        std::fs::write(&initrd, b"INITRD_BYTES_CONCATENATED").unwrap();
+
+        let sources = crate::direct_install::EspStagingSources {
+            shim: &shim,
+            grub: &grub,
+            kernel: &kernel,
+            combined_initrd: &initrd,
+            grub_cfg: &cfg,
+        };
+
+        let entries = compute_esp_file_hashes(&sources).expect("hash");
+        let got_paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+        let expected = canonical_esp_paths();
+        assert_eq!(got_paths, expected.to_vec());
+
+        // Both grub.cfg destinations must share sha256 + size — same
+        // local source.
+        assert_eq!(entries[2].sha256, entries[3].sha256);
+        assert_eq!(entries[2].size_bytes, entries[3].size_bytes);
+
+        // Kernel entry: size + non-empty hex digest, 64 chars.
+        assert_eq!(entries[4].size_bytes, b"KERNEL_BYTES".len() as u64);
+        assert_eq!(entries[4].sha256.len(), 64);
+    }
+
+    #[test]
+    fn compute_esp_file_hashes_result_round_trips_through_manifest() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("any.bin");
+        std::fs::write(&path, b"content").unwrap();
+
+        let sources = crate::direct_install::EspStagingSources {
+            shim: &path,
+            grub: &path,
+            kernel: &path,
+            combined_initrd: &path,
+            grub_cfg: &path,
+        };
+
+        let entries = compute_esp_file_hashes(&sources).unwrap();
+        let m = build_manifest("aegis-boot 0.13.0", 1, sample_device(), entries);
+        assert!(esp_files_cover_canonical_set(&m));
+        let body = serialize_manifest(&m).unwrap();
+        let parsed = parse_and_validate_manifest(&body, 0, SCHEMA_VERSION).unwrap();
+        assert_eq!(parsed, m);
+    }
+
+    #[test]
+    fn compute_esp_file_hashes_propagates_missing_source() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let exists = tmp.path().join("a.bin");
+        std::fs::write(&exists, b"ok").unwrap();
+        let missing = tmp.path().join("gone.bin");
+
+        let sources = crate::direct_install::EspStagingSources {
+            shim: &missing,
+            grub: &exists,
+            kernel: &exists,
+            combined_initrd: &exists,
+            grub_cfg: &exists,
+        };
+
+        let err = compute_esp_file_hashes(&sources).expect_err("should fail");
+        assert!(matches!(err, ManifestError::Io { .. }), "got {err:?}");
     }
 }
