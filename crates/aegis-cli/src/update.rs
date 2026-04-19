@@ -117,17 +117,11 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
             if json_mode {
                 print_update_json_ineligible(&dev, &reason);
             } else {
-                eprintln!("Status: NOT ELIGIBLE for in-place update.");
-                eprintln!();
-                eprintln!("Reason: {reason}");
-                eprintln!();
-                eprintln!("Your options:");
-                eprintln!("  1. If this is a genuine aegis-boot stick but lacks an attestation,");
-                eprintln!("     it was flashed before v0.13.0. Re-flash with `aegis-boot flash`");
-                eprintln!("     to create a new attestation; your ISOs will be lost, so back");
-                eprintln!("     them up first.");
-                eprintln!("  2. If this is a fresh / non-aegis-boot USB stick, run");
-                eprintln!("     `aegis-boot init {}` to initialize it.", dev.display());
+                let err = UpdateError::Ineligible {
+                    reason,
+                    device: dev.clone(),
+                };
+                eprint!("{}", crate::userfacing::render_string(&err));
             }
             Err(1)
         }
@@ -358,6 +352,66 @@ pub(crate) enum Eligibility {
         disk_guid: String,
     },
     Ineligible(String),
+}
+
+/// Operator-visible errors from `aegis-boot update`. Implemented as a
+/// `UserFacing` error so the structured renderer produces the "try one
+/// of:" numbered list instead of the ad-hoc `eprintln!` block the
+/// command used before #247 PR4.
+#[derive(Debug)]
+pub(crate) enum UpdateError {
+    /// The target stick failed one of the five eligibility gates.
+    /// `reason` is the operator-readable sentence from
+    /// `check_eligibility`; `device` is echoed back into the second
+    /// suggestion so operators can copy-paste the `aegis-boot init`
+    /// line without substituting the path themselves.
+    Ineligible { reason: String, device: PathBuf },
+}
+
+impl std::fmt::Display for UpdateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ineligible { reason, .. } => {
+                write!(f, "not eligible for in-place update: {reason}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for UpdateError {}
+
+impl crate::userfacing::UserFacing for UpdateError {
+    fn summary(&self) -> &str {
+        match self {
+            Self::Ineligible { .. } => "stick not eligible for in-place update",
+        }
+    }
+
+    fn detail(&self) -> &str {
+        match self {
+            Self::Ineligible { reason, .. } => reason,
+        }
+    }
+
+    fn suggestions(&self) -> Vec<String> {
+        match self {
+            Self::Ineligible { device, .. } => vec![
+                "If this is a genuine aegis-boot stick but lacks an attestation, it was \
+                 flashed before v0.13.0. Re-flash with `aegis-boot flash` to create a new \
+                 attestation; your ISOs will be lost, so back them up first."
+                    .to_string(),
+                format!(
+                    "If this is a fresh / non-aegis-boot USB stick, run `aegis-boot init {}` \
+                     to initialize it.",
+                    device.display()
+                ),
+            ],
+        }
+    }
+
+    fn code(&self) -> Option<&str> {
+        Some("UPDATE_INELIGIBLE")
+    }
 }
 
 /// Run all five eligibility gates against the given device. Returns the
@@ -661,6 +715,57 @@ mod tests {
             body,
             "00000000-0000-0000-0000-000000000000"
         ));
+    }
+
+    #[test]
+    fn update_error_ineligible_renders_structured_block_with_numbered_options() {
+        use crate::userfacing::{render_string, UserFacing};
+        let err = UpdateError::Ineligible {
+            reason: "partition 2 label is \"\" — expected AEGIS_ISOS. \
+                     This stick was not flashed by aegis-boot."
+                .to_string(),
+            device: PathBuf::from("/dev/sdc"),
+        };
+        // Code surfaces in the header so tooling can key on it.
+        assert_eq!(err.code(), Some("UPDATE_INELIGIBLE"));
+        let s = render_string(&err);
+        assert!(
+            s.starts_with("error[UPDATE_INELIGIBLE]: stick not eligible for in-place update"),
+            "header mismatch: {s}",
+        );
+        assert!(
+            s.contains("what happened: partition 2 label"),
+            "detail missing: {s}",
+        );
+        // suggestions() numbered list, not the old "try: <single line>".
+        assert!(s.contains("  try one of:"), "expected numbered list: {s}");
+        assert!(
+            s.contains("    1. If this is a genuine aegis-boot stick"),
+            "option 1 missing: {s}",
+        );
+        // Option 2 interpolates the device path the operator just
+        // typed — proof the `Vec<String>` signature (owned strings,
+        // not `&[&str]`) carries dynamic data.
+        assert!(
+            s.contains("    2. If this is a fresh / non-aegis-boot USB stick, run `aegis-boot init /dev/sdc`"),
+            "option 2 missing or missing device: {s}",
+        );
+    }
+
+    #[test]
+    fn update_error_ineligible_display_includes_reason() {
+        // Display is required by std::error::Error; keep it useful for
+        // callers that log the error directly (tests, panics, etc).
+        let err = UpdateError::Ineligible {
+            reason: "no attestation manifest found for disk GUID deadbeef".to_string(),
+            device: PathBuf::from("/dev/sdc"),
+        };
+        let display = format!("{err}");
+        assert!(
+            display.contains("not eligible for in-place update"),
+            "{display}"
+        );
+        assert!(display.contains("no attestation manifest"), "{display}");
     }
 
     #[test]

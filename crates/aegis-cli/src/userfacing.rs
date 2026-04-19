@@ -47,6 +47,31 @@ pub trait UserFacing: std::error::Error {
         None
     }
 
+    /// Optional enumerated alternatives — use when the right answer
+    /// depends on context and the operator needs to pick. Renders as
+    /// a numbered `try one of:` list under the error block.
+    ///
+    /// When both `suggestion()` and `suggestions()` return non-empty,
+    /// `suggestions()` wins (structurally richer and composes better
+    /// with tooling). The `suggestion()` single-liner stays available
+    /// for the one-line-advice case (most errors).
+    ///
+    /// Returns `Vec<String>` (owned) rather than `&[&str]` so
+    /// implementors can embed dynamic strings (e.g. a device path in
+    /// "run `aegis-boot init /dev/sdc`"). Errors aren't hot paths —
+    /// the allocation is bounded by the number of alternatives.
+    ///
+    /// Empty vector is treated the same as absent — no `try one of:`
+    /// block is rendered.
+    ///
+    /// Added in #247 PR4 so commands with "you can do X or Y"
+    /// branching (e.g. `aegis-boot update`'s Ineligible error) can
+    /// carry their existing multi-option advice into the structured
+    /// template without regressing to a single-line `try:`.
+    fn suggestions(&self) -> Vec<String> {
+        Vec::new()
+    }
+
     /// Optional pointer to deeper documentation.
     fn docs_url(&self) -> Option<&str> {
         None
@@ -77,7 +102,17 @@ pub fn render(err: &dyn UserFacing, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "error: {}", err.summary())?;
     }
     writeln!(f, "  what happened: {}", err.detail())?;
-    if let Some(s) = err.suggestion() {
+    // Multi-option advice (via suggestions()) takes precedence over
+    // the single-line suggestion(). Added in #247 PR4 so commands
+    // like `aegis-boot update` can carry their numbered alternatives
+    // into the structured template.
+    let opts = err.suggestions();
+    if !opts.is_empty() {
+        writeln!(f, "  try one of:")?;
+        for (idx, opt) in opts.iter().enumerate() {
+            writeln!(f, "    {}. {opt}", idx + 1)?;
+        }
+    } else if let Some(s) = err.suggestion() {
         writeln!(f, "  try: {s}")?;
     }
     if let Some(u) = err.docs_url() {
@@ -98,7 +133,15 @@ pub fn render_string(err: &dyn UserFacing) -> String {
         let _ = writeln!(s, "error: {}", err.summary());
     }
     let _ = writeln!(s, "  what happened: {}", err.detail());
-    if let Some(sug) = err.suggestion() {
+    // See the equivalent block in `render()` — suggestions() takes
+    // precedence over single-line suggestion() when both are present.
+    let opts = err.suggestions();
+    if !opts.is_empty() {
+        let _ = writeln!(s, "  try one of:");
+        for (idx, opt) in opts.iter().enumerate() {
+            let _ = writeln!(s, "    {}. {opt}", idx + 1);
+        }
+    } else if let Some(sug) = err.suggestion() {
         let _ = writeln!(s, "  try: {sug}");
     }
     if let Some(u) = err.docs_url() {
@@ -216,5 +259,84 @@ mod tests {
         let display_str = DisplayWrapper(&FullError).to_string();
         let direct_str = render_string(&FullError);
         assert_eq!(display_str, direct_str);
+    }
+
+    // ---- #247 PR4: suggestions() numbered-list path -----------------------
+
+    #[derive(Debug)]
+    struct MultiOption;
+    impl fmt::Display for MultiOption {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("multi-option")
+        }
+    }
+    impl std::error::Error for MultiOption {}
+    impl UserFacing for MultiOption {
+        fn summary(&self) -> &str {
+            "stick not eligible"
+        }
+        fn detail(&self) -> &str {
+            "the target is missing an attestation manifest."
+        }
+        fn suggestions(&self) -> Vec<String> {
+            vec![
+                "Re-flash with aegis-boot flash to create a new attestation.".to_string(),
+                "Run aegis-boot init /dev/sdX to initialize a fresh stick.".to_string(),
+            ]
+        }
+    }
+
+    #[test]
+    fn render_string_emits_numbered_list_when_suggestions_present() {
+        let s = render_string(&MultiOption);
+        assert!(s.contains("  try one of:"), "got: {s}");
+        assert!(s.contains("    1. Re-flash"), "got: {s}");
+        assert!(s.contains("    2. Run aegis-boot init"), "got: {s}");
+    }
+
+    #[test]
+    fn render_string_prefers_suggestions_over_suggestion() {
+        // When an error implements both, suggestions() wins (it's
+        // structurally richer). Guards against a future refactor that
+        // accidentally renders both or falls back inconsistently.
+        #[derive(Debug)]
+        struct Both;
+        impl fmt::Display for Both {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("both")
+            }
+        }
+        impl std::error::Error for Both {}
+        impl UserFacing for Both {
+            fn summary(&self) -> &str {
+                "both"
+            }
+            fn detail(&self) -> &str {
+                "has both suggestion forms"
+            }
+            fn suggestion(&self) -> Option<&str> {
+                Some("single-line hint")
+            }
+            fn suggestions(&self) -> Vec<String> {
+                vec!["option A".to_string(), "option B".to_string()]
+            }
+        }
+        let s = render_string(&Both);
+        assert!(s.contains("try one of:"), "got: {s}");
+        assert!(s.contains("option A"), "got: {s}");
+        assert!(
+            !s.contains("single-line hint"),
+            "single-line leaked through: {s}"
+        );
+    }
+
+    #[test]
+    fn render_string_falls_back_to_single_suggestion_when_suggestions_empty() {
+        // Implementor returns None for suggestions() — render_string
+        // should use suggestion() as the fallback (the flash-style
+        // one-line try: line).
+        let s = render_string(&FullError);
+        assert!(s.contains("  try: re-run"), "got: {s}");
+        assert!(!s.contains("try one of:"), "got: {s}");
     }
 }
