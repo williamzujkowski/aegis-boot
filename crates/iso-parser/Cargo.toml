@@ -29,3 +29,12 @@ serde_json = "1.0"
 
 [lints]
 workspace = true
+
+# Phase 6 of #286. Build with all features enabled on docs.rs so the
+# generated API page shows the full surface. `--cfg docsrs` lights up
+# any future `#[cfg_attr(docsrs, doc(...))]` conditional doc attrs —
+# no current uses but it's the convention every published crate on
+# docs.rs sets up.
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

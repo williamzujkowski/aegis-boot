@@ -24,17 +24,27 @@ Part of the [aegis-boot](https://github.com/williamzujkowski/aegis-boot) rescue 
 
 ## Usage
 
-```rust
+```text
+// Illustrative shape only. Caller supplies an `IsoEnvironment` —
+// trait for mount/unmount + metadata. The production impl shells
+// out to mount(8); tests use `MockIsoEnvironment` for per-test
+// in-memory fixtures. See the in-repo integration tests
+// (crates/iso-parser/src/lib.rs::tests) for concrete call sites.
 use iso_parser::IsoParser;
 use std::path::Path;
 
-let parser = IsoParser::new();
-let entries = parser.parse_directory(Path::new("/mnt/iso"), Path::new("/images/ubuntu.iso"))?;
+let env: MyIsoEnvironment = /* ... */;
+let parser = IsoParser::new(env);
+let entries = parser
+    .scan_directory(Path::new("/mnt/iso"))
+    .await?;
 for entry in entries {
     println!("kernel: {}", entry.kernel.display());
     println!("initrd: {}", entry.initrd.display());
 }
 ```
+
+The `text` fence keeps this illustrative — the concrete types `MyIsoEnvironment` + the `?`/`await` plumbing are consumer-specific.
 
 See the [API docs](https://docs.rs/iso-parser) for the full surface.
 

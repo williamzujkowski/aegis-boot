@@ -1,7 +1,19 @@
-//! ISO Parser - Boot entry discovery from installation media
+// Phase 6 of #286 — README.md becomes the rustdoc landing page
+// alongside the Rust-specific module docs below. docs.rs + local
+// `cargo doc --open` visitors see the operator-level overview
+// first; the Rust-API detail (Safety, Supported Distributions,
+// Usage) stays inline.
+//
+// `clippy::doc_markdown = allow` at module scope because the README
+// is prose for a general operator audience — strict auto-backticking
+// of distro names / tool names / product names (clippy::doc_markdown
+// wants `Arch Linux` → `` `Arch Linux` ``) is noise without signal
+// for the README's readers. The module-level `//!` API docs still
+// get the full lint benefit below.
+#![allow(clippy::doc_markdown)]
+#![doc = include_str!("../README.md")]
 //!
-//! Scans directories for ISO files, detects distribution layouts, and extracts
-//! kernel/initrd paths for boot configuration.
+//! ---
 //!
 //! # Safety
 //!
@@ -17,7 +29,11 @@
 //! - **Fedora**: `/images/pxeboot/` contains `vmlinuz` and `initrd.img`
 //!
 //! # Usage
-//! ```ignore
+//! ```text
+//! // Illustrative only — OsIsoEnvironment doesn't exist in this
+//! // crate (real callers supply their own IsoEnvironment impl).
+//! // `text` fence so this doesn't compile under `cargo test --
+//! // --ignored` either.
 //! use iso_parser::{IsoParser, OsIsoEnvironment};
 //! use std::path::Path;
 //!

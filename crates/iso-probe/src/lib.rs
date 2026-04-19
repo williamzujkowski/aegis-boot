@@ -1,3 +1,14 @@
+// Phase 6 of #286 — README.md becomes the rustdoc landing page.
+// `clippy::doc_markdown = allow` — README prose targets a general
+// operator audience; strict auto-backticking of product/tool names
+// is noise here. API-level `//!` docs still get the full lint.
+#![allow(clippy::doc_markdown)]
+#![doc = include_str!("../README.md")]
+//!
+//! ---
+//!
+//! # Rust API — two-phase shape
+//!
 //! Runtime ISO discovery on the live aegis-boot rescue environment.
 //!
 //! Two-phase API:

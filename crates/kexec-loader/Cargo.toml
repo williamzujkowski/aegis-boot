@@ -26,3 +26,12 @@ libc.workspace = true
 
 [lints]
 workspace = true
+
+# Phase 6 of #286. docs.rs builds for x86_64-unknown-linux-gnu
+# (default); this crate is Linux-only at runtime but compiles on
+# other targets as a no-op, so docs.rs does not need a target
+# override. Kept minimal for the same reason as the other library
+# trio entries.
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

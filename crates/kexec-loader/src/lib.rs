@@ -1,3 +1,13 @@
+// Phase 6 of #286 — README.md becomes the rustdoc landing page.
+// `clippy::doc_markdown = allow` — README prose; see iso-parser for
+// rationale.
+#![allow(clippy::doc_markdown)]
+#![doc = include_str!("../README.md")]
+//!
+//! ---
+//!
+//! # Rust API
+//!
 //! Safe wrapper around `kexec_file_load(2)` for the aegis-boot rescue TUI.
 //!
 //! # Scope

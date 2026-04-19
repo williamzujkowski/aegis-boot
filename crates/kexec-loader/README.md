@@ -28,7 +28,10 @@ One narrowly-scoped `unsafe` block: the syscall invocation itself. Inputs are ri
 
 ## Usage
 
-```rust,ignore
+```text
+// Illustrative shape only — the real API surface (field names,
+// error types, Result shape) is documented inline on the
+// `load_and_exec` item below.
 use kexec_loader::{load_and_exec, KexecRequest};
 use std::path::Path;
 

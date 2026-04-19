@@ -17,12 +17,15 @@ Part of the [aegis-boot](https://github.com/williamzujkowski/aegis-boot) rescue 
 
 ## Usage
 
-```rust,ignore
+```text
+// Illustrative shape only. Types and paths are consumer-specific;
+// the real API is documented in the `discover` and `prepare` items
+// below.
 use iso_probe::{discover, prepare};
 
 let discovered = discover(&["/run/media/aegis-isos"])?;
 for iso in &discovered {
-    println!("{}: {} ({})", iso.label, iso.distro, iso.verification.display_summary());
+    println!("{} ({})", iso.label, iso.verification.display_summary());
 }
 
 // Operator picks one:
