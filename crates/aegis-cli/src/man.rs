@@ -18,12 +18,20 @@
 
 use std::process::ExitCode;
 
-/// Raw contents of `man/aegis-boot.1`. The path is relative to this
-/// source file (`crates/aegis-cli/src/man.rs` → `../../man/...`).
-/// Keeping the man page as a sibling `.1` file (rather than inline
+/// Raw contents of the rendered `aegis-boot.1` man page.
+///
+/// Sourced from the build-time template `man/aegis-boot.1.in` —
+/// `build.rs` substitutes `@VERSION@` (from `CARGO_PKG_VERSION`,
+/// which flows from `[workspace.package].version`) and `@DATE@`
+/// (parsed from the top released entry in `CHANGELOG.md`) and writes
+/// the result to `$OUT_DIR/aegis-boot.1`. Phase 1b of #286 / #287 —
+/// removes the last manually-synced version reference.
+///
+/// Keeping the man page as a templated `.in` file (rather than inline
 /// Rust string) means roff editors / preview tools / `man -l` work
-/// directly on the source file during development.
-const MAN_PAGE: &str = include_str!("../../../man/aegis-boot.1");
+/// directly on the source file during development; the rendered
+/// `OUT_DIR/aegis-boot.1` can also be inspected after `cargo build`.
+const MAN_PAGE: &str = include_str!(concat!(env!("OUT_DIR"), "/aegis-boot.1"));
 
 pub fn run(args: &[String]) -> ExitCode {
     match try_run(args) {
@@ -123,6 +131,60 @@ mod tests {
                 "man page missing required section: {section}"
             );
         }
+    }
+
+    #[test]
+    fn rendered_page_substitutes_version_from_cargo_pkg_version() {
+        // Phase 1b contract: build.rs substitutes @VERSION@ into the
+        // embedded page. The rendered page must carry the exact
+        // CARGO_PKG_VERSION string (which via version.workspace = true
+        // flows from [workspace.package].version). If the template or
+        // build.rs ever regresses to emitting a hardcoded version or
+        // dropping the substitution, this test fails.
+        let expected = format!("\"aegis-boot {}\"", env!("CARGO_PKG_VERSION"));
+        assert!(
+            MAN_PAGE.contains(&expected),
+            "rendered man page must contain the .TH header string {expected:?}; \
+             got header line: {}",
+            MAN_PAGE.lines().next().unwrap_or("<empty>")
+        );
+    }
+
+    #[test]
+    fn rendered_page_has_no_unresolved_template_markers() {
+        // Catches a build.rs regression that forgot to substitute a
+        // placeholder (or someone adding a new @FOO@ marker to the
+        // template without wiring the substitution).
+        assert!(
+            !MAN_PAGE.contains("@VERSION@"),
+            "rendered man page contains unresolved @VERSION@ marker — build.rs substitution regressed"
+        );
+        assert!(
+            !MAN_PAGE.contains("@DATE@"),
+            "rendered man page contains unresolved @DATE@ marker — build.rs substitution regressed"
+        );
+    }
+
+    #[test]
+    fn template_source_still_carries_placeholder_not_a_hardcoded_version() {
+        // Enforces the Phase 1b single-source contract: the authored
+        // template at man/aegis-boot.1.in MUST carry `@VERSION@`, not a
+        // literal version string. If a maintainer accidentally
+        // hand-edits a real version into the template, build.rs still
+        // renders it (no-op substitution) but we've silently lost the
+        // single-source property. This test catches that regression
+        // at `cargo test` time.
+        let template_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../man/aegis-boot.1.in");
+        let template = std::fs::read_to_string(template_path)
+            .expect("template must exist at man/aegis-boot.1.in");
+        assert!(
+            template.contains("@VERSION@"),
+            "template must carry the literal `@VERSION@` placeholder — Phase 1b contract"
+        );
+        assert!(
+            template.contains("@DATE@"),
+            "template must carry the literal `@DATE@` placeholder"
+        );
     }
 
     #[test]
