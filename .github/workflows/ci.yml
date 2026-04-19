@@ -131,7 +131,10 @@ jobs:
     name: SAST (semgrep p/rust)
     runs-on: ubuntu-22.04
     container:
-      image: returntocorp/semgrep:latest
+      # Pinned per #253. Latest release known-good as of 2026-04-19; refresh
+      # this pin when a newer semgrep drops the pkg_resources import (the
+      # setuptools 81+ removal leaves `latest` exposed to a sudden break).
+      image: returntocorp/semgrep:1.160.0
     steps:
       - uses: actions/checkout@v5
       - run: semgrep scan --config=p/rust --config=p/security-audit --error --sarif --output semgrep.sarif .
