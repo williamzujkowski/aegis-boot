@@ -25,7 +25,7 @@ A signed UEFI Secure Boot rescue environment that lets operators pick any ISO fr
 
 </div>
 
-**Status:** v0.14.0 — signed `aegis-boot.img` now ships as a release asset (cosign keyless-verified by `fetch-image`), installed-binary flash UX fixed ([#282](https://github.com/williamzujkowski/aegis-boot/issues/282)), direct-install flash foundation landed behind a feature gate ([#274](https://github.com/williamzujkowski/aegis-boot/issues/274) phases 2a–3b). Real-hardware shakedown validated on Alpine + Ubuntu under Secure Boot enforcing ([#109](https://github.com/williamzujkowski/aegis-boot/issues/109)). Multi-vendor real-hardware sweep (Framework / ThinkPad / Dell) gates v1.0.0 ([#51](https://github.com/williamzujkowski/aegis-boot/issues/51)).
+**Status:** v0.14.1 — signed `aegis-boot.img` now ships as a release asset (cosign keyless-verified by `fetch-image`), installed-binary flash UX fixed ([#282](https://github.com/williamzujkowski/aegis-boot/issues/282)), direct-install flash foundation landed behind a feature gate ([#274](https://github.com/williamzujkowski/aegis-boot/issues/274) phases 2a–3b). Real-hardware shakedown validated on Alpine + Ubuntu under Secure Boot enforcing ([#109](https://github.com/williamzujkowski/aegis-boot/issues/109)). Multi-vendor real-hardware sweep (Framework / ThinkPad / Dell) gates v1.0.0 ([#51](https://github.com/williamzujkowski/aegis-boot/issues/51)).
 
 ## What it does
 

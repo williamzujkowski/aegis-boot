@@ -156,3 +156,15 @@ jobs:
             experimental-features = nix-command flakes
       - run: nix flake check --no-build
       - run: nix develop --command cargo --version
+
+  # Doc version drift-check (Phase 1c of #287 / #286).
+  # Reads [workspace.package].version from Cargo.toml and verifies
+  # every aegis-boot-version reference in the user-facing doc
+  # allowlist matches. Prevents the v0.14.0 class of bug where a
+  # release cut shipped 4 docs still saying v0.13.0.
+  doc-version-drift:
+    name: Doc version drift-check
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - run: ./scripts/check-doc-version.sh
