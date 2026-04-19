@@ -743,26 +743,85 @@ fn check_fat32_ceiling(mount: &Mount, iso_filename: &str, iso_size: u64) -> Resu
         .as_deref()
         .and_then(crate::mounts::parent_disk)
         .map_or_else(|| "/dev/sdX".to_string(), |p| p.display().to_string());
-    eprintln!(
-        "aegis-boot add: {} is {} — exceeds FAT32's 4 GiB per-file ceiling.",
-        iso_filename,
-        humanize(iso_size)
+    let detail = format!(
+        "{iso_filename} is {size} — exceeds FAT32's 4 GiB per-file ceiling. \
+         The AEGIS_ISOS partition is formatted as {fs_type}, which cannot store files at or \
+         above 4 GiB. Current contents will be wiped on reflash, so back up first.",
+        size = humanize(iso_size),
     );
-    eprintln!("  The AEGIS_ISOS partition is formatted as {fs_type}, which cannot store");
-    eprintln!("  files at or above 4 GiB. Reflash with the new exfat default to lift");
-    eprintln!("  the ceiling (preserves cross-OS r/w on Linux + macOS + Windows):");
-    eprintln!();
-    eprintln!("      sudo aegis-boot flash {flash_target}");
-    eprintln!();
-    eprintln!("  Or, for a Linux-only stick, use ext4:");
-    eprintln!();
-    eprintln!("      DATA_FS=ext4 sudo aegis-boot flash {flash_target}");
-    eprintln!();
-    eprintln!("  (Current contents will be wiped — back up first.)");
+    let err = AddError::Fat32CeilingExceeded {
+        detail,
+        flash_target,
+    };
+    eprint!("{}", crate::userfacing::render_string(&err));
     if mount.temporary {
         unmount_temp(mount);
     }
     Err(1)
+}
+
+/// Operator-visible errors from `aegis-boot add`. Rendered through
+/// `UserFacing` so multi-option advice (e.g. "reflash with exfat OR
+/// reflash with ext4") surfaces as a numbered `try one of:` list
+/// instead of the ad-hoc `eprintln!` block the FAT32-ceiling branch
+/// used before #247 PR5.
+#[derive(Debug)]
+pub(crate) enum AddError {
+    /// The ISO is at or above FAT32's 4 GiB per-file ceiling and the
+    /// current `AEGIS_ISOS` is formatted as a FAT-family filesystem.
+    /// `detail` is pre-formatted at construction time (because
+    /// `UserFacing::detail()` must return `&str`); `flash_target` is
+    /// interpolated into both suggestions so the operator can
+    /// copy-paste the reflash command.
+    Fat32CeilingExceeded {
+        detail: String,
+        flash_target: String,
+    },
+}
+
+impl std::fmt::Display for AddError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Fat32CeilingExceeded { detail, .. } => {
+                write!(f, "add refused: {detail}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for AddError {}
+
+impl crate::userfacing::UserFacing for AddError {
+    fn summary(&self) -> &str {
+        match self {
+            Self::Fat32CeilingExceeded { .. } => "ISO exceeds FAT32 4 GiB per-file ceiling",
+        }
+    }
+
+    fn detail(&self) -> &str {
+        match self {
+            Self::Fat32CeilingExceeded { detail, .. } => detail,
+        }
+    }
+
+    fn suggestions(&self) -> Vec<String> {
+        match self {
+            Self::Fat32CeilingExceeded { flash_target, .. } => vec![
+                format!(
+                    "Reflash with the new exfat default (preserves cross-OS r/w on Linux + \
+                     macOS + Windows): `sudo aegis-boot flash {flash_target}`"
+                ),
+                format!(
+                    "Reflash with ext4 for a Linux-only stick: \
+                     `DATA_FS=ext4 sudo aegis-boot flash {flash_target}`"
+                ),
+            ],
+        }
+    }
+
+    fn code(&self) -> Option<&str> {
+        Some("ADD_FAT32_CEILING")
+    }
 }
 
 #[allow(clippy::cast_precision_loss)]
@@ -961,6 +1020,79 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert!(entries[0].display_name.is_none());
         assert!(entries[0].description.is_none());
+    }
+
+    // ---- #247 PR5: AddError UserFacing conversion -----------------------
+
+    #[test]
+    fn add_error_fat32_ceiling_renders_numbered_list_with_both_reflash_recipes() {
+        use crate::userfacing::{render_string, UserFacing};
+        let err = AddError::Fat32CeilingExceeded {
+            detail: "Win11_25H2.iso is 7.9 GiB — exceeds FAT32's 4 GiB per-file ceiling. \
+                     The AEGIS_ISOS partition is formatted as vfat, which cannot store \
+                     files at or above 4 GiB. Current contents will be wiped on reflash, \
+                     so back up first."
+                .to_string(),
+            flash_target: "/dev/sdc".to_string(),
+        };
+        assert_eq!(err.code(), Some("ADD_FAT32_CEILING"));
+        let s = render_string(&err);
+        assert!(
+            s.starts_with("error[ADD_FAT32_CEILING]: ISO exceeds FAT32 4 GiB per-file ceiling"),
+            "header mismatch: {s}",
+        );
+        // Detail surfaces the filename + humanized size + fs type.
+        assert!(s.contains("Win11_25H2.iso is 7.9 GiB"), "size missing: {s}");
+        assert!(
+            s.contains("formatted as vfat"),
+            "filesystem type missing: {s}",
+        );
+        // Both reflash recipes appear as numbered alternatives with
+        // the concrete device path interpolated — the value operators
+        // get from the suggestions() path vs. the old ad-hoc eprintln!
+        // block is *exactly* this copy-paste readiness.
+        assert!(s.contains("  try one of:"), "expected numbered list: {s}");
+        assert!(
+            s.contains("    1. Reflash with the new exfat default")
+                && s.contains("`sudo aegis-boot flash /dev/sdc`"),
+            "option 1 missing or missing device: {s}",
+        );
+        assert!(
+            s.contains("    2. Reflash with ext4")
+                && s.contains("`DATA_FS=ext4 sudo aegis-boot flash /dev/sdc`"),
+            "option 2 missing or missing device: {s}",
+        );
+    }
+
+    #[test]
+    fn add_error_fat32_ceiling_falls_back_to_placeholder_device_when_unknown() {
+        // When the mount wasn't backed by a resolvable block device
+        // (bind mount / operator-supplied path), check_fat32_ceiling
+        // falls back to `/dev/sdX` as the flash_target. Both
+        // suggestions should still render but with the placeholder
+        // inlined so the operator knows what to substitute.
+        use crate::userfacing::render_string;
+        let err = AddError::Fat32CeilingExceeded {
+            detail: "whatever".to_string(),
+            flash_target: "/dev/sdX".to_string(),
+        };
+        let s = render_string(&err);
+        assert!(s.contains("`sudo aegis-boot flash /dev/sdX`"), "{s}");
+        assert!(
+            s.contains("`DATA_FS=ext4 sudo aegis-boot flash /dev/sdX`"),
+            "{s}",
+        );
+    }
+
+    #[test]
+    fn add_error_fat32_ceiling_display_includes_detail() {
+        let err = AddError::Fat32CeilingExceeded {
+            detail: "iso too big".to_string(),
+            flash_target: "/dev/sdc".to_string(),
+        };
+        let display = format!("{err}");
+        assert!(display.contains("add refused"), "{display}");
+        assert!(display.contains("iso too big"), "{display}");
     }
 
     #[test]
