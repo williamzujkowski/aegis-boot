@@ -183,3 +183,18 @@ jobs:
         run: rustup toolchain install 1.85.0 --profile minimal && rustup override set 1.85.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo run -p aegis-cli --bin constants-docgen --features docgen --locked -- --check
+
+  # CLI subcommand drift-check (Phase 3a of #289 / #286).
+  # Validates that every subcommand in the dispatch table has a
+  # corresponding section in docs/CLI.md and a `.TP` entry in
+  # man/aegis-boot.1.in. Prevents the class of drift that hid
+  # `fetch-image` from user-facing docs on the previous release.
+  cli-drift:
+    name: Doc CLI subcommand drift-check
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust
+        run: rustup toolchain install 1.85.0 --profile minimal && rustup override set 1.85.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo run -p aegis-cli --bin cli-docgen --features docgen --locked

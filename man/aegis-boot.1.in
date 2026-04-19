@@ -72,6 +72,15 @@ Curated catalog of known-good ISOs with project-signed SHA256SUMS.
 .B fetch \fIslug\fR \fR[\-\-out \fIdir\fR] [\-\-no-gpg] [\-\-dry-run]
 Download + GPG-verify an ISO from the catalog.
 .TP
+.B fetch-image \fR[\-\-version \fItag\fR] [\-\-out \fIdir\fR] [\-\-format \fI{img|iso}\fR] [\-\-dry-run] [\-\-json]
+Download + minisign-verify a released
+.I aegis-boot.img
+(or hybrid
+.I .iso\fR)
+from GitHub Releases. Pairs with
+.B flash \-\-image
+for the "no local build" operator path.
+.TP
 .B attest \fR{list|show} [\-\-json]
 List or inspect attestation receipts for past flashes.
 .TP
@@ -97,6 +106,13 @@ auto-fills the query from DMI (Linux only).
 Emit a shell completion script to stdout. See
 .B INSTALLATION
 below.
+.TP
+.B man
+Emit the rendered man page on stdout. Useful for
+.B aegis-boot man | less
+on hosts where the page isn't installed into
+.I /usr/share/man
+(e.g. a single-binary install via the install.sh one-liner).
 .TP
 .B tour
 Print a 30-second in-terminal walkthrough showing the 4-command path from

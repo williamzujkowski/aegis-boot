@@ -636,6 +636,91 @@ aegis-boot compat --help
 
 ---
 
+## `aegis-boot fetch-image`
+
+Download a released `aegis-boot.img` (or `aegis-boot-hybrid.iso`) from GitHub Releases, verify its minisign signature against the pinned release public key, and place it in the operator's chosen output directory. Intended for the "I just want to flash without building from source" path — paired with `aegis-boot flash <device> --image <path>` it closes the build-from-source loop for unprivileged operators.
+
+### Usage
+
+```bash
+aegis-boot fetch-image                         # latest release, cwd output
+aegis-boot fetch-image --version v0.14.1       # pin a specific release
+aegis-boot fetch-image --out ~/Downloads       # override output dir
+aegis-boot fetch-image --format iso            # hybrid .iso instead of .img
+aegis-boot fetch-image --dry-run --json        # resolve + print plan; no download
+aegis-boot fetch-image --help
+```
+
+### Behavior
+
+- Resolves the release tag (defaults to `latest`) against `api.github.com/repos/.../releases`.
+- Downloads both the artifact and its `.minisig` detached signature.
+- Verifies the signature using the release pubkey bundled in the binary — a failed verification aborts with non-zero before the artifact is placed.
+- On success, writes both files (asset + `.minisig`) to the output dir and prints the full local paths.
+
+### Exit codes
+
+- `0` — fetched + verified
+- `1` — signature verification failed, or the release tag didn't expose the expected asset
+- `2` — usage error (bad flag combination)
+
+---
+
+## `aegis-boot completions`
+
+Emit shell completion scripts for `bash`, `zsh`, or `fish` on stdout. Pipe to the appropriate completion directory for your shell.
+
+### Usage
+
+```bash
+aegis-boot completions bash > /etc/bash_completion.d/aegis-boot
+aegis-boot completions zsh  > "${fpath[1]}/_aegis-boot"
+aegis-boot completions fish > ~/.config/fish/completions/aegis-boot.fish
+```
+
+### Exit codes
+
+- `0` — script emitted
+- `2` — unknown or missing shell argument
+
+---
+
+## `aegis-boot man`
+
+Emit the rendered man page on stdout. Mostly useful for `aegis-boot man | less` on hosts where the page hasn't been installed into `/usr/share/man`.
+
+### Usage
+
+```bash
+aegis-boot man | less
+aegis-boot man > /tmp/aegis-boot.1   # save for later viewing with `man -l`
+```
+
+The body is the same man page rendered at build time from [`man/aegis-boot.1.in`](../man/aegis-boot.1.in) with the current version + release date substituted (Phase 1b of [#286](https://github.com/williamzujkowski/aegis-boot/issues/286)).
+
+### Exit codes
+
+- `0` — always (the page is embedded at compile time; there is nothing to fail on)
+
+---
+
+## `aegis-boot tour`
+
+Run the 30-second in-terminal product tour — a scripted walkthrough of what `init`, `flash`, `list`, and `doctor` do without actually touching a device. Intended as the "show me around" entrypoint for operators evaluating aegis-boot before committing to flashing a real stick.
+
+### Usage
+
+```bash
+aegis-boot tour
+aegis-boot tour --help
+```
+
+### Exit codes
+
+- `0` — tour completed (or the user hit Ctrl-C cleanly)
+
+---
+
 ## Versioning
 
 `aegis-boot --version` reports the workspace version (currently `0.14.1`). The CLI ships in lockstep with the rest of the workspace; `cargo install --path crates/aegis-cli` (or downloading a release binary) will give you a CLI that matches the on-stick rescue-tui.

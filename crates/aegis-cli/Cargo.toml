@@ -20,10 +20,18 @@ name = "constants-docgen"
 path = "src/bin/constants_docgen.rs"
 required-features = ["docgen"]
 
+# CLI subcommand drift-check (Phase 3a of #289 / #286). Validates
+# that every subcommand in main.rs's dispatch table has a section
+# in docs/CLI.md and a `.TP` entry in man/aegis-boot.1.in.
+[[bin]]
+name = "cli-docgen"
+path = "src/bin/cli_docgen.rs"
+required-features = ["docgen"]
+
 [features]
-# Gates the `constants-docgen` bin target so the normal release
-# `aegis-boot` binary does not compile the doc-rendering code path.
-# Pure stdlib — no extra deps pulled in.
+# Gates doc-generator bins so the normal release `aegis-boot`
+# binary does not compile the generator code paths. Pure stdlib —
+# no extra deps pulled in.
 docgen = []
 
 [dependencies]
