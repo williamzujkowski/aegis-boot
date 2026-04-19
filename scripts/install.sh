@@ -278,11 +278,57 @@ main() {
     install_completions "$version"
     install_manpage "$version"
 
+    # Post-install dependency preflight (#313). `aegis-boot doctor`
+    # already checks the mkusb.sh dep stack (mcopy, mkfs.vfat,
+    # mkfs.exfat, sgdisk, dd, …); running it here surfaces any gaps
+    # at install time instead of at first-flash time. Warning-only —
+    # the operator may have installed just to read `aegis-boot man`
+    # or `aegis-boot recommend`, and the missing deps only matter
+    # when they later try to flash. The actual `aegis-boot flash`
+    # path will still FAIL on any missing dep; this just advises
+    # fix-it-now with a copy-pasteable install line.
+    preflight_deps "$target"
+
     note ""
     note "Try it:"
     note "  $target --version"
     note "  $target doctor"
     note "  $target recommend"
+}
+
+# Run `aegis-boot doctor` as a post-install dep preflight. Prints
+# the report verbatim on exit code 0 (all-pass, no warnings); on any
+# non-zero exit suppresses the full report but surfaces a short
+# "follow-up" note pointing the operator at `aegis-boot doctor` for
+# detail. Never fails the installer — the binary is installed, the
+# operator just has follow-up work.
+preflight_deps() {
+    bin="$1"
+    if [ ! -x "$bin" ]; then
+        return 0
+    fi
+    note ""
+    note "Running post-install dependency preflight (\`$bin doctor\`)..."
+    # Capture doctor's exit code without blowing up the installer.
+    # `doctor` exits 0 on all-pass, 1 if any FAIL rows surfaced.
+    # The `&& x=0 || x=$?` pattern captures the real exit code under
+    # `set -e` — a plain `|| true` would always yield $? = 0.
+    doctor_out="$("$bin" doctor 2>&1)" && doctor_code=0 || doctor_code=$?
+    if [ "$doctor_code" -eq 0 ]; then
+        # All-pass: collapse to a single line to keep the install
+        # output tight. Operator can always re-run `doctor` for full
+        # detail.
+        note "  all checks pass"
+    else
+        # Non-zero: dump the report so the operator sees the gaps
+        # immediately. Prefix each line so it's clearly doctor
+        # output (not install.sh noise).
+        note ""
+        printf '%s\n' "$doctor_out" | sed 's/^/  /'
+        note ""
+        note "Some checks above warrant follow-up. Re-run \`$bin doctor\` for detail."
+        note "This is a warning, not a failure — aegis-boot itself is installed."
+    fi
 }
 
 # Install bash + zsh completion files from the repo (raw.githubusercontent.com).
