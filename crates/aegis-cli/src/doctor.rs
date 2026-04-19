@@ -314,6 +314,30 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
         "lsblk",
         "lists removable drives for `flash` auto-detect",
     );
+    // mkusb.sh dependencies (#313). These are required by the build
+    // path `aegis-boot init` invokes — mcopy stages the ESP, mkfs.vfat
+    // formats the ESP, mkfs.exfat formats the AEGIS_ISOS data
+    // partition (default since #243). Pre-flighting them here catches
+    // the class of late failure that motivated operator-reported
+    // bug #282.
+    check_command_present_with_pkg(
+        &mut report,
+        "mcopy",
+        "mtools",
+        "copies the signed boot chain onto the ESP (`aegis-boot flash`)",
+    );
+    check_command_present_with_pkg(
+        &mut report,
+        "mkfs.vfat",
+        "dosfstools",
+        "formats the ESP partition FAT32 (`aegis-boot flash`)",
+    );
+    check_command_present_with_pkg(
+        &mut report,
+        "mkfs.exfat",
+        "exfatprogs",
+        "formats the AEGIS_ISOS data partition exFAT (`aegis-boot flash`)",
+    );
     check_command_present(
         &mut report,
         "curl",
@@ -642,6 +666,14 @@ fn check_cosign_optional(report: &mut Report) {
 }
 
 fn check_command_present(report: &mut Report, cmd: &str, why: &str) {
+    check_command_present_with_pkg(report, cmd, cmd, why);
+}
+
+/// Like [`check_command_present`] but lets callers specify the
+/// package name when it differs from the binary name (e.g. the
+/// `mkfs.vfat` binary ships in the `dosfstools` package). Used for
+/// the mkusb.sh dependency preflight (#313).
+fn check_command_present_with_pkg(report: &mut Report, cmd: &str, pkg: &str, why: &str) {
     let found = which(cmd);
     let name = format!("command: {cmd}");
     if let Some(path) = found {
@@ -651,7 +683,11 @@ fn check_command_present(report: &mut Report, cmd: &str, why: &str) {
             Verdict::Fail,
             name,
             format!("not found in PATH ({why})"),
-            format!("install `{cmd}` (e.g. on Debian/Ubuntu: `sudo apt-get install {cmd}`)"),
+            format!(
+                "install `{cmd}` (on Debian/Ubuntu: `sudo apt-get install {pkg}`; \
+                 on Fedora/RHEL: `sudo dnf install {pkg}`; \
+                 on Arch: `sudo pacman -S {pkg}`)"
+            ),
         );
     }
 }
@@ -1074,5 +1110,55 @@ mod tests {
         assert_eq!(r.rows.len(), 2);
         assert!(matches!(r.rows[0].0, Verdict::Skip));
         assert!(matches!(r.rows[1].0, Verdict::Skip));
+    }
+
+    #[test]
+    fn check_command_present_with_pkg_finds_existing_binary() {
+        // `ls` is present on every supported platform's PATH — use
+        // it as a known-good probe to verify the Pass path of the
+        // pkg-aware variant.
+        let mut r = Report::new();
+        check_command_present_with_pkg(&mut r, "ls", "coreutils", "canary");
+        assert_eq!(r.rows.len(), 1);
+        assert!(
+            matches!(r.rows[0].0, Verdict::Pass),
+            "expected Pass for `ls`, got {:?}",
+            r.rows[0].0
+        );
+        assert!(r.rows[0].2.contains("canary"));
+    }
+
+    #[test]
+    fn check_command_present_with_pkg_reports_package_name_on_miss() {
+        // The package name is load-bearing — `mkfs.vfat` ships in
+        // `dosfstools`, not in a hypothetical `mkfs.vfat` package.
+        // On a miss, the remedy text must name the package, not
+        // the binary. #313 acceptance criterion.
+        let mut r = Report::new();
+        check_command_present_with_pkg(
+            &mut r,
+            "aegis-probe-never-installed-binary-for-test",
+            "dosfstools",
+            "guards the pkg-name surfaces in remedy text",
+        );
+        assert_eq!(r.rows.len(), 1);
+        assert!(
+            matches!(r.rows[0].0, Verdict::Fail),
+            "expected Fail for missing binary, got {:?}",
+            r.rows[0].0
+        );
+        // First-Fail remedy gets promoted to Report::next_action.
+        // Verify it names the package + the three common distro
+        // families (the #313 acceptance criterion is a multi-distro
+        // hint, not a per-distro auto-detection).
+        let na = r.next_action.as_deref().unwrap_or("");
+        assert!(
+            na.contains("dosfstools"),
+            "remedy must name the package, got: {na}"
+        );
+        assert!(
+            na.contains("apt-get") && na.contains("dnf") && na.contains("pacman"),
+            "remedy must list the three common distro families, got: {na}"
+        );
     }
 }
