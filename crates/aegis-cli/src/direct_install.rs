@@ -567,27 +567,23 @@ mod tests {
 
     #[test]
     fn render_grub_cfg_writes_expected_body_to_disk() {
-        let tmp = std::env::temp_dir().join(format!(
-            "aegis-direct-install-grub-cfg-{}.cfg",
-            std::process::id()
-        ));
-        render_grub_cfg(&tmp).expect("render_grub_cfg");
-        let written = std::fs::read_to_string(&tmp).expect("read back grub.cfg");
+        // tempfile::TempDir rather than std::env::temp_dir so the
+        // test fs ops happen inside a private, auto-cleaned 0700 dir
+        // (semgrep rust.lang.security.temp-dir flags the latter).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("grub.cfg");
+        render_grub_cfg(&path).expect("render_grub_cfg");
+        let written = std::fs::read_to_string(&path).expect("read back grub.cfg");
         let expected = build_grub_cfg_body(GRUB_TIMEOUT_SECS, GRUB_DEFAULT_ENTRY);
         assert_eq!(written, expected);
-        let _ = std::fs::remove_file(&tmp);
     }
 
     #[test]
     fn combine_initrd_concats_distro_then_aegis() {
-        let dir = std::env::temp_dir().join(format!(
-            "aegis-direct-install-combine-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).expect("mkdir tmp");
-        let distro = dir.join("distro.img");
-        let aegis = dir.join("aegis.img");
-        let out = dir.join("combined.img");
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let distro = tmp.path().join("distro.img");
+        let aegis = tmp.path().join("aegis.img");
+        let out = tmp.path().join("combined.img");
 
         std::fs::write(&distro, b"DISTRO_PAYLOAD").expect("write distro");
         std::fs::write(&aegis, b"AEGIS_PAYLOAD").expect("write aegis");
@@ -595,26 +591,18 @@ mod tests {
 
         let got = std::fs::read(&out).expect("read combined");
         assert_eq!(got, b"DISTRO_PAYLOADAEGIS_PAYLOAD");
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn combine_initrd_rejects_missing_input() {
-        let dir = std::env::temp_dir().join(format!(
-            "aegis-direct-install-combine-miss-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).expect("mkdir tmp");
-        let distro = dir.join("does-not-exist.img");
-        let aegis = dir.join("aegis.img");
-        let out = dir.join("combined.img");
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let distro = tmp.path().join("does-not-exist.img");
+        let aegis = tmp.path().join("aegis.img");
+        let out = tmp.path().join("combined.img");
 
         std::fs::write(&aegis, b"aegis").expect("write aegis");
         let err = combine_initrd(&distro, &aegis, &out).expect_err("should fail");
         assert!(err.contains("does-not-exist.img"), "err: {err}");
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
