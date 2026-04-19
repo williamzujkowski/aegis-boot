@@ -41,10 +41,10 @@
 //!   [`ATTESTATION_SCHEMA_VERSION`]) — per-flash audit record
 //!   written to `$XDG_DATA_HOME/aegis-boot/attestations/` for
 //!   chain-of-custody + fleet inventory. Phase 4c-1 of [#286].
-//! * **CLI envelopes** (currently [`Version`], with
-//!   [`VERSION_SCHEMA_VERSION`]) — the tiny `--json` envelope
-//!   emitted by `aegis-boot --version --json` and its siblings.
-//!   Phase 4b-1 onward of [#286].
+//! * **CLI envelopes** ([`Version`], [`ListReport`], with
+//!   [`VERSION_SCHEMA_VERSION`] / [`LIST_SCHEMA_VERSION`]) — the
+//!   `--json` envelopes emitted by `aegis-boot --version --json`,
+//!   `aegis-boot list --json`, and siblings. Phase 4b of [#286].
 //!
 //! Each contract is independently versioned — a change to one
 //! schema does not require bumping the others. They are co-located
@@ -74,6 +74,11 @@ pub const ATTESTATION_SCHEMA_VERSION: u32 = 1;
 /// `aegis-boot --version --json`. Independent of the manifest and
 /// attestation contract versions.
 pub const VERSION_SCHEMA_VERSION: u32 = 1;
+
+/// Locked schema version for the [`ListReport`] envelope emitted
+/// by `aegis-boot list --json`. Independent of the other envelope
+/// contracts.
+pub const LIST_SCHEMA_VERSION: u32 = 1;
 
 /// Top-level manifest body. Serialized field order matches the
 /// declaration order below — relied on for canonical JSON stability
@@ -331,6 +336,76 @@ pub struct Version {
     pub version: String,
 }
 
+/// Envelope emitted by `aegis-boot list --json`. Reports the ISOs
+/// discovered on a stick's AEGIS_ISOS data partition, plus the
+/// attestation summary if one was recorded at flash time.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct ListReport {
+    /// Wire-format version. See [`LIST_SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// `aegis-boot` binary version that produced this envelope.
+    pub tool_version: String,
+    /// Filesystem mount path the stick was resolved to (e.g.
+    /// `/run/media/alice/AEGIS_ISOS`).
+    pub mount_path: String,
+    /// Chain-of-custody summary from the matching attestation
+    /// record, or null if no attestation was found (operator
+    /// flashed on a different host, or pre-v0.13.0 stick).
+    pub attestation: Option<ListAttestationSummary>,
+    /// Number of ISOs observed. Redundant with `isos.len()` but
+    /// useful for consumers that only read the header.
+    pub count: u32,
+    /// Per-ISO details. See [`ListIsoSummary`].
+    pub isos: Vec<ListIsoSummary>,
+}
+
+/// Compact attestation summary embedded in [`ListReport`]. Derived
+/// from the stored [`Attestation`] record; smaller than the full
+/// attestation (no device fingerprint, no host kernel string) so
+/// the list envelope stays lightweight.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct ListAttestationSummary {
+    /// RFC 3339 timestamp of the flash operation.
+    pub flashed_at: String,
+    /// Operator that ran `aegis-boot flash`.
+    pub operator: String,
+    /// Count of ISOs recorded in the attestation. Note this can
+    /// differ from [`ListReport::count`] — the attestation tracks
+    /// ISOs that were added via `aegis-boot add`, while the list
+    /// count scans the actual partition. A mismatch is a signal
+    /// that someone hand-copied an ISO rather than using the CLI.
+    pub isos_recorded: u32,
+    /// Filesystem path of the host-side attestation manifest.
+    pub manifest_path: String,
+}
+
+/// Per-ISO detail in [`ListReport`]. The `display_name` +
+/// `description` fields come from an optional `<iso>.aegis.toml`
+/// operator-label sidecar (#246); they are always present in the
+/// wire format (as `null` when absent) so consumers see a stable
+/// shape.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct ListIsoSummary {
+    /// ISO filename on the data partition.
+    pub name: String,
+    /// ISO size in bytes.
+    pub size_bytes: u64,
+    /// Whether a matching `<iso>.sha256` sidecar file exists.
+    pub has_sha256: bool,
+    /// Whether a matching `<iso>.minisig` sidecar file exists.
+    pub has_minisig: bool,
+    /// Operator-curated display name from `<iso>.aegis.toml`, or
+    /// null when the sidecar is absent. Intentionally NOT omitted
+    /// when null — consumers depend on a stable field set.
+    pub display_name: Option<String>,
+    /// Operator-curated description from `<iso>.aegis.toml`, or
+    /// null when the sidecar is absent.
+    pub description: Option<String>,
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -484,5 +559,88 @@ mod tests {
         let ver_pos = body.find("\"version\"").expect("version");
         assert!(sv_pos < tool_pos, "schema_version before tool: {body}");
         assert!(tool_pos < ver_pos, "tool before version: {body}");
+    }
+
+    fn sample_list_report() -> ListReport {
+        ListReport {
+            schema_version: LIST_SCHEMA_VERSION,
+            tool_version: "0.14.1".to_string(),
+            mount_path: "/run/media/alice/AEGIS_ISOS".to_string(),
+            attestation: Some(ListAttestationSummary {
+                flashed_at: "2026-04-19T14:30:00Z".to_string(),
+                operator: "alice".to_string(),
+                isos_recorded: 3,
+                manifest_path: "/home/alice/.local/share/aegis-boot/attestations/abc.json"
+                    .to_string(),
+            }),
+            count: 2,
+            isos: vec![
+                ListIsoSummary {
+                    name: "ubuntu-24.04.iso".to_string(),
+                    size_bytes: 5_368_709_120,
+                    has_sha256: true,
+                    has_minisig: false,
+                    display_name: Some("Ubuntu 24.04 Desktop".to_string()),
+                    description: None,
+                },
+                ListIsoSummary {
+                    name: "debian-12.iso".to_string(),
+                    size_bytes: 3_221_225_472,
+                    has_sha256: false,
+                    has_minisig: false,
+                    display_name: None,
+                    description: None,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn list_schema_version_is_one() {
+        assert_eq!(LIST_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn list_round_trip_preserves_all_fields() {
+        let r = sample_list_report();
+        let body = serde_json::to_string(&r).expect("serialize");
+        let parsed: ListReport = serde_json::from_str(&body).expect("parse");
+        assert_eq!(r, parsed);
+    }
+
+    #[test]
+    fn list_attestation_serializes_as_null_when_absent() {
+        // A stick flashed on a different host has no matching
+        // attestation record — the field is `null`, NOT omitted.
+        // Scripted consumers depend on a stable field set.
+        let mut r = sample_list_report();
+        r.attestation = None;
+        let body = serde_json::to_string(&r).expect("serialize");
+        assert!(
+            body.contains("\"attestation\":null"),
+            "attestation must be explicit null: {body}"
+        );
+    }
+
+    #[test]
+    fn list_iso_summary_preserves_null_sidecar_fields() {
+        // display_name + description are `null` when the
+        // `.aegis.toml` sidecar is absent. This stable-shape
+        // property was called out explicitly in inventory.rs's
+        // original emitter (see the comment around #246). Guards
+        // against an accidental `skip_serializing_if`.
+        let mut r = sample_list_report();
+        r.isos[1].display_name = None;
+        r.isos[1].description = None;
+        let body = serde_json::to_string(&r).expect("serialize");
+        // The second ISO entry should contain both fields as null.
+        assert!(
+            body.contains("\"display_name\":null"),
+            "display_name missing or omitted: {body}"
+        );
+        assert!(
+            body.contains("\"description\":null"),
+            "description missing or omitted: {body}"
+        );
     }
 }

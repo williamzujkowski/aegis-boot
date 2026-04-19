@@ -94,60 +94,43 @@ pub fn run_list(args: &[String]) -> ExitCode {
 }
 
 /// Emit the list inventory as a stable `schema_version=1` JSON document
-/// on stdout. Matches the shape of `aegis-boot doctor --json` so
-/// downstream tooling has one parser.
+/// on stdout.
+///
+/// Phase 4b-2 of #286 migrated this from a hand-rolled `println!()`
+/// chain to the typed [`aegis_manifest::ListReport`] envelope. The
+/// wire contract is pinned via
+/// `docs/reference/schemas/aegis-boot-list.schema.json`.
 fn print_list_json(mount_path: &Path, isos: &[IsoEntry]) {
-    use crate::doctor::json_escape;
-    println!("{{");
-    println!("  \"schema_version\": 1,");
-    println!("  \"tool_version\": \"{}\",", env!("CARGO_PKG_VERSION"));
-    println!(
-        "  \"mount_path\": \"{}\",",
-        json_escape(&mount_path.display().to_string())
-    );
-    // Attestation summary if any — stays null when the mount has no
-    // attestation (operator flashed elsewhere, or pre-v0.13.0 stick).
-    match crate::attest::summary_for_mount(mount_path) {
-        Some(s) => {
-            println!("  \"attestation\": {{");
-            println!("    \"flashed_at\": \"{}\",", json_escape(&s.flashed_at));
-            println!("    \"operator\": \"{}\",", json_escape(&s.operator));
-            println!("    \"isos_recorded\": {},", s.isos_recorded);
-            println!(
-                "    \"manifest_path\": \"{}\"",
-                json_escape(&s.manifest_path.display().to_string())
-            );
-            println!("  }},");
+    let attestation = crate::attest::summary_for_mount(mount_path).map(|s| {
+        aegis_manifest::ListAttestationSummary {
+            flashed_at: s.flashed_at,
+            operator: s.operator,
+            isos_recorded: u32::try_from(s.isos_recorded).unwrap_or(u32::MAX),
+            manifest_path: s.manifest_path.display().to_string(),
         }
-        None => println!("  \"attestation\": null,"),
+    });
+    let report = aegis_manifest::ListReport {
+        schema_version: aegis_manifest::LIST_SCHEMA_VERSION,
+        tool_version: env!("CARGO_PKG_VERSION").to_string(),
+        mount_path: mount_path.display().to_string(),
+        attestation,
+        count: u32::try_from(isos.len()).unwrap_or(u32::MAX),
+        isos: isos
+            .iter()
+            .map(|iso| aegis_manifest::ListIsoSummary {
+                name: iso.name.clone(),
+                size_bytes: iso.size,
+                has_sha256: iso.has_sha256,
+                has_minisig: iso.has_minisig,
+                display_name: iso.display_name.clone(),
+                description: iso.description.clone(),
+            })
+            .collect(),
+    };
+    match serde_json::to_string_pretty(&report) {
+        Ok(body) => println!("{body}"),
+        Err(e) => eprintln!("aegis-boot list: failed to serialize --json envelope: {e}"),
     }
-    println!("  \"count\": {},", isos.len());
-    println!("  \"isos\": [");
-    let last = isos.len().saturating_sub(1);
-    for (i, iso) in isos.iter().enumerate() {
-        let comma = if i == last { "" } else { "," };
-        // display_name + description default to JSON null when no sidecar
-        // populated them. Keeping them in the schema (rather than
-        // omitting on absence) means downstream parsers see a stable
-        // shape across ISOs with and without sidecars. (#246)
-        let display_name = iso
-            .display_name
-            .as_deref()
-            .map_or_else(|| "null".to_string(), |s| format!("\"{}\"", json_escape(s)));
-        let description = iso
-            .description
-            .as_deref()
-            .map_or_else(|| "null".to_string(), |s| format!("\"{}\"", json_escape(s)));
-        println!(
-            "    {{ \"name\": \"{}\", \"size_bytes\": {}, \"has_sha256\": {}, \"has_minisig\": {}, \"display_name\": {display_name}, \"description\": {description} }}{comma}",
-            json_escape(&iso.name),
-            iso.size,
-            iso.has_sha256,
-            iso.has_minisig,
-        );
-    }
-    println!("  ]");
-    println!("}}");
 }
 
 /// Entry point for `aegis-boot add <iso> [mount-or-device]`.

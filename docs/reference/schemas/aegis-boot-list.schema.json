@@ -1,0 +1,129 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ListReport",
+  "description": "Envelope emitted by `aegis-boot list --json`. Reports the ISOs discovered on a stick's AEGIS_ISOS data partition, plus the attestation summary if one was recorded at flash time.",
+  "type": "object",
+  "required": [
+    "count",
+    "isos",
+    "mount_path",
+    "schema_version",
+    "tool_version"
+  ],
+  "properties": {
+    "attestation": {
+      "description": "Chain-of-custody summary from the matching attestation record, or null if no attestation was found (operator flashed on a different host, or pre-v0.13.0 stick).",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ListAttestationSummary"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "count": {
+      "description": "Number of ISOs observed. Redundant with `isos.len()` but useful for consumers that only read the header.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0.0
+    },
+    "isos": {
+      "description": "Per-ISO details. See [`ListIsoSummary`].",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ListIsoSummary"
+      }
+    },
+    "mount_path": {
+      "description": "Filesystem mount path the stick was resolved to (e.g. `/run/media/alice/AEGIS_ISOS`).",
+      "type": "string"
+    },
+    "schema_version": {
+      "description": "Wire-format version. See [`LIST_SCHEMA_VERSION`].",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0.0
+    },
+    "tool_version": {
+      "description": "`aegis-boot` binary version that produced this envelope.",
+      "type": "string"
+    }
+  },
+  "definitions": {
+    "ListAttestationSummary": {
+      "description": "Compact attestation summary embedded in [`ListReport`]. Derived from the stored [`Attestation`] record; smaller than the full attestation (no device fingerprint, no host kernel string) so the list envelope stays lightweight.",
+      "type": "object",
+      "required": [
+        "flashed_at",
+        "isos_recorded",
+        "manifest_path",
+        "operator"
+      ],
+      "properties": {
+        "flashed_at": {
+          "description": "RFC 3339 timestamp of the flash operation.",
+          "type": "string"
+        },
+        "isos_recorded": {
+          "description": "Count of ISOs recorded in the attestation. Note this can differ from [`ListReport::count`] — the attestation tracks ISOs that were added via `aegis-boot add`, while the list count scans the actual partition. A mismatch is a signal that someone hand-copied an ISO rather than using the CLI.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "manifest_path": {
+          "description": "Filesystem path of the host-side attestation manifest.",
+          "type": "string"
+        },
+        "operator": {
+          "description": "Operator that ran `aegis-boot flash`.",
+          "type": "string"
+        }
+      }
+    },
+    "ListIsoSummary": {
+      "description": "Per-ISO detail in [`ListReport`]. The `display_name` + `description` fields come from an optional `<iso>.aegis.toml` operator-label sidecar (#246); they are always present in the wire format (as `null` when absent) so consumers see a stable shape.",
+      "type": "object",
+      "required": [
+        "has_minisig",
+        "has_sha256",
+        "name",
+        "size_bytes"
+      ],
+      "properties": {
+        "description": {
+          "description": "Operator-curated description from `<iso>.aegis.toml`, or null when the sidecar is absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "display_name": {
+          "description": "Operator-curated display name from `<iso>.aegis.toml`, or null when the sidecar is absent. Intentionally NOT omitted when null — consumers depend on a stable field set.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "has_minisig": {
+          "description": "Whether a matching `<iso>.minisig` sidecar file exists.",
+          "type": "boolean"
+        },
+        "has_sha256": {
+          "description": "Whether a matching `<iso>.sha256` sidecar file exists.",
+          "type": "boolean"
+        },
+        "name": {
+          "description": "ISO filename on the data partition.",
+          "type": "string"
+        },
+        "size_bytes": {
+          "description": "ISO size in bytes.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      }
+    }
+  }
+}
