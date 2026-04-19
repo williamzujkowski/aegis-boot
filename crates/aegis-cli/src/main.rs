@@ -27,6 +27,7 @@ mod compat;
 mod completions;
 mod detect;
 mod direct_install;
+mod direct_install_manifest;
 mod doctor;
 mod eject;
 mod fetch;

@@ -31,6 +31,11 @@ thiserror = { workspace = true }
 # stderr, so the bar is Linux-only; macOS falls back to the original
 # silent .status() call.
 indicatif = { version = "0.17", default-features = false }
+# Signed attestation manifest for direct-install (#274 PR3, #277).
+# Ed25519-based minisign in pure Rust — no sigtool shellout, no PATH
+# dependency. Used to sign `::/aegis-boot-manifest.json` on flashed
+# sticks; operator-supplied keys, key lifecycle lives in Phase 3.
+minisign = { version = "0.9", default-features = false }
 
 [dev-dependencies]
 tempfile = "3.14"
