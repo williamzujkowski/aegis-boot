@@ -39,18 +39,19 @@ use std::fs;
 use std::io::Cursor;
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
+// Wire types + SCHEMA_VERSION extracted to the `aegis-manifest`
+// crate for Phase 4a of #286. Re-exported here so every in-crate
+// `crate::direct_install_manifest::Manifest` reference keeps working
+// unchanged, and so third-party verifiers can depend on
+// `aegis-manifest` directly with a JSON Schema pin.
+pub(crate) use aegis_manifest::{
+    DataPartition, Device, EspFileEntry, EspPartition, Manifest, SCHEMA_VERSION,
+};
 
 use crate::direct_install::{
     ESP_DEST_GRUB, ESP_DEST_GRUB_CFG_BOOT, ESP_DEST_GRUB_CFG_UBUNTU, ESP_DEST_INITRD,
     ESP_DEST_KERNEL, ESP_DEST_SHIM,
 };
-
-/// Locked schema version for PR3. Bump alongside a breaking shape
-/// change (removing a field, changing a field's type). Adding a new
-/// optional field is backwards-compatible and does not require a
-/// version bump — the verifier ignores fields it doesn't know about.
-pub(crate) const SCHEMA_VERSION: u32 = 1;
 
 /// Canonical file name of the manifest on the ESP. Operators and
 /// verifiers MUST key off this exact path; moving it is a breaking
@@ -72,72 +73,6 @@ pub(crate) const TYPE_GUID_ESP: &str = "C12A7328-F81F-11D2-BA4B-00A0C93EC93B";
 /// exFAT on our sticks — see the [`crate::direct_install`] doc on
 /// `DATA_TYPE_CODE` for why the runtime doesn't key off this).
 pub(crate) const TYPE_GUID_MSFT_BASIC_DATA: &str = "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7";
-
-/// Top-level manifest body. Serialized field order matches the
-/// declaration order below — relied on for canonical JSON stability
-/// (the signature is over `serde_json::to_vec(&Manifest)`).
-///
-/// The Rust field is `sequence` (clippy prefers not to prefix the
-/// struct name); the JSON wire field stays `manifest_sequence` per
-/// #277 schema lock via `#[serde(rename)]`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct Manifest {
-    pub schema_version: u32,
-    pub tool_version: String,
-    #[serde(rename = "manifest_sequence")]
-    pub sequence: u64,
-    pub device: Device,
-    pub esp_files: Vec<EspFileEntry>,
-    pub allowed_files_closed_set: bool,
-    pub expected_pcrs: Vec<PcrEntry>,
-}
-
-/// Device identity captured at flash time. All values come from the
-/// freshly-written GPT (`blkid` + `sgdisk -p`); verifier re-reads them
-/// and asserts equality.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct Device {
-    pub disk_guid: String,
-    pub partition_count: u32,
-    pub esp: EspPartition,
-    pub data: DataPartition,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct EspPartition {
-    pub partuuid: String,
-    pub type_guid: String,
-    pub fs_uuid: String,
-    pub first_lba: u64,
-    pub last_lba: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct DataPartition {
-    pub partuuid: String,
-    pub type_guid: String,
-    pub fs_uuid: String,
-    pub label: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct EspFileEntry {
-    /// Mtools-style `::/` path on the ESP. Verifier lowercases both
-    /// sides before comparison (FAT32 is case-insensitive).
-    pub path: String,
-    pub sha256: String,
-    pub size_bytes: u64,
-}
-
-/// Reserved for E6 / Phase 3 TPM attestation. Left out of the
-/// serialized array by PR3 (`expected_pcrs: []`); once E6 locks the
-/// PCR selection this struct grows populated rows.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct PcrEntry {
-    pub pcr_index: u32,
-    pub bank: String,
-    pub digest_hex: String,
-}
 
 /// Errors from manifest build / parse / verify.
 #[derive(Debug, thiserror::Error)]

@@ -1,0 +1,50 @@
+[package]
+name = "aegis-manifest"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Signed attestation manifest format for aegis-boot USB sticks — serde types + JSON Schema"
+readme = "README.md"
+documentation = "https://docs.rs/aegis-manifest"
+homepage = "https://github.com/williamzujkowski/aegis-boot"
+keywords = ["aegis-boot", "attestation", "manifest", "usb", "secure-boot"]
+categories = ["data-structures", "filesystem"]
+
+[lib]
+
+# Feature-gated schema-docgen bin (Phase 4a of #286). Emits
+# `docs/reference/schemas/aegis-boot-manifest.schema.json` using
+# `schemars`. Pure build-tool; the normal library API does not pull
+# schemars into the runtime.
+[[bin]]
+name = "aegis-manifest-schema-docgen"
+path = "src/bin/schema_docgen.rs"
+required-features = ["schema"]
+
+[features]
+default = []
+# Enables `schemars::JsonSchema` derives on every public type, plus
+# compiles the schema-docgen bin. Consumers who just want to parse
+# manifests leave this off.
+schema = ["dep:schemars"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = "1.0"
+thiserror = { workspace = true }
+# schemars picks the latest stable. 0.8 is the long-established
+# release with a settled API + a broad reverse-dependency ecosystem.
+schemars = { version = "0.8", optional = true, default-features = false, features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1.0"
+
+[lints]
+workspace = true
+
+# Phase 6 of #286 — README.md becomes the rustdoc landing page.
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

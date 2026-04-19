@@ -1,0 +1,214 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Manifest",
+  "description": "Top-level manifest body. Serialized field order matches the declaration order below — relied on for canonical JSON stability (the signature is computed over `serde_json::to_vec(&Manifest)`).\n\nThe Rust field is `sequence` (clippy prefers not to prefix the struct name); the JSON wire field stays `manifest_sequence` per the [#277] schema lock via `#[serde(rename)]`.\n\n[#277]: https://github.com/williamzujkowski/aegis-boot/issues/277",
+  "type": "object",
+  "required": [
+    "allowed_files_closed_set",
+    "device",
+    "esp_files",
+    "expected_pcrs",
+    "manifest_sequence",
+    "schema_version",
+    "tool_version"
+  ],
+  "properties": {
+    "allowed_files_closed_set": {
+      "description": "When `true`, the verifier treats [`Self::esp_files`] as exhaustive — the presence of any additional file on the ESP is itself a violation. Always `true` in PR3; left as a field so future phases can ship an evolutionary \"extended\" manifest without breaking consumers.",
+      "type": "boolean"
+    },
+    "device": {
+      "description": "Device identity captured at flash time.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/Device"
+        }
+      ]
+    },
+    "esp_files": {
+      "description": "Closed set of files on the ESP. Verifier rejects the stick if any ESP file is not listed here or is missing / has a different sha256 than recorded. Six entries today, one per line in the signed-chain layout established by Phase 2b of [#274](https://github.com/williamzujkowski/aegis-boot/issues/274).",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/EspFileEntry"
+      }
+    },
+    "expected_pcrs": {
+      "description": "Reserved for E6 / Phase 3 TPM attestation. Left empty by PR3; once E6 locks the PCR selection this vector grows populated rows.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/PcrEntry"
+      }
+    },
+    "manifest_sequence": {
+      "description": "Monotonic-per-flash sequence number. Defends against rollback to an older validly-signed manifest without relying on a secure RTC. Verifiers track the highest sequence they've ever seen for a given device fingerprint and reject manifests whose sequence is strictly less.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "schema_version": {
+      "description": "Wire-format version. See [`SCHEMA_VERSION`].",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0.0
+    },
+    "tool_version": {
+      "description": "`aegis-boot` binary version that produced the manifest (e.g. `\"aegis-boot 0.14.1\"`). Informational — not a trust anchor.",
+      "type": "string"
+    }
+  },
+  "definitions": {
+    "DataPartition": {
+      "description": "Identity of the AEGIS_ISOS data partition (partition 2).",
+      "type": "object",
+      "required": [
+        "fs_uuid",
+        "label",
+        "partuuid",
+        "type_guid"
+      ],
+      "properties": {
+        "fs_uuid": {
+          "description": "Filesystem UUID.",
+          "type": "string"
+        },
+        "label": {
+          "description": "Filesystem label — always `AEGIS_ISOS` for aegis-boot sticks.",
+          "type": "string"
+        },
+        "partuuid": {
+          "description": "GPT PARTUUID.",
+          "type": "string"
+        },
+        "type_guid": {
+          "description": "GPT partition-type GUID — Microsoft Basic Data for exfat/fat32, Linux Filesystem for ext4.",
+          "type": "string"
+        }
+      }
+    },
+    "Device": {
+      "description": "Device identity captured at flash time. All values come from the freshly-written GPT (`blkid` + `sgdisk -p`); the verifier re-reads them at runtime and asserts equality.",
+      "type": "object",
+      "required": [
+        "data",
+        "disk_guid",
+        "esp",
+        "partition_count"
+      ],
+      "properties": {
+        "data": {
+          "description": "Data partition identity — `AEGIS_ISOS` label, exfat by default, fat32 or ext4 opt-in.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/DataPartition"
+            }
+          ]
+        },
+        "disk_guid": {
+          "description": "GPT disk GUID.",
+          "type": "string"
+        },
+        "esp": {
+          "description": "ESP partition identity — first partition by design.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/EspPartition"
+            }
+          ]
+        },
+        "partition_count": {
+          "description": "Total partition count observed at flash time. aegis-boot lays down exactly two partitions (ESP + AEGIS_ISOS); a verifier reading three or more partitions on the same disk rejects the stick.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    },
+    "EspFileEntry": {
+      "description": "A single file on the ESP with its content hash and size.",
+      "type": "object",
+      "required": [
+        "path",
+        "sha256",
+        "size_bytes"
+      ],
+      "properties": {
+        "path": {
+          "description": "Mtools-style `::/`-rooted path on the ESP (e.g. `::/EFI/BOOT/BOOTX64.EFI`). The verifier lowercases both sides before comparison because FAT32 is case-insensitive.",
+          "type": "string"
+        },
+        "sha256": {
+          "description": "Lowercase hex sha256 of the file body.",
+          "type": "string"
+        },
+        "size_bytes": {
+          "description": "File size in bytes. Redundant with sha256 but cheap to check first — a size mismatch lets the verifier reject without reading the full body.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      }
+    },
+    "EspPartition": {
+      "description": "Identity of the ESP partition (partition 1).",
+      "type": "object",
+      "required": [
+        "first_lba",
+        "fs_uuid",
+        "last_lba",
+        "partuuid",
+        "type_guid"
+      ],
+      "properties": {
+        "first_lba": {
+          "description": "First absolute LBA of the partition's extent on disk.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "fs_uuid": {
+          "description": "FAT32 volume serial number (`blkid -o value -s UUID`).",
+          "type": "string"
+        },
+        "last_lba": {
+          "description": "Last absolute LBA of the partition's extent on disk.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "partuuid": {
+          "description": "GPT PARTUUID (per-partition unique identifier).",
+          "type": "string"
+        },
+        "type_guid": {
+          "description": "GPT partition-type GUID. For the ESP this is `C12A7328-F81F-11D2-BA4B-00A0C93EC93B`.",
+          "type": "string"
+        }
+      }
+    },
+    "PcrEntry": {
+      "description": "Expected TPM PCR value at an aegis-boot stick's first post-boot measurement. Empty in PR3; populated once E6 locks the PCR selection.",
+      "type": "object",
+      "required": [
+        "bank",
+        "digest_hex",
+        "pcr_index"
+      ],
+      "properties": {
+        "bank": {
+          "description": "Hash bank — `sha256`, `sha384`, etc.",
+          "type": "string"
+        },
+        "digest_hex": {
+          "description": "Lowercase hex expected digest.",
+          "type": "string"
+        },
+        "pcr_index": {
+          "description": "PCR index (0..23 for most banks).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    }
+  }
+}

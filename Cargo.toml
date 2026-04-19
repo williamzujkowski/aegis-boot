@@ -7,6 +7,7 @@ members = [
     "crates/kexec-loader",
     "crates/aegis-fitness",
     "crates/aegis-cli",
+    "crates/aegis-manifest",
 ]
 exclude = ["crates/iso-parser/fuzz"]
 

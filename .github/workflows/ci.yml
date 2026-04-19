@@ -204,3 +204,20 @@ jobs:
         run: cargo build -p aegis-cli --release --locked
       - name: Check CLI doc drift
         run: cargo run -p aegis-cli --bin cli-docgen --features docgen --locked -- --check
+
+  # Attestation-manifest JSON schema drift-check (Phase 4a of #290 / #286).
+  # Runs `aegis-manifest-schema-docgen --check` which regenerates the
+  # JSON Schema for `aegis_manifest::Manifest` via schemars and diffs
+  # it against the committed copy at
+  # `docs/reference/schemas/aegis-boot-manifest.schema.json`. A field
+  # added, removed, or retyped on any manifest struct breaks this
+  # check until the schema is regenerated and committed.
+  manifest-schema-drift:
+    name: Manifest JSON schema drift-check
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust
+        run: rustup toolchain install 1.85.0 --profile minimal && rustup override set 1.85.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo run -p aegis-manifest --features schema --bin aegis-manifest-schema-docgen --locked -- --check
