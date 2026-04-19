@@ -49,8 +49,19 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
         out_dir,
         skip_gpg,
         dry_run,
+        no_progress,
         slug,
     } = parsed;
+
+    // Progress-bar policy: honor explicit --progress / --no-progress
+    // flags, else auto-detect based on whether stdout is a terminal.
+    // Non-TTY stdout (CI logs, pipes, redirects) gets no progress
+    // bar since the carriage-return re-renders would trash the log.
+    let show_progress = match no_progress {
+        Some(true) => false,
+        Some(false) => true,
+        None => std::io::IsTerminal::is_terminal(&std::io::stdout()),
+    };
 
     let Some(entry) = find_entry(&slug) else {
         eprintln!("aegis-boot fetch: no catalog entry matching '{slug}'");
@@ -82,15 +93,18 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
     let sha_filename = filename_from_url(entry.sha256_url);
     let sig_filename = filename_from_url(entry.sig_url);
 
-    if let Err(e) = download(entry.iso_url, &dest.join(&iso_filename)) {
+    // ISO is the big download — show a progress bar if enabled.
+    // SHA256SUMS + signature are ~1-2 KB each; keep them silent so
+    // the terminal scrollback isn't dominated by tiny bars.
+    if let Err(e) = download(entry.iso_url, &dest.join(&iso_filename), show_progress) {
         eprintln!("aegis-boot fetch: ISO download failed: {e}");
         return Err(1);
     }
-    if let Err(e) = download(entry.sha256_url, &dest.join(&sha_filename)) {
+    if let Err(e) = download(entry.sha256_url, &dest.join(&sha_filename), false) {
         eprintln!("aegis-boot fetch: SHA256SUMS download failed: {e}");
         return Err(1);
     }
-    if let Err(e) = download(entry.sig_url, &dest.join(&sig_filename)) {
+    if let Err(e) = download(entry.sig_url, &dest.join(&sig_filename), false) {
         // Sig download is best-effort if the user opts out of GPG, but
         // useful to have on disk regardless.
         eprintln!("aegis-boot fetch: signature download failed: {e}");
@@ -180,6 +194,12 @@ struct FetchFlags {
     out_dir: Option<PathBuf>,
     skip_gpg: bool,
     dry_run: bool,
+    /// When `Some(true)`, suppress the curl progress bar even on a
+    /// TTY (scripted usage, CI logs). When `Some(false)`, force the
+    /// progress bar even if stdout doesn't appear to be a TTY (rare,
+    /// useful for tests). When `None` (default), auto-detect based
+    /// on `std::io::IsTerminal`. #311.
+    no_progress: Option<bool>,
     slug: String,
 }
 
@@ -191,6 +211,7 @@ fn parse_flags(args: &[String]) -> Result<Option<FetchFlags>, u8> {
     let mut out_dir: Option<PathBuf> = None;
     let mut skip_gpg = false;
     let mut dry_run = false;
+    let mut no_progress: Option<bool> = None;
     let mut slug: Option<String> = None;
     let mut iter = args.iter();
     while let Some(a) = iter.next() {
@@ -208,6 +229,8 @@ fn parse_flags(args: &[String]) -> Result<Option<FetchFlags>, u8> {
             }
             "--no-gpg" => skip_gpg = true,
             "--dry-run" => dry_run = true,
+            "--no-progress" => no_progress = Some(true),
+            "--progress" => no_progress = Some(false),
             arg if arg.starts_with("--out=") => {
                 out_dir = Some(PathBuf::from(arg.trim_start_matches("--out=")));
             }
@@ -236,6 +259,7 @@ fn parse_flags(args: &[String]) -> Result<Option<FetchFlags>, u8> {
         out_dir,
         skip_gpg,
         dry_run,
+        no_progress,
         slug,
     }))
 }
@@ -251,10 +275,14 @@ fn print_help() {
     println!("  aegis-boot fetch --help");
     println!();
     println!("OPTIONS:");
-    println!("  --out DIR     Destination directory (default: $XDG_CACHE_HOME/aegis-boot/<slug>)");
-    println!("  --no-gpg      Skip GPG signature verification on SHA256SUMS");
-    println!("  --dry-run     Print what would be downloaded without doing it");
-    println!("  --help        This message");
+    println!(
+        "  --out DIR       Destination directory (default: $XDG_CACHE_HOME/aegis-boot/<slug>)"
+    );
+    println!("  --no-gpg        Skip GPG signature verification on SHA256SUMS");
+    println!("  --dry-run       Print what would be downloaded without doing it");
+    println!("  --no-progress   Suppress curl progress bar (for scripted usage / CI logs)");
+    println!("  --progress      Force progress bar even when stdout is not a TTY (rare)");
+    println!("  --help          This message");
     println!();
     println!("EXAMPLES:");
     println!("  aegis-boot fetch ubuntu-24.04-live-server");
@@ -333,7 +361,17 @@ fn filename_from_url(url: &str) -> String {
     url.rsplit('/').next().unwrap_or("download").to_string()
 }
 
-fn download(url: &str, dest: &Path) -> Result<(), String> {
+/// Download `url` to `dest`. When `show_progress` is true, curl
+/// runs with its `--progress-bar` (compact single-line `#` bar)
+/// instead of `--silent` — the operator sees bytes-per-sec + ETA
+/// for large ISO downloads (#311). When false, curl runs silent;
+/// used for small sidecar downloads (SHA256SUMS / signatures)
+/// where a progress bar would only clutter the output.
+///
+/// Partial-file cleanup on failure is preserved — a non-success
+/// curl exit removes `dest` so a retry doesn't see a stale partial
+/// as "already downloaded".
+fn download(url: &str, dest: &Path, show_progress: bool) -> Result<(), String> {
     if dest.is_file() {
         // Already downloaded; skip. Sha verification will catch a
         // half-finished partial-download from a previous failed run.
@@ -341,19 +379,25 @@ fn download(url: &str, dest: &Path) -> Result<(), String> {
         return Ok(());
     }
     println!("  GET {url}");
-    let status = Command::new("curl")
-        .args([
-            "--proto",
-            "=https",
-            "--tlsv1.2",
-            "--fail",
-            "--silent",
-            "--show-error",
-            "--location",
-            "--output",
-        ])
-        .arg(dest)
-        .arg(url)
+    let mut cmd = Command::new("curl");
+    cmd.args([
+        "--proto",
+        "=https",
+        "--tlsv1.2",
+        "--fail",
+        "--show-error",
+        "--location",
+    ]);
+    if show_progress {
+        // `--progress-bar` emits a compact single-line progress
+        // meter on stderr. Large ISO downloads (multi-GB from slow
+        // mirrors) no longer appear hung.
+        cmd.arg("--progress-bar");
+    } else {
+        cmd.arg("--silent");
+    }
+    cmd.arg("--output").arg(dest).arg(url);
+    let status = cmd
         .status()
         .map_err(|e| format!("curl exec failed: {e} (is curl installed?)"))?;
     if !status.success() {
@@ -451,6 +495,40 @@ mod tests {
             filename_from_url("https://example.com/path/to/file.iso"),
             "file.iso"
         );
+    }
+
+    #[test]
+    fn parse_flags_no_progress_is_unset_by_default() {
+        // No explicit flag → caller derives from IsTerminal. #311.
+        let parsed = parse_flags(&["ubuntu-24.04-live-server".to_string()])
+            .expect("parse ok")
+            .expect("not --help");
+        assert_eq!(parsed.no_progress, None);
+    }
+
+    #[test]
+    fn parse_flags_no_progress_flag_forces_silent() {
+        let parsed = parse_flags(&[
+            "--no-progress".to_string(),
+            "ubuntu-24.04-live-server".to_string(),
+        ])
+        .expect("parse ok")
+        .expect("not --help");
+        assert_eq!(parsed.no_progress, Some(true));
+    }
+
+    #[test]
+    fn parse_flags_progress_flag_forces_bar() {
+        // `--progress` lets a test or unusual invocation force the
+        // progress bar even when stdout isn't a TTY. Rare but
+        // useful for reproducing CI behavior locally.
+        let parsed = parse_flags(&[
+            "--progress".to_string(),
+            "ubuntu-24.04-live-server".to_string(),
+        ])
+        .expect("parse ok")
+        .expect("not --help");
+        assert_eq!(parsed.no_progress, Some(false));
     }
 
     #[test]

@@ -144,10 +144,12 @@ USAGE:
   aegis-boot fetch --help
 
 OPTIONS:
-  --out DIR     Destination directory (default: $XDG_CACHE_HOME/aegis-boot/<slug>)
-  --no-gpg      Skip GPG signature verification on SHA256SUMS
-  --dry-run     Print what would be downloaded without doing it
-  --help        This message
+  --out DIR       Destination directory (default: $XDG_CACHE_HOME/aegis-boot/<slug>)
+  --no-gpg        Skip GPG signature verification on SHA256SUMS
+  --dry-run       Print what would be downloaded without doing it
+  --no-progress   Suppress curl progress bar (for scripted usage / CI logs)
+  --progress      Force progress bar even when stdout is not a TTY (rare)
+  --help          This message
 
 EXAMPLES:
   aegis-boot fetch ubuntu-24.04-live-server
