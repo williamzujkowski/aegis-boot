@@ -34,6 +34,7 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
     let mut prebuilt_image: Option<PathBuf> = None;
     let mut dry_run = false;
     let mut no_progress = false;
+    let mut no_expand = false;
     let mut i = 0;
     while i < args.len() {
         let a = &args[i];
@@ -45,6 +46,7 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
             "--yes" | "-y" => assume_yes = true,
             "--dry-run" => dry_run = true,
             "--no-progress" => no_progress = true,
+            "--no-expand" => no_expand = true,
             "--image" => {
                 i += 1;
                 let Some(p) = args.get(i) else {
@@ -94,9 +96,7 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
     // the operator's mental model matches what runs.
     let plan = build_flash_plan(&drive, prebuilt_image.as_deref());
     if dry_run {
-        print!("{plan}");
-        println!();
-        println!("--dry-run: no changes were made. Re-run without --dry-run to execute.");
+        print_dry_run_plan(&plan);
         return Ok(());
     }
 
@@ -107,7 +107,7 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
     }
 
     // Step 3: build + write + verify.
-    match flash(&drive, prebuilt_image.as_deref(), no_progress) {
+    match flash(&drive, prebuilt_image.as_deref(), no_progress, no_expand) {
         Ok(()) => {
             println!();
             println!("Done. Next steps:");
@@ -149,6 +149,15 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
     }
 }
 
+/// Render the dry-run plan + footer. Extracted from `try_run` so the
+/// argv parser + dispatch stays under clippy's per-function line
+/// ceiling.
+fn print_dry_run_plan(plan: &crate::plan::Plan) {
+    print!("{plan}");
+    println!();
+    println!("--dry-run: no changes were made. Re-run without --dry-run to execute.");
+}
+
 fn print_help() {
     println!("aegis-boot flash — write aegis-boot to a USB stick");
     println!();
@@ -164,6 +173,10 @@ fn print_help() {
     println!("  --no-progress    = suppress the indicatif progress bar during dd. Use in");
     println!("                     CI, pipes, or dumb terminals where the \\r-updated bar");
     println!("                     would render as a long noisy line. (#244 PR3)");
+    println!("  --no-expand      = skip auto-expand of AEGIS_ISOS to fill the target device");
+    println!("                     post-flash. Without this flag, a fresh stick gets the full");
+    println!("                     device as its ISO partition (#242). Rare — use when you");
+    println!("                     deliberately want the small mkusb-default partition size.");
 }
 
 /// Build the typed `Plan` describing what `aegis-boot flash` would do
@@ -237,7 +250,17 @@ fn build_flash_plan(drive: &Drive, prebuilt_image: Option<&Path>) -> crate::plan
         expected_sha256: None,
     });
 
-    // 5. Persist an attestation receipt so `aegis-boot attest list`
+    // 5. Auto-expand partition 2 to fill the target device (#242).
+    //    Reformats exfat over the grown partition — safe because the
+    //    partition is freshly-empty at this point.
+    plan.add(Operation::ModifyPartitionTable {
+        device: drive.dev.clone(),
+        action:
+            "grow partition 2 (AEGIS_ISOS) to fill remaining device capacity, reformat as exFAT"
+                .to_string(),
+    });
+
+    // 6. Persist an attestation receipt so `aegis-boot attest list`
     //    has a record of this flash. The receipt path is
     //    sudo-aware and lands under the operator's
     //    $XDG_DATA_HOME/aegis-boot/attestations/.
@@ -391,7 +414,12 @@ fn confirm_destructive(drive: &Drive) -> bool {
     line.trim() == "flash"
 }
 
-fn flash(drive: &Drive, prebuilt_image: Option<&Path>, no_progress: bool) -> Result<(), String> {
+fn flash(
+    drive: &Drive,
+    prebuilt_image: Option<&Path>,
+    no_progress: bool,
+    no_expand: bool,
+) -> Result<(), String> {
     // Step 3a: get the image. --image skips the build; otherwise we
     // shell out to mkusb.sh (Linux only) to generate a fresh image.
     let (img_path, img_size) = if let Some(path) = prebuilt_image {
@@ -482,6 +510,31 @@ fn flash(drive: &Drive, prebuilt_image: Option<&Path>, no_progress: bool) -> Res
             }
         }
     }
+
+    // #242: auto-expand AEGIS_ISOS (partition 2) to fill the target
+    // device. mkusb.sh produces a fixed-size image (default 2 GB), so
+    // without this step a 32 GB stick only has ~1.6 GB of usable ISO
+    // space. Doing this immediately post-flash is safe because the
+    // data partition is freshly-empty — the destructive reformat has
+    // zero data risk. Linux-only (sgdisk + partprobe are Linux tools;
+    // macOS would need a parallel path via diskutil which is out of
+    // scope for this change). --no-expand opts out. Soft-fails: if
+    // the grow fails, the stick still boots; operator sees a warning.
+    #[cfg(target_os = "linux")]
+    if !no_expand {
+        match expand_data_partition(&drive.dev) {
+            Ok(()) => println!("✓ AEGIS_ISOS now spans the full stick"),
+            Err(e) => {
+                eprintln!("warning: failed to auto-expand AEGIS_ISOS: {e}");
+                eprintln!(
+                    "(stick is usable; data partition is the mkusb default size — \
+                     you can still add ISOs, just less of them)"
+                );
+            }
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = no_expand; // sgdisk-based expand is Linux-only (see above)
 
     println!();
     println!(
@@ -639,6 +692,107 @@ fn dirs_from_exe() -> Option<PathBuf> {
     std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(Path::to_path_buf))
+}
+
+// ---- partition 2 auto-expand (#242) -----------------------------------------
+
+/// Compute the partition-2 device path for a block device. For a disk
+/// at `/dev/sdX`, partition 2 is `/dev/sdX2`. For `NVMe` (`/dev/nvme0n1`)
+/// it's `/dev/nvme0n1p2`. USB sticks are almost always `/dev/sdX`; the
+/// `NVMe` path is here for forward-compatibility / unusual topologies.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn partition2_path(dev: &Path) -> PathBuf {
+    let s = dev.display().to_string();
+    // NVMe / mmcblk style: <base>p<N>. SCSI/USB style: <base><N>.
+    // Heuristic: if the path ends in a digit, insert 'p' before '2'.
+    let last_is_digit = s.chars().last().is_some_and(|c| c.is_ascii_digit());
+    if last_is_digit {
+        PathBuf::from(format!("{s}p2"))
+    } else {
+        PathBuf::from(format!("{s}2"))
+    }
+}
+
+/// Grow partition 2 to fill the target device and re-format as exFAT.
+///
+/// Safe to run immediately post-dd because the data partition is empty
+/// at that moment — no operator data to preserve. Must NOT be called
+/// on a stick with user content (kills existing ISOs).
+///
+/// Steps:
+/// 1. `sgdisk -e <dev>` — move backup GPT to end of disk (the dd'd
+///    image had a backup GPT at the 2 GB mark).
+/// 2. `sgdisk -d 2 -n 2:0:0 -t 2:0700 -c 2:AEGIS_ISOS <dev>` —
+///    delete partition 2 and recreate it spanning all remaining
+///    space. 0700 = Microsoft Basic Data (matches mkusb.sh's default
+///    exfat partition type post-#243).
+/// 3. `partprobe <dev>` — reload the kernel's partition table.
+/// 4. `mkfs.exfat -L AEGIS_ISOS <partition2>` — format the new
+///    larger partition.
+#[cfg(target_os = "linux")]
+fn expand_data_partition(dev: &Path) -> Result<(), String> {
+    let dev_str = dev.display().to_string();
+
+    println!("Expanding AEGIS_ISOS to fill the stick...");
+
+    // 1. Move backup GPT to end-of-disk.
+    sudo_cmd_success(&["sgdisk", "-e", &dev_str]).map_err(|e| format!("sgdisk -e: {e}"))?;
+
+    // 2. Delete + recreate partition 2 spanning the rest of disk.
+    //    -n 2:0:0 means partition 2, default start, default end
+    //    (= end of largest free block = rest of disk). -t 2:0700 =
+    //    Microsoft Basic Data partition type (what exfat + fat32
+    //    sticks advertise).
+    sudo_cmd_success(&[
+        "sgdisk",
+        "-d",
+        "2",
+        "-n",
+        "2:0:0",
+        "-t",
+        "2:0700",
+        "-c",
+        "2:AEGIS_ISOS",
+        &dev_str,
+    ])
+    .map_err(|e| format!("sgdisk recreate partition 2: {e}"))?;
+
+    // 3. Reload partition table so /dev/sdX2 points at the new bounds.
+    //    Non-fatal if it fails — mkfs.exfat targeting the device node
+    //    directly will still work because sgdisk already synced.
+    let _ = Command::new("sudo").args(["partprobe", &dev_str]).status();
+
+    // 4. Format the new partition as exfat (#243 default).
+    let part2 = partition2_path(dev);
+    sudo_cmd_success(&[
+        "mkfs.exfat",
+        "-L",
+        "AEGIS_ISOS",
+        &part2.display().to_string(),
+    ])
+    .map_err(|e| format!("mkfs.exfat: {e}"))?;
+
+    Ok(())
+}
+
+/// Run `sudo <argv>` and return Ok if the exit status is success,
+/// Err(stderr) otherwise. Shared by the sgdisk + mkfs.exfat steps of
+/// `expand_data_partition`.
+#[cfg(target_os = "linux")]
+fn sudo_cmd_success(argv: &[&str]) -> Result<(), String> {
+    let out = Command::new("sudo")
+        .args(argv)
+        .output()
+        .map_err(|e| format!("{} exec failed: {e}", argv.first().unwrap_or(&"?")))?;
+    if !out.status.success() {
+        return Err(format!(
+            "{} exited {}: {}",
+            argv.first().unwrap_or(&"?"),
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(())
 }
 
 // ---- dd runner dispatch -----------------------------------------------------
@@ -992,14 +1146,55 @@ mod tests {
         let plan = build_flash_plan(&drive, None);
         let ops = plan.operations();
 
-        // 5 operations: precheck (mkusb), precheck (removable+usb),
-        // write, readback verify, attestation.
-        assert_eq!(ops.len(), 5, "got {ops:#?}");
+        // 6 operations: precheck (mkusb), precheck (removable+usb),
+        // write, readback verify, modify-partition-table (#242 auto-expand),
+        // attestation.
+        assert_eq!(ops.len(), 6, "got {ops:#?}");
         assert!(matches!(ops[0], Operation::PrecheckRefuseUnless { .. }));
         assert!(matches!(ops[1], Operation::PrecheckRefuseUnless { .. }));
         assert!(matches!(ops[2], Operation::WriteToBlockDevice { .. }));
         assert!(matches!(ops[3], Operation::ReadbackVerify { .. }));
-        assert!(matches!(ops[4], Operation::WriteAttestation { .. }));
+        assert!(matches!(ops[4], Operation::ModifyPartitionTable { .. }));
+        assert!(matches!(ops[5], Operation::WriteAttestation { .. }));
+    }
+
+    #[test]
+    fn build_flash_plan_describes_exfat_reformat_in_expand_step() {
+        let drive = fake_drive();
+        let plan = build_flash_plan(&drive, None);
+        let rendered = plan.to_string();
+        assert!(
+            rendered.contains("AEGIS_ISOS") && rendered.contains("exFAT"),
+            "expand step missing from plan: {rendered}"
+        );
+    }
+
+    // ---- #242: partition2_path helper --------------------------------------
+
+    #[test]
+    fn partition2_path_appends_2_for_scsi_style_names() {
+        assert_eq!(
+            partition2_path(Path::new("/dev/sda")),
+            PathBuf::from("/dev/sda2")
+        );
+        assert_eq!(
+            partition2_path(Path::new("/dev/sdc")),
+            PathBuf::from("/dev/sdc2")
+        );
+    }
+
+    #[test]
+    fn partition2_path_inserts_p_for_nvme_mmcblk_style_names() {
+        // NVMe: /dev/nvme0n1 → /dev/nvme0n1p2
+        assert_eq!(
+            partition2_path(Path::new("/dev/nvme0n1")),
+            PathBuf::from("/dev/nvme0n1p2")
+        );
+        // mmcblk: /dev/mmcblk0 → /dev/mmcblk0p2
+        assert_eq!(
+            partition2_path(Path::new("/dev/mmcblk0")),
+            PathBuf::from("/dev/mmcblk0p2")
+        );
     }
 
     #[test]
