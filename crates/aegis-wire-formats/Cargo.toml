@@ -1,5 +1,5 @@
 [package]
-name = "aegis-manifest"
+name = "aegis-wire-formats"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 description = "Signed attestation manifest format for aegis-boot USB sticks — serde types + JSON Schema"
 readme = "README.md"
-documentation = "https://docs.rs/aegis-manifest"
+documentation = "https://docs.rs/aegis-wire-formats"
 homepage = "https://github.com/williamzujkowski/aegis-boot"
 keywords = ["aegis-boot", "attestation", "manifest", "usb", "secure-boot"]
 categories = ["data-structures", "filesystem"]
@@ -19,7 +19,7 @@ categories = ["data-structures", "filesystem"]
 # `schemars`. Pure build-tool; the normal library API does not pull
 # schemars into the runtime.
 [[bin]]
-name = "aegis-manifest-schema-docgen"
+name = "aegis-wire-formats-schema-docgen"
 path = "src/bin/schema_docgen.rs"
 required-features = ["schema"]
 

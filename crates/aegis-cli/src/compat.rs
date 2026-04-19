@@ -266,8 +266,8 @@ fn run_submit(json_mode: bool) -> Result<(), u8> {
             tool_version,
         );
         if json_mode {
-            let report = aegis_manifest::CompatSubmitReport {
-                schema_version: aegis_manifest::COMPAT_SUBMIT_SCHEMA_VERSION,
+            let report = aegis_wire_formats::CompatSubmitReport {
+                schema_version: aegis_wire_formats::COMPAT_SUBMIT_SCHEMA_VERSION,
                 tool: "aegis-boot".to_string(),
                 submit_url: url.clone(),
                 vendor: vendor.clone().unwrap_or_default(),
@@ -372,9 +372,9 @@ pub(crate) fn build_hardware_report_url(
 /// a host-environment issue, not a DB-coverage issue.
 fn report_my_machine_miss(json_mode: bool) -> Result<(), u8> {
     if json_mode {
-        let report = aegis_manifest::CompatReport::MyMachineMiss(
-            aegis_manifest::CompatMyMachineMissReport {
-                schema_version: aegis_manifest::COMPAT_SCHEMA_VERSION,
+        let report = aegis_wire_formats::CompatReport::MyMachineMiss(
+            aegis_wire_formats::CompatMyMachineMissReport {
+                schema_version: aegis_wire_formats::COMPAT_SCHEMA_VERSION,
                 error:
                     "--my-machine: DMI fields unavailable (non-Linux host or placeholder values)"
                         .to_string(),
@@ -467,7 +467,7 @@ fn print_miss(query: &str) {
 }
 
 /// `aegis-boot compat --json [slug]` — emit lookup results via the
-/// typed [`aegis_manifest::CompatReport`] envelope.
+/// typed [`aegis_wire_formats::CompatReport`] envelope.
 ///
 /// Phase 4b-7 of #286 migrated this from hand-rolled `println!()`
 /// chains + manual comma handling. Wire contract pinned via
@@ -475,34 +475,37 @@ fn print_miss(query: &str) {
 fn run_json(query: Option<&str>) -> Result<(), u8> {
     match query {
         None => {
-            let report =
-                aegis_manifest::CompatReport::Catalog(aegis_manifest::CompatCatalogReport {
-                    schema_version: aegis_manifest::COMPAT_SCHEMA_VERSION,
+            let report = aegis_wire_formats::CompatReport::Catalog(
+                aegis_wire_formats::CompatCatalogReport {
+                    schema_version: aegis_wire_formats::COMPAT_SCHEMA_VERSION,
                     tool_version: env!("CARGO_PKG_VERSION").to_string(),
                     report_url: REPORT_URL.to_string(),
                     count: u32::try_from(COMPAT_DB.len()).unwrap_or(u32::MAX),
                     entries: COMPAT_DB.iter().map(entry_to_wire).collect(),
-                });
+                },
+            );
             emit_compat_report(&report);
             Ok(())
         }
         Some(q) => {
             if let Some(entry) = find_entry(q) {
-                let report =
-                    aegis_manifest::CompatReport::Single(aegis_manifest::CompatSingleReport {
-                        schema_version: aegis_manifest::COMPAT_SCHEMA_VERSION,
+                let report = aegis_wire_formats::CompatReport::Single(
+                    aegis_wire_formats::CompatSingleReport {
+                        schema_version: aegis_wire_formats::COMPAT_SCHEMA_VERSION,
                         tool_version: env!("CARGO_PKG_VERSION").to_string(),
                         report_url: REPORT_URL.to_string(),
                         entry: entry_to_wire(entry),
-                    });
+                    },
+                );
                 emit_compat_report(&report);
                 Ok(())
             } else {
-                let report = aegis_manifest::CompatReport::Miss(aegis_manifest::CompatMissReport {
-                    schema_version: aegis_manifest::COMPAT_SCHEMA_VERSION,
-                    report_url: REPORT_URL.to_string(),
-                    error: format!("no platform matching '{q}'"),
-                });
+                let report =
+                    aegis_wire_formats::CompatReport::Miss(aegis_wire_formats::CompatMissReport {
+                        schema_version: aegis_wire_formats::COMPAT_SCHEMA_VERSION,
+                        report_url: REPORT_URL.to_string(),
+                        error: format!("no platform matching '{q}'"),
+                    });
                 emit_compat_report(&report);
                 Err(1)
             }
@@ -510,7 +513,7 @@ fn run_json(query: Option<&str>) -> Result<(), u8> {
     }
 }
 
-fn emit_compat_report(report: &aegis_manifest::CompatReport) {
+fn emit_compat_report(report: &aegis_wire_formats::CompatReport) {
     match serde_json::to_string_pretty(report) {
         Ok(body) => println!("{body}"),
         Err(e) => eprintln!("aegis-boot compat: failed to serialize --json envelope: {e}"),
@@ -518,11 +521,11 @@ fn emit_compat_report(report: &aegis_manifest::CompatReport) {
 }
 
 /// Map the in-binary `CompatEntry` struct onto the wire-format
-/// [`aegis_manifest::CompatEntry`]. Local uses `&'static str` + a
+/// [`aegis_wire_formats::CompatEntry`]. Local uses `&'static str` + a
 /// `CompatLevel` enum; wire is `String` fields with a stable
 /// string `level` label.
-fn entry_to_wire(entry: &CompatEntry) -> aegis_manifest::CompatEntry {
-    aegis_manifest::CompatEntry {
+fn entry_to_wire(entry: &CompatEntry) -> aegis_wire_formats::CompatEntry {
+    aegis_wire_formats::CompatEntry {
         vendor: entry.vendor.to_string(),
         model: entry.model.to_string(),
         firmware: entry.firmware.to_string(),

@@ -1,43 +1,43 @@
-//! `aegis-manifest-schema-docgen` — emits JSON Schema documents for
-//! every public wire-format type in `aegis-manifest` into
+//! `aegis-wire-formats-schema-docgen` — emits JSON Schema documents for
+//! every public wire-format type in `aegis-wire-formats` into
 //! `docs/reference/schemas/` in the parent workspace.
 //!
 //! Targets today:
 //!
-//! * [`aegis_manifest::Manifest`] →
+//! * [`aegis_wire_formats::Manifest`] →
 //!   `docs/reference/schemas/aegis-boot-manifest.schema.json`
 //!   (Phase 4a of [#286])
-//! * [`aegis_manifest::Attestation`] →
+//! * [`aegis_wire_formats::Attestation`] →
 //!   `docs/reference/schemas/aegis-attestation.schema.json`
 //!   (Phase 4c-1 of [#286])
-//! * [`aegis_manifest::Version`] →
+//! * [`aegis_wire_formats::Version`] →
 //!   `docs/reference/schemas/aegis-boot-version.schema.json`
 //!   (Phase 4b-1 of [#286])
-//! * [`aegis_manifest::ListReport`] →
+//! * [`aegis_wire_formats::ListReport`] →
 //!   `docs/reference/schemas/aegis-boot-list.schema.json`
 //!   (Phase 4b-2 of [#286])
-//! * [`aegis_manifest::AttestListReport`] →
+//! * [`aegis_wire_formats::AttestListReport`] →
 //!   `docs/reference/schemas/aegis-boot-attest-list.schema.json`
 //!   (Phase 4b-3 of [#286])
-//! * [`aegis_manifest::VerifyReport`] →
+//! * [`aegis_wire_formats::VerifyReport`] →
 //!   `docs/reference/schemas/aegis-boot-verify.schema.json`
 //!   (Phase 4b-4 of [#286])
-//! * [`aegis_manifest::UpdateReport`] →
+//! * [`aegis_wire_formats::UpdateReport`] →
 //!   `docs/reference/schemas/aegis-boot-update.schema.json`
 //!   (Phase 4b-5 of [#286])
-//! * [`aegis_manifest::RecommendReport`] →
+//! * [`aegis_wire_formats::RecommendReport`] →
 //!   `docs/reference/schemas/aegis-boot-recommend.schema.json`
 //!   (Phase 4b-6 of [#286])
-//! * [`aegis_manifest::CompatReport`] →
+//! * [`aegis_wire_formats::CompatReport`] →
 //!   `docs/reference/schemas/aegis-boot-compat.schema.json`
 //!   (Phase 4b-7 of [#286])
-//! * [`aegis_manifest::CompatSubmitReport`] →
+//! * [`aegis_wire_formats::CompatSubmitReport`] →
 //!   `docs/reference/schemas/aegis-boot-compat-submit.schema.json`
 //!   (Phase 4b-7 of [#286])
-//! * [`aegis_manifest::DoctorReport`] →
+//! * [`aegis_wire_formats::DoctorReport`] →
 //!   `docs/reference/schemas/aegis-boot-doctor.schema.json`
 //!   (Phase 4b-8 of [#286])
-//! * [`aegis_manifest::CliError`] →
+//! * [`aegis_wire_formats::CliError`] →
 //!   `docs/reference/schemas/aegis-boot-cli-error.schema.json`
 //!   (#306 — generic pre-dispatch error envelope)
 //!
@@ -65,7 +65,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use aegis_manifest::{
+use aegis_wire_formats::{
     AttestListReport, Attestation, CliError, CompatReport, CompatSubmitReport, DoctorReport,
     ListReport, Manifest, RecommendReport, UpdateReport, VerifyReport, Version,
 };
@@ -242,7 +242,7 @@ fn parse_mode(args: &[String]) -> Result<Mode, String> {
         [] | ["--check"] => Ok(Mode::Check),
         ["--write"] => Ok(Mode::Write),
         _ => Err(format!(
-            "usage: aegis-manifest-schema-docgen [--check|--write]  (got: {args:?})"
+            "usage: aegis-wire-formats-schema-docgen [--check|--write]  (got: {args:?})"
         )),
     }
 }
@@ -343,7 +343,7 @@ fn main() -> ExitCode {
                     drift_targets.join(", ")
                 );
                 eprintln!(
-                    "Fix: run `cargo run -p aegis-manifest --bin aegis-manifest-schema-docgen --features schema -- --write` locally and commit the result."
+                    "Fix: run `cargo run -p aegis-wire-formats --bin aegis-wire-formats-schema-docgen --features schema -- --write` locally and commit the result."
                 );
                 ExitCode::from(1)
             }

@@ -6,7 +6,7 @@ version = 4
 name = "aegis-cli"
 version = "0.14.1"
 dependencies = [
- "aegis-manifest",
+ "aegis-wire-formats",
  "hex",
  "indicatif",
  "iso-probe",
@@ -27,7 +27,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aegis-manifest"
+name = "aegis-wire-formats"
 version = "0.14.1"
 dependencies = [
  "schemars",

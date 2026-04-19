@@ -129,7 +129,7 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
 }
 
 /// Emit the eligible-case JSON envelope via the typed
-/// [`aegis_manifest::UpdateReport`]. Phase 4b-5 of #286 migrated
+/// [`aegis_wire_formats::UpdateReport`]. Phase 4b-5 of #286 migrated
 /// the hand-rolled `println!()` chain to the wire-format crate.
 /// Wire contract pinned via
 /// `docs/reference/schemas/aegis-boot-update.schema.json`.
@@ -141,24 +141,24 @@ fn print_update_json_eligible(
 ) {
     let host_chain = chain
         .iter()
-        .map(|entry| aegis_manifest::UpdateChainEntry {
+        .map(|entry| aegis_wire_formats::UpdateChainEntry {
             role: entry.role.to_string(),
             path: entry.path.display().to_string(),
             result: match &entry.sha256 {
-                Ok(hash) => aegis_manifest::UpdateChainResult::Ok {
+                Ok(hash) => aegis_wire_formats::UpdateChainResult::Ok {
                     sha256: hash.clone(),
                 },
-                Err(reason) => aegis_manifest::UpdateChainResult::Error {
+                Err(reason) => aegis_wire_formats::UpdateChainResult::Error {
                     error: reason.clone(),
                 },
             },
         })
         .collect();
-    let report = aegis_manifest::UpdateReport {
-        schema_version: aegis_manifest::UPDATE_SCHEMA_VERSION,
+    let report = aegis_wire_formats::UpdateReport {
+        schema_version: aegis_wire_formats::UPDATE_SCHEMA_VERSION,
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
         device: dev.display().to_string(),
-        eligibility: aegis_manifest::UpdateEligibility::Eligible {
+        eligibility: aegis_wire_formats::UpdateEligibility::Eligible {
             disk_guid: disk_guid.to_string(),
             attestation_path: attestation_path.display().to_string(),
             host_chain,
@@ -168,18 +168,18 @@ fn print_update_json_eligible(
 }
 
 fn print_update_json_ineligible(dev: &Path, reason: &str) {
-    let report = aegis_manifest::UpdateReport {
-        schema_version: aegis_manifest::UPDATE_SCHEMA_VERSION,
+    let report = aegis_wire_formats::UpdateReport {
+        schema_version: aegis_wire_formats::UPDATE_SCHEMA_VERSION,
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
         device: dev.display().to_string(),
-        eligibility: aegis_manifest::UpdateEligibility::Ineligible {
+        eligibility: aegis_wire_formats::UpdateEligibility::Ineligible {
             reason: reason.to_string(),
         },
     };
     emit_update_report(&report);
 }
 
-fn emit_update_report(report: &aegis_manifest::UpdateReport) {
+fn emit_update_report(report: &aegis_wire_formats::UpdateReport) {
     match serde_json::to_string_pretty(report) {
         Ok(body) => println!("{body}"),
         Err(e) => eprintln!("aegis-boot update: failed to serialize --json envelope: {e}"),

@@ -199,8 +199,8 @@ impl Report {
     fn print_json_summary(&self) {
         let score = self.score();
         let band = band_for_score(score);
-        let report = aegis_manifest::DoctorReport {
-            schema_version: aegis_manifest::DOCTOR_SCHEMA_VERSION,
+        let report = aegis_wire_formats::DoctorReport {
+            schema_version: aegis_wire_formats::DOCTOR_SCHEMA_VERSION,
             tool_version: env!("CARGO_PKG_VERSION").to_string(),
             score: u32::from(score),
             band: band.to_string(),
@@ -209,7 +209,7 @@ impl Report {
             rows: self
                 .rows
                 .iter()
-                .map(|(verdict, name, detail)| aegis_manifest::DoctorRow {
+                .map(|(verdict, name, detail)| aegis_wire_formats::DoctorRow {
                     verdict: verdict.label().to_string(),
                     name: name.clone(),
                     detail: detail.clone(),
@@ -236,7 +236,7 @@ fn band_for_score(score: u8) -> &'static str {
 
 // The `json_escape` helper (formerly here) was retired in
 // Phase 4b / #306 once every hand-rolled `--json` emitter in
-// aegis-cli migrated to typed envelopes in the `aegis-manifest`
+// aegis-cli migrated to typed envelopes in the `aegis-wire-formats`
 // crate. `serde_json` now handles JSON string escaping for every
 // `--json` surface, so a crate-local escaper is no longer needed.
 

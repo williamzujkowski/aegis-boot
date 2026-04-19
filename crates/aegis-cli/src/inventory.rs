@@ -35,8 +35,8 @@ pub fn run_list(args: &[String]) -> ExitCode {
         Ok(m) => m,
         Err(e) => {
             if json_mode {
-                let envelope = aegis_manifest::CliError {
-                    schema_version: aegis_manifest::CLI_ERROR_SCHEMA_VERSION,
+                let envelope = aegis_wire_formats::CliError {
+                    schema_version: aegis_wire_formats::CLI_ERROR_SCHEMA_VERSION,
                     error: e.clone(),
                 };
                 match serde_json::to_string_pretty(&envelope) {
@@ -101,27 +101,27 @@ pub fn run_list(args: &[String]) -> ExitCode {
 /// on stdout.
 ///
 /// Phase 4b-2 of #286 migrated this from a hand-rolled `println!()`
-/// chain to the typed [`aegis_manifest::ListReport`] envelope. The
+/// chain to the typed [`aegis_wire_formats::ListReport`] envelope. The
 /// wire contract is pinned via
 /// `docs/reference/schemas/aegis-boot-list.schema.json`.
 fn print_list_json(mount_path: &Path, isos: &[IsoEntry]) {
     let attestation = crate::attest::summary_for_mount(mount_path).map(|s| {
-        aegis_manifest::ListAttestationSummary {
+        aegis_wire_formats::ListAttestationSummary {
             flashed_at: s.flashed_at,
             operator: s.operator,
             isos_recorded: u32::try_from(s.isos_recorded).unwrap_or(u32::MAX),
             manifest_path: s.manifest_path.display().to_string(),
         }
     });
-    let report = aegis_manifest::ListReport {
-        schema_version: aegis_manifest::LIST_SCHEMA_VERSION,
+    let report = aegis_wire_formats::ListReport {
+        schema_version: aegis_wire_formats::LIST_SCHEMA_VERSION,
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
         mount_path: mount_path.display().to_string(),
         attestation,
         count: u32::try_from(isos.len()).unwrap_or(u32::MAX),
         isos: isos
             .iter()
-            .map(|iso| aegis_manifest::ListIsoSummary {
+            .map(|iso| aegis_wire_formats::ListIsoSummary {
                 name: iso.name.clone(),
                 size_bytes: iso.size,
                 has_sha256: iso.has_sha256,

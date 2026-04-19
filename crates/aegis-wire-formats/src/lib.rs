@@ -24,7 +24,7 @@
 //! # JSON Schema
 //!
 //! With the `schema` feature enabled, every public type derives
-//! [`schemars::JsonSchema`]. The `aegis-manifest-schema-docgen`
+//! [`schemars::JsonSchema`]. The `aegis-wire-formats-schema-docgen`
 //! binary emits a validated JSON Schema document to
 //! `docs/reference/schemas/aegis-boot-manifest.schema.json` in the
 //! parent workspace; third-party verifiers can pin to this schema.

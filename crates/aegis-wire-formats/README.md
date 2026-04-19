@@ -1,4 +1,4 @@
-# aegis-manifest
+# aegis-wire-formats
 
 Signed attestation manifest format for [aegis-boot](https://github.com/williamzujkowski/aegis-boot) USB sticks. Defines the on-disk `::/aegis-boot-manifest.json` shape the flash-time attestation writes and that runtime verifiers (rescue-tui, `aegis-boot doctor --stick`, aegis-hwsim E6 attestation-roundtrip) read back.
 
@@ -10,7 +10,7 @@ This crate ships:
 
 - **Serde types** for the manifest envelope (`Manifest`, `Device`, `EspPartition`, `DataPartition`, `EspFileEntry`, `PcrEntry`).
 - **Schema version constant** pinning the wire-format version at 1 (locked by [#277](https://github.com/williamzujkowski/aegis-boot/issues/277)).
-- **Optional JSON Schema generation** behind the `schema` feature — enables `#[derive(JsonSchema)]` on every public type and compiles the `aegis-manifest-schema-docgen` binary that writes `aegis-boot-manifest.schema.json` consumers can validate against.
+- **Optional JSON Schema generation** behind the `schema` feature — enables `#[derive(JsonSchema)]` on every public type and compiles the `aegis-wire-formats-schema-docgen` binary that writes `aegis-boot-manifest.schema.json` consumers can validate against.
 
 Deliberately **not** shipped here:
 
@@ -19,7 +19,7 @@ Deliberately **not** shipped here:
 
 ## Feature flags
 
-- `schema` (off by default) — pulls `schemars` in, adds `JsonSchema` derives, enables the `aegis-manifest-schema-docgen` binary used by the parent workspace's CI drift-check.
+- `schema` (off by default) — pulls `schemars` in, adds `JsonSchema` derives, enables the `aegis-wire-formats-schema-docgen` binary used by the parent workspace's CI drift-check.
 
 ## Platform support
 

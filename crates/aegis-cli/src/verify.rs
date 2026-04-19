@@ -61,8 +61,8 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
         Ok(m) => m,
         Err(e) => {
             if json_mode {
-                let envelope = aegis_manifest::CliError {
-                    schema_version: aegis_manifest::CLI_ERROR_SCHEMA_VERSION,
+                let envelope = aegis_wire_formats::CliError {
+                    schema_version: aegis_wire_formats::CLI_ERROR_SCHEMA_VERSION,
                     error: e.clone(),
                 };
                 match serde_json::to_string_pretty(&envelope) {
@@ -153,14 +153,14 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
 ///
 /// Phase 4b-4 of #286 migrated this + [`print_verify_json`] from
 /// hand-rolled `println!()` chains to the typed
-/// [`aegis_manifest::VerifyReport`] envelope. Wire contract pinned
+/// [`aegis_wire_formats::VerifyReport`] envelope. Wire contract pinned
 /// via `docs/reference/schemas/aegis-boot-verify.schema.json`.
 fn print_verify_json_empty(mount_path: &std::path::Path) {
-    let report = aegis_manifest::VerifyReport {
-        schema_version: aegis_manifest::VERIFY_SCHEMA_VERSION,
+    let report = aegis_wire_formats::VerifyReport {
+        schema_version: aegis_wire_formats::VERIFY_SCHEMA_VERSION,
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
         mount_path: mount_path.display().to_string(),
-        summary: aegis_manifest::VerifySummary {
+        summary: aegis_wire_formats::VerifySummary {
             total: 0,
             verified: 0,
             mismatch: 0,
@@ -180,11 +180,11 @@ fn print_verify_json(
     verdicts: &[(String, HashVerification)],
     tally: &Tally,
 ) {
-    let report = aegis_manifest::VerifyReport {
-        schema_version: aegis_manifest::VERIFY_SCHEMA_VERSION,
+    let report = aegis_wire_formats::VerifyReport {
+        schema_version: aegis_wire_formats::VERIFY_SCHEMA_VERSION,
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
         mount_path: mount_path.display().to_string(),
-        summary: aegis_manifest::VerifySummary {
+        summary: aegis_wire_formats::VerifySummary {
             total: u32::try_from(tally.total()).unwrap_or(u32::MAX),
             verified: u32::try_from(tally.verified).unwrap_or(u32::MAX),
             mismatch: u32::try_from(tally.mismatch).unwrap_or(u32::MAX),
@@ -194,7 +194,7 @@ fn print_verify_json(
         },
         isos: verdicts
             .iter()
-            .map(|(name, v)| aegis_manifest::VerifyEntry {
+            .map(|(name, v)| aegis_wire_formats::VerifyEntry {
                 name: name.clone(),
                 verdict: convert_verdict(v),
             })
@@ -203,7 +203,7 @@ fn print_verify_json(
     emit_verify_report(&report);
 }
 
-fn emit_verify_report(report: &aegis_manifest::VerifyReport) {
+fn emit_verify_report(report: &aegis_wire_formats::VerifyReport) {
     match serde_json::to_string_pretty(report) {
         Ok(body) => println!("{body}"),
         Err(e) => eprintln!("aegis-boot verify: failed to serialize --json envelope: {e}"),
@@ -211,31 +211,33 @@ fn emit_verify_report(report: &aegis_manifest::VerifyReport) {
 }
 
 /// Map the local [`HashVerification`] enum (from iso-probe) onto the
-/// wire-format [`aegis_manifest::VerifyVerdict`] enum. Both have the
+/// wire-format [`aegis_wire_formats::VerifyVerdict`] enum. Both have the
 /// same 4 variants with the same fields, so this is a pure
 /// structural translation.
-fn convert_verdict(v: &HashVerification) -> aegis_manifest::VerifyVerdict {
+fn convert_verdict(v: &HashVerification) -> aegis_wire_formats::VerifyVerdict {
     match v {
-        HashVerification::Verified { digest, source } => aegis_manifest::VerifyVerdict::Verified {
-            digest: digest.clone(),
-            source: source.clone(),
-        },
+        HashVerification::Verified { digest, source } => {
+            aegis_wire_formats::VerifyVerdict::Verified {
+                digest: digest.clone(),
+                source: source.clone(),
+            }
+        }
         HashVerification::Mismatch {
             actual,
             expected,
             source,
-        } => aegis_manifest::VerifyVerdict::Mismatch {
+        } => aegis_wire_formats::VerifyVerdict::Mismatch {
             actual: actual.clone(),
             expected: expected.clone(),
             source: source.clone(),
         },
         HashVerification::Unreadable { source, reason } => {
-            aegis_manifest::VerifyVerdict::Unreadable {
+            aegis_wire_formats::VerifyVerdict::Unreadable {
                 source: source.clone(),
                 reason: reason.clone(),
             }
         }
-        HashVerification::NotPresent => aegis_manifest::VerifyVerdict::NotPresent,
+        HashVerification::NotPresent => aegis_wire_formats::VerifyVerdict::NotPresent,
     }
 }
 

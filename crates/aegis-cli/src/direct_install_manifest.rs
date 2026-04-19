@@ -39,12 +39,12 @@ use std::fs;
 use std::io::Cursor;
 use std::path::Path;
 
-// Wire types + SCHEMA_VERSION extracted to the `aegis-manifest`
+// Wire types + SCHEMA_VERSION extracted to the `aegis-wire-formats`
 // crate for Phase 4a of #286. Re-exported here so every in-crate
 // `crate::direct_install_manifest::Manifest` reference keeps working
 // unchanged, and so third-party verifiers can depend on
-// `aegis-manifest` directly with a JSON Schema pin.
-pub(crate) use aegis_manifest::{
+// `aegis-wire-formats` directly with a JSON Schema pin.
+pub(crate) use aegis_wire_formats::{
     DataPartition, Device, EspFileEntry, EspPartition, Manifest, SCHEMA_VERSION,
 };
 

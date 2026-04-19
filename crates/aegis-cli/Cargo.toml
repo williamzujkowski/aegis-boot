@@ -41,7 +41,7 @@ iso-probe = { path = "../iso-probe" }
 # Signed attestation manifest types extracted for Phase 4a of #286.
 # This crate is the Rust + JSON Schema source of truth for the
 # on-disk aegis-boot-manifest.json wire format.
-aegis-manifest = { path = "../aegis-manifest" }
+aegis-wire-formats = { path = "../aegis-wire-formats" }
 # Atomic random-name temp files for write_sidecar_via_sudo's
 # stage-then-copy path. Use the runtime dep (not the dev-dep) so the
 # staging path is not predictable — closes the TOCTOU window semgrep

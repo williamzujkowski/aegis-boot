@@ -37,12 +37,12 @@ use std::process::{Command, ExitCode};
 
 use crate::detect::Drive;
 
-// Wire-format serde types extracted to `aegis-manifest` in Phase
+// Wire-format serde types extracted to `aegis-wire-formats` in Phase
 // 4c-1 of #286. Re-exported here so `attest::Attestation` paths
 // continue to resolve unchanged across this module. Third-party
 // consumers of the on-disk attestation JSON depend on
-// `aegis-manifest` directly with a JSON Schema pin.
-pub use aegis_manifest::{
+// `aegis-wire-formats` directly with a JSON Schema pin.
+pub use aegis_wire_formats::{
     Attestation, HostInfo, IsoRecord, TargetInfo, ATTESTATION_SCHEMA_VERSION as SCHEMA_VERSION,
 };
 
@@ -260,12 +260,12 @@ pub fn record_flash(drive: &Drive, img_path: &Path, img_size: u64) -> Result<Pat
     Ok(dest)
 }
 
-/// Emit a pre-dispatch error as `aegis_manifest::CliError` on
+/// Emit a pre-dispatch error as `aegis_wire_formats::CliError` on
 /// stdout. Used when an attest subcommand fails before it can
 /// produce its subcommand-specific `--json` envelope.
 fn emit_cli_error(msg: &str) {
-    let envelope = aegis_manifest::CliError {
-        schema_version: aegis_manifest::CLI_ERROR_SCHEMA_VERSION,
+    let envelope = aegis_wire_formats::CliError {
+        schema_version: aegis_wire_formats::CLI_ERROR_SCHEMA_VERSION,
         error: msg.to_string(),
     };
     match serde_json::to_string_pretty(&envelope) {
@@ -380,19 +380,19 @@ fn run_list(json_mode: bool) -> ExitCode {
 /// Emit the attestation list as a stable JSON document on stdout.
 ///
 /// Phase 4b-3 of #286 migrated this from a hand-rolled
-/// `println!()` chain to the typed [`aegis_manifest::AttestListReport`]
+/// `println!()` chain to the typed [`aegis_wire_formats::AttestListReport`]
 /// envelope. The per-entry shape (success / error) is a
-/// `#[serde(untagged)]` enum in aegis-manifest; the wire contract
+/// `#[serde(untagged)]` enum in aegis-wire-formats; the wire contract
 /// is pinned via `docs/reference/schemas/aegis-boot-attest-list.schema.json`.
 fn print_attest_list_json(dir: &Path, entries: &[std::fs::DirEntry]) {
-    let attestations: Vec<aegis_manifest::AttestListEntry> = entries
+    let attestations: Vec<aegis_wire_formats::AttestListEntry> = entries
         .iter()
         .map(|entry| {
             let path = entry.path();
             let path_str = path.display().to_string();
             match read_attestation(&path) {
-                Ok(att) => {
-                    aegis_manifest::AttestListEntry::Success(aegis_manifest::AttestListSuccess {
+                Ok(att) => aegis_wire_formats::AttestListEntry::Success(
+                    aegis_wire_formats::AttestListSuccess {
                         manifest_path: path_str,
                         schema_version: att.schema_version,
                         tool_version: att.tool_version,
@@ -402,17 +402,19 @@ fn print_attest_list_json(dir: &Path, entries: &[std::fs::DirEntry]) {
                         target_model: att.target.model,
                         disk_guid: att.target.disk_guid,
                         iso_count: u32::try_from(att.isos.len()).unwrap_or(u32::MAX),
-                    })
-                }
-                Err(e) => aegis_manifest::AttestListEntry::Error(aegis_manifest::AttestListError {
-                    manifest_path: path_str,
-                    error: format!("parse failed: {e}"),
-                }),
+                    },
+                ),
+                Err(e) => aegis_wire_formats::AttestListEntry::Error(
+                    aegis_wire_formats::AttestListError {
+                        manifest_path: path_str,
+                        error: format!("parse failed: {e}"),
+                    },
+                ),
             }
         })
         .collect();
-    let report = aegis_manifest::AttestListReport {
-        schema_version: aegis_manifest::ATTEST_LIST_SCHEMA_VERSION,
+    let report = aegis_wire_formats::AttestListReport {
+        schema_version: aegis_wire_formats::ATTEST_LIST_SCHEMA_VERSION,
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
         attestations_dir: dir.display().to_string(),
         count: u32::try_from(entries.len()).unwrap_or(u32::MAX),

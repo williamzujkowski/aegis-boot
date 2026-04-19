@@ -214,48 +214,51 @@ pub fn run(args: &[String]) -> ExitCode {
 }
 
 /// `aegis-boot recommend --json [slug]` — emit catalog entries as
-/// structured JSON via the typed [`aegis_manifest::RecommendReport`]
+/// structured JSON via the typed [`aegis_wire_formats::RecommendReport`]
 /// envelope. Phase 4b-6 of #286 migrated this from hand-rolled
 /// `println!()` chains. Wire contract pinned by
 /// `docs/reference/schemas/aegis-boot-recommend.schema.json`.
 fn run_json(slug: Option<&str>) -> ExitCode {
     match slug {
         None => {
-            let entries: Vec<aegis_manifest::RecommendEntry> =
+            let entries: Vec<aegis_wire_formats::RecommendEntry> =
                 CATALOG.iter().map(entry_to_recommend).collect();
-            let report =
-                aegis_manifest::RecommendReport::Catalog(aegis_manifest::RecommendCatalogReport {
-                    schema_version: aegis_manifest::RECOMMEND_SCHEMA_VERSION,
+            let report = aegis_wire_formats::RecommendReport::Catalog(
+                aegis_wire_formats::RecommendCatalogReport {
+                    schema_version: aegis_wire_formats::RECOMMEND_SCHEMA_VERSION,
                     tool_version: env!("CARGO_PKG_VERSION").to_string(),
                     count: u32::try_from(entries.len()).unwrap_or(u32::MAX),
                     entries,
-                });
+                },
+            );
             emit_recommend_report(&report);
             ExitCode::SUCCESS
         }
         Some(slug) => {
             let Some(entry) = find_entry(slug) else {
-                let report =
-                    aegis_manifest::RecommendReport::Miss(aegis_manifest::RecommendMissReport {
-                        schema_version: aegis_manifest::RECOMMEND_SCHEMA_VERSION,
+                let report = aegis_wire_formats::RecommendReport::Miss(
+                    aegis_wire_formats::RecommendMissReport {
+                        schema_version: aegis_wire_formats::RECOMMEND_SCHEMA_VERSION,
                         error: format!("no catalog entry matching '{slug}'"),
-                    });
+                    },
+                );
                 emit_recommend_report(&report);
                 return ExitCode::from(1);
             };
-            let report =
-                aegis_manifest::RecommendReport::Single(aegis_manifest::RecommendSingleReport {
-                    schema_version: aegis_manifest::RECOMMEND_SCHEMA_VERSION,
+            let report = aegis_wire_formats::RecommendReport::Single(
+                aegis_wire_formats::RecommendSingleReport {
+                    schema_version: aegis_wire_formats::RECOMMEND_SCHEMA_VERSION,
                     tool_version: env!("CARGO_PKG_VERSION").to_string(),
                     entry: entry_to_recommend(entry),
-                });
+                },
+            );
             emit_recommend_report(&report);
             ExitCode::SUCCESS
         }
     }
 }
 
-fn emit_recommend_report(report: &aegis_manifest::RecommendReport) {
+fn emit_recommend_report(report: &aegis_wire_formats::RecommendReport) {
     match serde_json::to_string_pretty(report) {
         Ok(body) => println!("{body}"),
         Err(e) => eprintln!("aegis-boot recommend: failed to serialize --json envelope: {e}"),
@@ -263,17 +266,17 @@ fn emit_recommend_report(report: &aegis_manifest::RecommendReport) {
 }
 
 /// Map the local `Entry` struct onto the wire-format
-/// [`aegis_manifest::RecommendEntry`]. Local type uses `SbStatus`
+/// [`aegis_wire_formats::RecommendEntry`]. Local type uses `SbStatus`
 /// enum; wire format flattens to a string via the existing
 /// `"signed:<vendor>"` / `"unsigned-needs-mok"` / `"unknown"`
 /// convention.
-fn entry_to_recommend(entry: &Entry) -> aegis_manifest::RecommendEntry {
+fn entry_to_recommend(entry: &Entry) -> aegis_wire_formats::RecommendEntry {
     let sb = match entry.sb {
         SbStatus::Signed(vendor) => format!("signed:{vendor}"),
         SbStatus::UnsignedNeedsMok => "unsigned-needs-mok".to_string(),
         SbStatus::Unknown => "unknown".to_string(),
     };
-    aegis_manifest::RecommendEntry {
+    aegis_wire_formats::RecommendEntry {
         slug: entry.slug.to_string(),
         name: entry.name.to_string(),
         arch: entry.arch.to_string(),

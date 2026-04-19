@@ -81,13 +81,13 @@ fn main() -> ExitCode {
         Some("--version" | "version") => {
             // `--json` can appear anywhere after the `--version` /
             // `version` subcommand. The envelope shape lives in
-            // `aegis_manifest::Version` — a typed, drift-checked
+            // `aegis_wire_formats::Version` — a typed, drift-checked
             // wire contract that scripted consumers pin against
             // via `docs/reference/schemas/aegis-boot-version.schema.json`
             // (Phase 4b-1 of #286).
             if args.iter().skip(1).any(|a| a == "--json") {
-                let envelope = aegis_manifest::Version {
-                    schema_version: aegis_manifest::VERSION_SCHEMA_VERSION,
+                let envelope = aegis_wire_formats::Version {
+                    schema_version: aegis_wire_formats::VERSION_SCHEMA_VERSION,
                     tool: "aegis-boot".to_string(),
                     version: env!("CARGO_PKG_VERSION").to_string(),
                 };

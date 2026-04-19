@@ -737,7 +737,7 @@ aegis-boot tour --help
 }
 ```
 
-The wire shape is defined by [`aegis-manifest::Version`](../crates/aegis-manifest/src/lib.rs) and pinned via JSON Schema at [`reference/schemas/aegis-boot-version.schema.json`](./reference/schemas/aegis-boot-version.schema.json) (Phase 4b-1 of [#286](https://github.com/williamzujkowski/aegis-boot/issues/286)). Scripted consumers that parsed the previous single-line output with a JSON library see no shape change — only whitespace differs.
+The wire shape is defined by [`aegis-wire-formats::Version`](../crates/aegis-wire-formats/src/lib.rs) and pinned via JSON Schema at [`reference/schemas/aegis-boot-version.schema.json`](./reference/schemas/aegis-boot-version.schema.json) (Phase 4b-1 of [#286](https://github.com/williamzujkowski/aegis-boot/issues/286)). Scripted consumers that parsed the previous single-line output with a JSON library see no shape change — only whitespace differs.
 
 ## See also
 
