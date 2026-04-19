@@ -1,0 +1,130 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "UpdateReport",
+  "description": "Envelope emitted by `aegis-boot update --json`. Phase 1 of #181 is eligibility-check-only: answers \"would a non-destructive signed-chain rotation apply cleanly to this stick?\" — the actual rotation is Phase 2. The envelope's outer fields (`schema_version`, `tool_version`, `device`) are common; the [`eligibility`] flattened enum carries the variant-specific body.",
+  "type": "object",
+  "oneOf": [
+    {
+      "description": "The stick could accept an in-place signed-chain rotation. Reports the disk GUID (matches the ESP partition table's `.disk_guid`), the host-side attestation that would be updated, and the new signed chain the host would write.",
+      "type": "object",
+      "required": [
+        "attestation_path",
+        "disk_guid",
+        "eligibility",
+        "host_chain"
+      ],
+      "properties": {
+        "attestation_path": {
+          "description": "Host filesystem path of the attestation manifest that the rotation will update.",
+          "type": "string"
+        },
+        "disk_guid": {
+          "description": "GPT disk GUID of the stick (matches the attestation manifest's `device.disk_guid`).",
+          "type": "string"
+        },
+        "eligibility": {
+          "type": "string",
+          "enum": [
+            "ELIGIBLE"
+          ]
+        },
+        "host_chain": {
+          "description": "Ordered signed-chain files the host would install if the operator re-ran flash today (shim / grub / kernel / initrd). Each carries either `sha256` (success) or `error` (could not be hashed / located).",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/UpdateChainEntry"
+          }
+        }
+      }
+    },
+    {
+      "description": "The stick cannot accept a rotation. Carries the operator- readable reason (device not removable, no attestation on this host, signed-chain source missing, …).",
+      "type": "object",
+      "required": [
+        "eligibility",
+        "reason"
+      ],
+      "properties": {
+        "eligibility": {
+          "type": "string",
+          "enum": [
+            "INELIGIBLE"
+          ]
+        },
+        "reason": {
+          "description": "Explanation of why the rotation was refused.",
+          "type": "string"
+        }
+      }
+    }
+  ],
+  "required": [
+    "device",
+    "schema_version",
+    "tool_version"
+  ],
+  "properties": {
+    "device": {
+      "description": "Device node path operated on (e.g. `/dev/sda`).",
+      "type": "string"
+    },
+    "schema_version": {
+      "description": "Wire-format version. See [`UPDATE_SCHEMA_VERSION`].",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0.0
+    },
+    "tool_version": {
+      "description": "`aegis-boot` binary version that produced this envelope.",
+      "type": "string"
+    }
+  },
+  "definitions": {
+    "UpdateChainEntry": {
+      "description": "One signed-chain entry in an [`UpdateEligibility::Eligible`] response. Two mutually-exclusive wire shapes via untagged-enum dispatch on the presence of `sha256` vs `error`.",
+      "type": "object",
+      "anyOf": [
+        {
+          "description": "File was hashed successfully.",
+          "type": "object",
+          "required": [
+            "sha256"
+          ],
+          "properties": {
+            "sha256": {
+              "description": "Lowercase hex sha256 of the file.",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "File could not be hashed (missing, permission denied, read error). `reason` is operator-facing.",
+          "type": "object",
+          "required": [
+            "error"
+          ],
+          "properties": {
+            "error": {
+              "description": "Human-readable error.",
+              "type": "string"
+            }
+          }
+        }
+      ],
+      "required": [
+        "path",
+        "role"
+      ],
+      "properties": {
+        "path": {
+          "description": "Host filesystem path of the source file.",
+          "type": "string"
+        },
+        "role": {
+          "description": "Role in the signed chain: `shim`, `grub`, `kernel`, or `initrd`.",
+          "type": "string"
+        }
+      }
+    }
+  }
+}

@@ -128,66 +128,62 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
     }
 }
 
-/// Emit the eligible-case JSON envelope. `schema_version=1`; additive
-/// only. The `host_chain` entries mirror the human-readable output but
-/// carry full 64-char sha256 (no truncation) and an explicit `error`
-/// field per slot when the file couldn't be hashed.
+/// Emit the eligible-case JSON envelope via the typed
+/// [`aegis_manifest::UpdateReport`]. Phase 4b-5 of #286 migrated
+/// the hand-rolled `println!()` chain to the wire-format crate.
+/// Wire contract pinned via
+/// `docs/reference/schemas/aegis-boot-update.schema.json`.
 fn print_update_json_eligible(
     dev: &Path,
     disk_guid: &str,
     attestation_path: &Path,
     chain: &[HostChainEntry],
 ) {
-    use crate::doctor::json_escape;
-    println!("{{");
-    println!("  \"schema_version\": 1,");
-    println!("  \"tool_version\": \"{}\",", env!("CARGO_PKG_VERSION"));
-    println!(
-        "  \"device\": \"{}\",",
-        json_escape(&dev.display().to_string())
-    );
-    println!("  \"eligibility\": \"ELIGIBLE\",");
-    println!("  \"disk_guid\": \"{}\",", json_escape(disk_guid));
-    println!(
-        "  \"attestation_path\": \"{}\",",
-        json_escape(&attestation_path.display().to_string())
-    );
-    println!("  \"host_chain\": [");
-    let last = chain.len().saturating_sub(1);
-    for (i, entry) in chain.iter().enumerate() {
-        let comma = if i == last { "" } else { "," };
-        let path_str = entry.path.display().to_string();
-        match &entry.sha256 {
-            Ok(hash) => println!(
-                "    {{ \"role\": \"{}\", \"path\": \"{}\", \"sha256\": \"{}\" }}{comma}",
-                entry.role,
-                json_escape(&path_str),
-                hash,
-            ),
-            Err(reason) => println!(
-                "    {{ \"role\": \"{}\", \"path\": \"{}\", \"error\": \"{}\" }}{comma}",
-                entry.role,
-                json_escape(&path_str),
-                json_escape(reason),
-            ),
-        }
-    }
-    println!("  ]");
-    println!("}}");
+    let host_chain = chain
+        .iter()
+        .map(|entry| aegis_manifest::UpdateChainEntry {
+            role: entry.role.to_string(),
+            path: entry.path.display().to_string(),
+            result: match &entry.sha256 {
+                Ok(hash) => aegis_manifest::UpdateChainResult::Ok {
+                    sha256: hash.clone(),
+                },
+                Err(reason) => aegis_manifest::UpdateChainResult::Error {
+                    error: reason.clone(),
+                },
+            },
+        })
+        .collect();
+    let report = aegis_manifest::UpdateReport {
+        schema_version: aegis_manifest::UPDATE_SCHEMA_VERSION,
+        tool_version: env!("CARGO_PKG_VERSION").to_string(),
+        device: dev.display().to_string(),
+        eligibility: aegis_manifest::UpdateEligibility::Eligible {
+            disk_guid: disk_guid.to_string(),
+            attestation_path: attestation_path.display().to_string(),
+            host_chain,
+        },
+    };
+    emit_update_report(&report);
 }
 
 fn print_update_json_ineligible(dev: &Path, reason: &str) {
-    use crate::doctor::json_escape;
-    println!("{{");
-    println!("  \"schema_version\": 1,");
-    println!("  \"tool_version\": \"{}\",", env!("CARGO_PKG_VERSION"));
-    println!(
-        "  \"device\": \"{}\",",
-        json_escape(&dev.display().to_string())
-    );
-    println!("  \"eligibility\": \"INELIGIBLE\",");
-    println!("  \"reason\": \"{}\"", json_escape(reason));
-    println!("}}");
+    let report = aegis_manifest::UpdateReport {
+        schema_version: aegis_manifest::UPDATE_SCHEMA_VERSION,
+        tool_version: env!("CARGO_PKG_VERSION").to_string(),
+        device: dev.display().to_string(),
+        eligibility: aegis_manifest::UpdateEligibility::Ineligible {
+            reason: reason.to_string(),
+        },
+    };
+    emit_update_report(&report);
+}
+
+fn emit_update_report(report: &aegis_manifest::UpdateReport) {
+    match serde_json::to_string_pretty(report) {
+        Ok(body) => println!("{body}"),
+        Err(e) => eprintln!("aegis-boot update: failed to serialize --json envelope: {e}"),
+    }
 }
 
 /// Print the host-side signed chain — the shim/grub/kernel/initrd

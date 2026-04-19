@@ -42,11 +42,11 @@
 //!   written to `$XDG_DATA_HOME/aegis-boot/attestations/` for
 //!   chain-of-custody + fleet inventory. Phase 4c-1 of [#286].
 //! * **CLI envelopes** ([`Version`], [`ListReport`],
-//!   [`AttestListReport`], [`VerifyReport`], with their
-//!   `*_SCHEMA_VERSION` constants) — the `--json` envelopes
+//!   [`AttestListReport`], [`VerifyReport`], [`UpdateReport`], with
+//!   their `*_SCHEMA_VERSION` constants) — the `--json` envelopes
 //!   emitted by `aegis-boot --version --json`, `... list --json`,
-//!   `... attest list --json`, `... verify --json`, and siblings.
-//!   Phase 4b of [#286].
+//!   `... attest list --json`, `... verify --json`, `... update --json`,
+//!   and siblings. Phase 4b of [#286].
 //!
 //! Each contract is independently versioned — a change to one
 //! schema does not require bumping the others. They are co-located
@@ -91,6 +91,11 @@ pub const ATTEST_LIST_SCHEMA_VERSION: u32 = 1;
 /// by `aegis-boot verify --json`. Independent of the other envelope
 /// contracts.
 pub const VERIFY_SCHEMA_VERSION: u32 = 1;
+
+/// Locked schema version for the [`UpdateReport`] envelope emitted
+/// by `aegis-boot update --json`. Independent of the other envelope
+/// contracts.
+pub const UPDATE_SCHEMA_VERSION: u32 = 1;
 
 /// Top-level manifest body. Serialized field order matches the
 /// declaration order below — relied on for canonical JSON stability
@@ -611,6 +616,102 @@ pub enum VerifyVerdict {
     NotPresent,
 }
 
+/// Envelope emitted by `aegis-boot update --json`. Phase 1 of #181
+/// is eligibility-check-only: answers "would a non-destructive
+/// signed-chain rotation apply cleanly to this stick?" — the actual
+/// rotation is Phase 2. The envelope's outer fields
+/// (`schema_version`, `tool_version`, `device`) are common; the
+/// [`eligibility`] flattened enum carries the variant-specific
+/// body.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct UpdateReport {
+    /// Wire-format version. See [`UPDATE_SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// `aegis-boot` binary version that produced this envelope.
+    pub tool_version: String,
+    /// Device node path operated on (e.g. `/dev/sda`).
+    pub device: String,
+    /// Eligibility verdict + variant-specific fields.
+    #[serde(flatten)]
+    pub eligibility: UpdateEligibility,
+}
+
+/// Outcome of the eligibility check. Internally-tagged under
+/// `eligibility` with the tag values `"ELIGIBLE"` and
+/// `"INELIGIBLE"` (upper-case to match the existing wire format).
+/// `flatten`-combined with [`UpdateReport`]'s outer fields so the
+/// emitted JSON preserves the `schema_version, tool_version,
+/// device, eligibility, …` ordering consumers parse against.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "eligibility")]
+pub enum UpdateEligibility {
+    /// The stick could accept an in-place signed-chain rotation.
+    /// Reports the disk GUID (matches the ESP partition table's
+    /// `.disk_guid`), the host-side attestation that would be
+    /// updated, and the new signed chain the host would write.
+    #[serde(rename = "ELIGIBLE")]
+    Eligible {
+        /// GPT disk GUID of the stick (matches the attestation
+        /// manifest's `device.disk_guid`).
+        disk_guid: String,
+        /// Host filesystem path of the attestation manifest that
+        /// the rotation will update.
+        attestation_path: String,
+        /// Ordered signed-chain files the host would install if
+        /// the operator re-ran flash today (shim / grub /
+        /// kernel / initrd). Each carries either `sha256` (success)
+        /// or `error` (could not be hashed / located).
+        host_chain: Vec<UpdateChainEntry>,
+    },
+    /// The stick cannot accept a rotation. Carries the operator-
+    /// readable reason (device not removable, no attestation on
+    /// this host, signed-chain source missing, …).
+    #[serde(rename = "INELIGIBLE")]
+    Ineligible {
+        /// Explanation of why the rotation was refused.
+        reason: String,
+    },
+}
+
+/// One signed-chain entry in an [`UpdateEligibility::Eligible`]
+/// response. Two mutually-exclusive wire shapes via untagged-enum
+/// dispatch on the presence of `sha256` vs `error`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct UpdateChainEntry {
+    /// Role in the signed chain: `shim`, `grub`, `kernel`, or
+    /// `initrd`.
+    pub role: String,
+    /// Host filesystem path of the source file.
+    pub path: String,
+    /// Success (sha256) or failure (error) — flattened so consumers
+    /// see `{role, path, sha256}` or `{role, path, error}`.
+    #[serde(flatten)]
+    pub result: UpdateChainResult,
+}
+
+/// Per-chain-entry result. Untagged to match the current wire
+/// format's mutually-exclusive shape (no discriminator tag — the
+/// consumer branches on the presence of `sha256` vs `error`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(untagged)]
+pub enum UpdateChainResult {
+    /// File was hashed successfully.
+    Ok {
+        /// Lowercase hex sha256 of the file.
+        sha256: String,
+    },
+    /// File could not be hashed (missing, permission denied,
+    /// read error). `reason` is operator-facing.
+    Error {
+        /// Human-readable error.
+        error: String,
+    },
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -1071,5 +1172,115 @@ mod tests {
         assert!(serde_json::to_string(&n)
             .expect("ok")
             .contains("\"verdict\":\"NotPresent\""));
+    }
+
+    fn sample_update_eligible() -> UpdateReport {
+        UpdateReport {
+            schema_version: UPDATE_SCHEMA_VERSION,
+            tool_version: "0.14.1".to_string(),
+            device: "/dev/sda".to_string(),
+            eligibility: UpdateEligibility::Eligible {
+                disk_guid: "00000000-0000-0000-0000-000000000001".to_string(),
+                attestation_path: "/home/alice/.local/share/aegis-boot/attestations/abc.json"
+                    .to_string(),
+                host_chain: vec![
+                    UpdateChainEntry {
+                        role: "shim".to_string(),
+                        path: "/usr/lib/shim/shimx64.efi.signed".to_string(),
+                        result: UpdateChainResult::Ok {
+                            sha256: "a".repeat(64),
+                        },
+                    },
+                    UpdateChainEntry {
+                        role: "grub".to_string(),
+                        path: "/usr/lib/grub/x86_64-efi/grubx64.efi".to_string(),
+                        result: UpdateChainResult::Error {
+                            error: "file not found".to_string(),
+                        },
+                    },
+                ],
+            },
+        }
+    }
+
+    fn sample_update_ineligible() -> UpdateReport {
+        UpdateReport {
+            schema_version: UPDATE_SCHEMA_VERSION,
+            tool_version: "0.14.1".to_string(),
+            device: "/dev/sdb".to_string(),
+            eligibility: UpdateEligibility::Ineligible {
+                reason: "device is not removable (looks like an internal disk)".to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn update_schema_version_is_one() {
+        assert_eq!(UPDATE_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn update_round_trip_preserves_all_variants() {
+        let eligible = sample_update_eligible();
+        let body = serde_json::to_string(&eligible).expect("serialize");
+        let parsed: UpdateReport = serde_json::from_str(&body).expect("parse");
+        assert_eq!(eligible, parsed);
+
+        let ineligible = sample_update_ineligible();
+        let body = serde_json::to_string(&ineligible).expect("serialize");
+        let parsed: UpdateReport = serde_json::from_str(&body).expect("parse");
+        assert_eq!(ineligible, parsed);
+    }
+
+    #[test]
+    fn update_emits_header_fields_before_eligibility() {
+        // Consumer contract: `schema_version, tool_version, device`
+        // appear before the `eligibility` tag. Pre-flatten, the
+        // field order is pinned by struct declaration.
+        let r = sample_update_ineligible();
+        let body = serde_json::to_string(&r).expect("serialize");
+        let sv_pos = body.find("\"schema_version\"").expect("sv");
+        let tv_pos = body.find("\"tool_version\"").expect("tv");
+        let dev_pos = body.find("\"device\"").expect("dev");
+        let elig_pos = body.find("\"eligibility\"").expect("eligibility");
+        assert!(sv_pos < tv_pos, "{body}");
+        assert!(tv_pos < dev_pos, "{body}");
+        assert!(dev_pos < elig_pos, "{body}");
+    }
+
+    #[test]
+    fn update_eligibility_tags_match_upper_case_wire_strings() {
+        let e = sample_update_eligible();
+        let body = serde_json::to_string(&e).expect("serialize");
+        assert!(body.contains("\"eligibility\":\"ELIGIBLE\""), "{body}");
+        let i = sample_update_ineligible();
+        let body = serde_json::to_string(&i).expect("serialize");
+        assert!(body.contains("\"eligibility\":\"INELIGIBLE\""), "{body}");
+    }
+
+    #[test]
+    fn update_chain_entry_variants_are_mutually_exclusive() {
+        // Success variant emits sha256, no error field.
+        let ok = UpdateChainEntry {
+            role: "shim".to_string(),
+            path: "/path/to/shim".to_string(),
+            result: UpdateChainResult::Ok {
+                sha256: "a".repeat(64),
+            },
+        };
+        let body = serde_json::to_string(&ok).expect("serialize");
+        assert!(body.contains("\"sha256\""));
+        assert!(!body.contains("\"error\""), "{body}");
+        // Error variant emits error, no sha256 field.
+        let err = UpdateChainEntry {
+            role: "grub".to_string(),
+            path: "/path/to/grub".to_string(),
+            result: UpdateChainResult::Error {
+                error: "missing".to_string(),
+            },
+        };
+        let body = serde_json::to_string(&err).expect("serialize");
+        assert!(body.contains("\"error\""));
+        assert!(!body.contains("\"sha256\""), "{body}");
     }
 }
