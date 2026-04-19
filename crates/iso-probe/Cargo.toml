@@ -1,6 +1,6 @@
 [package]
 name = "iso-probe"
-version = "0.13.0"
+version = "0.14.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -15,7 +15,7 @@ categories = ["filesystem", "embedded"]
 [lib]
 
 [dependencies]
-iso-parser = { path = "../iso-parser", version = "0.13" }
+iso-parser = { path = "../iso-parser", version = "0.14" }
 thiserror.workspace = true
 serde = { workspace = true }
 tracing.workspace = true
