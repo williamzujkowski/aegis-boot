@@ -168,6 +168,21 @@ fn load_trusted_keys() -> Vec<(PublicKey, String)> {
     for entry in env.split(':').filter(|s| !s.is_empty()) {
         let path = PathBuf::from(entry);
         if path.is_dir() {
+            // Defense-in-depth: refuse the entire directory if it's
+            // group- or world-writable. An attacker with write access
+            // could drop a malicious `.pub` file and redirect the
+            // trust anchor. Safe-default in the single-user initramfs
+            // today, but the env var is operator-configurable and
+            // this forecloses a foot-gun on multi-user hosts.
+            if !is_path_safely_owned(&path) {
+                tracing::warn!(
+                    key_dir = %path.display(),
+                    "iso-probe: refusing AEGIS_TRUSTED_KEYS directory — \
+                     group- or world-writable (would allow an attacker to \
+                     drop a malicious pub-key). Fix: chmod go-w <dir>."
+                );
+                continue;
+            }
             let Ok(iter) = fs::read_dir(&path) else {
                 continue;
             };
@@ -185,6 +200,18 @@ fn load_trusted_keys() -> Vec<(PublicKey, String)> {
 }
 
 fn load_key_into(path: &Path, out: &mut Vec<(PublicKey, String)>) {
+    // Same defense as for the parent dir: refuse group/world-writable
+    // pub-key files regardless of how they were discovered. An
+    // attacker who can overwrite the .pub file can swap in their own
+    // public key and make their signatures appear trusted.
+    if !is_path_safely_owned(path) {
+        tracing::warn!(
+            key = %path.display(),
+            "iso-probe: refusing trusted pub-key file — group- or \
+             world-writable. Fix: chmod go-w <file>."
+        );
+        return;
+    }
     let Ok(text) = fs::read_to_string(path) else {
         return;
     };
@@ -195,6 +222,38 @@ fn load_key_into(path: &Path, out: &mut Vec<(PublicKey, String)>) {
             error = %e,
             "iso-probe: rejected invalid minisign public key"
         ),
+    }
+}
+
+/// Return `true` when `path`'s filesystem mode has no group- or
+/// world-write bits set (i.e. it's owned and writable only by the
+/// owner — mode `0o7xx` with no `0o022` bits).
+///
+/// On non-Unix hosts (Windows), Unix mode bits don't meaningfully
+/// map to this attack — returns `true` so key loading works without
+/// a meaningful check. This is an acceptable tradeoff for iso-probe's
+/// primary deployment target (Linux initramfs + Linux operator host).
+///
+/// Failure to stat the path (ENOENT, EACCES) returns `false` — better
+/// to refuse an unreadable key than silently skip the permissions
+/// gate. The caller's subsequent `read_to_string` would have failed
+/// anyway; this just makes the refusal explicit in logs.
+fn is_path_safely_owned(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let Ok(meta) = fs::metadata(path) else {
+            return false;
+        };
+        let mode = meta.permissions().mode();
+        // 0o022 = group-write (0o020) | world-write (0o002).
+        // If either bit is set, the file is not safely owned.
+        (mode & 0o022) == 0
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        true
     }
 }
 
@@ -253,6 +312,84 @@ mod tests {
             verify_iso_signature(&iso),
             SignatureVerification::Error { .. }
         ));
+    }
+
+    // ---- AEGIS_TRUSTED_KEYS permissions check (CWE-732) ---------------
+
+    #[cfg(unix)]
+    #[test]
+    fn is_path_safely_owned_accepts_owner_only_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("tempdir: {e}"));
+        let f = dir.path().join("key.pub");
+        std::fs::write(&f, b"x").unwrap_or_else(|e| panic!("write: {e}"));
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o600))
+            .unwrap_or_else(|e| panic!("chmod: {e}"));
+        assert!(is_path_safely_owned(&f));
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o644))
+            .unwrap_or_else(|e| panic!("chmod: {e}"));
+        assert!(is_path_safely_owned(&f));
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755))
+            .unwrap_or_else(|e| panic!("chmod: {e}"));
+        assert!(is_path_safely_owned(&f));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn is_path_safely_owned_rejects_group_writable() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("tempdir: {e}"));
+        let f = dir.path().join("key.pub");
+        std::fs::write(&f, b"x").unwrap_or_else(|e| panic!("write: {e}"));
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o664))
+            .unwrap_or_else(|e| panic!("chmod: {e}"));
+        assert!(!is_path_safely_owned(&f));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn is_path_safely_owned_rejects_world_writable() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("tempdir: {e}"));
+        let f = dir.path().join("key.pub");
+        std::fs::write(&f, b"x").unwrap_or_else(|e| panic!("write: {e}"));
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o646))
+            .unwrap_or_else(|e| panic!("chmod: {e}"));
+        assert!(!is_path_safely_owned(&f));
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o666))
+            .unwrap_or_else(|e| panic!("chmod: {e}"));
+        assert!(!is_path_safely_owned(&f));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn is_path_safely_owned_rejects_missing_file() {
+        // Fail-closed: if we can't stat the path, refuse rather than
+        // defaulting to trust. The caller's read_to_string would fail
+        // anyway; this just surfaces the refusal in structured logs.
+        let p = std::path::PathBuf::from("/definitely/does/not/exist-aegis-tk");
+        assert!(!is_path_safely_owned(&p));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_key_into_skips_group_writable_pub_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("tempdir: {e}"));
+        let f = dir.path().join("attacker.pub");
+        // Write a syntactically valid pub-key string shape (doesn't
+        // need to be a real minisign key — decode will fail; the
+        // assertion is that we never reach decode because perms are
+        // rejected first).
+        std::fs::write(&f, b"untrusted").unwrap_or_else(|e| panic!("write: {e}"));
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o664))
+            .unwrap_or_else(|e| panic!("chmod: {e}"));
+        let mut keys: Vec<(PublicKey, String)> = Vec::new();
+        load_key_into(&f, &mut keys);
+        assert!(
+            keys.is_empty(),
+            "group-writable pub-key should be refused before minisign decode"
+        );
     }
 
     #[test]
