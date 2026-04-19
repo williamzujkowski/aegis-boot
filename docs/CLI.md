@@ -727,7 +727,17 @@ aegis-boot tour --help
 
 `aegis-boot --version` reports the workspace version (currently `0.14.1`). The CLI ships in lockstep with the rest of the workspace; `cargo install --path crates/aegis-cli` (or downloading a release binary) will give you a CLI that matches the on-stick rescue-tui.
 
-`aegis-boot --version --json` emits the same info as a stable envelope — `{ "schema_version": 1, "tool": "aegis-boot", "version": "0.14.1" }` — for scripted install verification or Homebrew-style version matching.
+`aegis-boot --version --json` emits the same info as a stable envelope for scripted install verification or Homebrew-style version matching:
+
+```json
+{
+  "schema_version": 1,
+  "tool": "aegis-boot",
+  "version": "0.14.1"
+}
+```
+
+The wire shape is defined by [`aegis-manifest::Version`](../crates/aegis-manifest/src/lib.rs) and pinned via JSON Schema at [`reference/schemas/aegis-boot-version.schema.json`](./reference/schemas/aegis-boot-version.schema.json) (Phase 4b-1 of [#286](https://github.com/williamzujkowski/aegis-boot/issues/286)). Scripted consumers that parsed the previous single-line output with a JSON library see no shape change — only whitespace differs.
 
 ## See also
 
