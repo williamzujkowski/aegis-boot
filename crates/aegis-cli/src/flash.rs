@@ -33,6 +33,7 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
     let mut assume_yes = false;
     let mut prebuilt_image: Option<PathBuf> = None;
     let mut dry_run = false;
+    let mut no_progress = false;
     let mut i = 0;
     while i < args.len() {
         let a = &args[i];
@@ -43,6 +44,7 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
             }
             "--yes" | "-y" => assume_yes = true,
             "--dry-run" => dry_run = true,
+            "--no-progress" => no_progress = true,
             "--image" => {
                 i += 1;
                 let Some(p) = args.get(i) else {
@@ -105,7 +107,7 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
     }
 
     // Step 3: build + write + verify.
-    match flash(&drive, prebuilt_image.as_deref()) {
+    match flash(&drive, prebuilt_image.as_deref(), no_progress) {
         Ok(()) => {
             println!();
             println!("Done. Next steps:");
@@ -150,7 +152,7 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
 fn print_help() {
     println!("aegis-boot flash — write aegis-boot to a USB stick");
     println!();
-    println!("USAGE: aegis-boot flash [DEVICE] [--dry-run] [--yes] [--image PATH]");
+    println!("USAGE: aegis-boot flash [DEVICE] [--dry-run] [--yes] [--image PATH] [--no-progress]");
     println!("  No DEVICE        = auto-detect removable drives.");
     println!("  /dev/sdX (Linux) or /dev/diskN (macOS) = flash to that drive.");
     println!("  --dry-run        = print the typed Plan of operations and exit");
@@ -159,6 +161,9 @@ fn print_help() {
     println!("  --yes / -y       = skip the 'type flash to confirm' prompt (DESTRUCTIVE).");
     println!("  --image PATH     = write a pre-built image instead of invoking mkusb.sh.");
     println!("                     Required on macOS (mkusb.sh is Linux-only).");
+    println!("  --no-progress    = suppress the indicatif progress bar during dd. Use in");
+    println!("                     CI, pipes, or dumb terminals where the \\r-updated bar");
+    println!("                     would render as a long noisy line. (#244 PR3)");
 }
 
 /// Build the typed `Plan` describing what `aegis-boot flash` would do
@@ -386,7 +391,7 @@ fn confirm_destructive(drive: &Drive) -> bool {
     line.trim() == "flash"
 }
 
-fn flash(drive: &Drive, prebuilt_image: Option<&Path>) -> Result<(), String> {
+fn flash(drive: &Drive, prebuilt_image: Option<&Path>, no_progress: bool) -> Result<(), String> {
     // Step 3a: get the image. --image skips the build; otherwise we
     // shell out to mkusb.sh (Linux only) to generate a fresh image.
     let (img_path, img_size) = if let Some(path) = prebuilt_image {
@@ -444,14 +449,7 @@ fn flash(drive: &Drive, prebuilt_image: Option<&Path>) -> Result<(), String> {
     #[cfg(not(target_os = "macos"))]
     let dd_target = drive.dev.clone();
 
-    let dd_status = Command::new("sudo")
-        .args(dd_args(&img_path, &dd_target))
-        .status()
-        .map_err(|e| format!("dd exec failed: {e}"))?;
-
-    if !dd_status.success() {
-        return Err(format!("dd exited with {dd_status}"));
-    }
+    run_dd(&dd_args(&img_path, &dd_target), img_size, no_progress)?;
 
     // Step 3d: sync + partition rescan. partprobe is Linux-only.
     println!("Syncing...");
@@ -641,6 +639,140 @@ fn dirs_from_exe() -> Option<PathBuf> {
     std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(Path::to_path_buf))
+}
+
+// ---- dd runner dispatch -----------------------------------------------------
+
+/// Platform-dispatching wrapper over `dd`.
+///
+/// - Linux + progress enabled: uses [`run_dd_with_progress`] for the
+///   indicatif bar.
+/// - Linux + `--no-progress`: silent `sudo dd`, matches the pre-#244
+///   behaviour.
+/// - macOS / other: silent `sudo dd` (dd there doesn't emit
+///   status=progress on stderr).
+fn run_dd(args: &[String], total_bytes: u64, no_progress: bool) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    if !no_progress {
+        return run_dd_with_progress(args, total_bytes);
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = total_bytes;
+    let _ = no_progress;
+    let dd_status = Command::new("sudo")
+        .args(args)
+        .status()
+        .map_err(|e| format!("dd exec failed: {e}"))?;
+    if !dd_status.success() {
+        return Err(format!("dd exited with {dd_status}"));
+    }
+    Ok(())
+}
+
+// ---- dd progress capture (#244 PR3) -----------------------------------------
+
+/// Parse a single line from `dd status=progress` stderr and return the
+/// "bytes copied" count, or `None` if the line doesn't match. GNU dd's
+/// format is:
+///
+/// ```text
+/// 12345 bytes (12 kB, 12 KiB) copied, 1.234 s, 10.0 MB/s
+/// ```
+///
+/// We only care about the leading integer. Anything before ` bytes`
+/// that parses as `u64` wins; everything else returns `None`. Ignoring
+/// the trailing rate/time means one parser works across all dd
+/// locales (the rate field uses locale-specific decimal separators on
+/// some systems, while the leading integer is always C-locale).
+// Not cfg-gated so the unit tests run on every CI job (macOS + Linux).
+// Only the runner that invokes it (`run_dd_with_progress`) is
+// Linux-only; the parser itself is a pure-string helper. Suppress
+// dead-code on non-Linux where no caller wires it up.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn parse_dd_progress_line(line: &str) -> Option<u64> {
+    let trimmed = line.trim();
+    let (num, _rest) = trimmed.split_once(" bytes")?;
+    num.trim().parse().ok()
+}
+
+/// Run `sudo dd ...` with a reader thread draining its stderr into an
+/// indicatif progress bar. Blocks until dd exits. On success returns
+/// `Ok(())`; on non-zero exit returns the same error shape the silent
+/// path returns so the top-level `FlashError::classify` still matches.
+///
+/// Uses a preceding `sudo -v` to ensure credentials are cached — dd's
+/// stderr is piped (for progress capture), so a password prompt there
+/// would silently block. `sudo -v` inherits stdin/stderr from the
+/// operator, prompting once before we take over.
+#[cfg(target_os = "linux")]
+fn run_dd_with_progress(args: &[String], total_bytes: u64) -> Result<(), String> {
+    use indicatif::{ProgressBar, ProgressStyle};
+    use std::io::BufRead;
+    use std::process::Stdio;
+
+    // Validate / refresh sudo credentials up front, using inherited
+    // stdin/stderr so the password prompt (if any) is visible. Without
+    // this, the later `sudo dd` with piped stderr could hang on a
+    // hidden password prompt.
+    let sudo_v = Command::new("sudo")
+        .arg("-v")
+        .status()
+        .map_err(|e| format!("sudo -v exec failed: {e}"))?;
+    if !sudo_v.success() {
+        return Err("sudo credentials not available; cannot run dd".to_string());
+    }
+
+    let mut child = Command::new("sudo")
+        .args(args)
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("dd exec failed: {e}"))?;
+
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "dd: stderr pipe unexpectedly absent".to_string())?;
+
+    let pb = ProgressBar::new(total_bytes);
+    pb.set_style(
+        ProgressStyle::with_template(
+            "{bar:40.cyan/blue} {bytes:>10}/{total_bytes:<10} {bytes_per_sec:>12}  ETA {eta}",
+        )
+        .unwrap_or_else(|_| ProgressStyle::default_bar()),
+    );
+
+    // dd emits progress records separated by `\r` (carriage return,
+    // no newline), with a final newline-terminated summary on exit.
+    // Split on `\r` to catch each update; the parser is tolerant of
+    // trailing `\n` on the last record.
+    let pb_thread = pb.clone();
+    let reader_thread = std::thread::spawn(move || {
+        let mut reader = std::io::BufReader::new(stderr);
+        let mut buf: Vec<u8> = Vec::with_capacity(256);
+        loop {
+            buf.clear();
+            match reader.read_until(b'\r', &mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    let line = String::from_utf8_lossy(&buf);
+                    if let Some(bytes) = parse_dd_progress_line(&line) {
+                        pb_thread.set_position(bytes);
+                    }
+                }
+            }
+        }
+    });
+
+    let status = child.wait().map_err(|e| format!("dd wait failed: {e}"))?;
+    // Let the stderr reader drain whatever final bytes dd emitted
+    // before closing the pipe; bounded by EOF on the piped stream.
+    let _ = reader_thread.join();
+    pb.finish_and_clear();
+
+    if !status.success() {
+        return Err(format!("dd exited with {status}"));
+    }
+    Ok(())
 }
 
 // ---- structured errors for operator rendering (#247 PR3) ---------------------
@@ -1041,6 +1173,57 @@ mod tests {
         assert!(s.contains("try:"), "missing try line: {s}");
         assert!(s.contains("see: https://"), "missing docs URL: {s}");
     }
+
+    // ---- #244 PR3: dd progress-line parser --------------------------------
+
+    #[test]
+    fn parse_dd_progress_line_extracts_bytes_copied() {
+        // Canonical GNU dd status=progress format.
+        let line = "12345 bytes (12 kB, 12 KiB) copied, 1.234 s, 10.0 MB/s";
+        assert_eq!(parse_dd_progress_line(line), Some(12345));
+    }
+
+    #[test]
+    fn parse_dd_progress_line_handles_large_values() {
+        // ~30 GB stick; bytes count overflows u32 — must be parsed as u64.
+        let line = "32010928128 bytes (32 GB, 30 GiB) copied, 98.234 s, 325 MB/s";
+        assert_eq!(parse_dd_progress_line(line), Some(32_010_928_128));
+    }
+
+    #[test]
+    fn parse_dd_progress_line_tolerates_leading_and_trailing_whitespace() {
+        let line = "  \r  2147483648 bytes (2.1 GB) copied, 20 s, 107 MB/s\r  ";
+        assert_eq!(parse_dd_progress_line(line), Some(2_147_483_648));
+    }
+
+    #[test]
+    fn parse_dd_progress_line_rejects_non_progress_output() {
+        // dd also emits the final `N+M records in/out` summary lines;
+        // those don't start with a byte count + " bytes" pattern, so
+        // the parser should return None and leave the progress bar at
+        // its last good position.
+        for line in [
+            "123+0 records in",
+            "123+0 records out",
+            "",
+            "dd: error writing: No space left on device",
+            "some random noise",
+        ] {
+            assert_eq!(
+                parse_dd_progress_line(line),
+                None,
+                "line should not parse: {line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_dd_progress_line_rejects_non_numeric_prefix() {
+        let line = "abc bytes copied, 1 s, 1 MB/s";
+        assert_eq!(parse_dd_progress_line(line), None);
+    }
+
+    // ---- #247 PR3 FlashError shared-suggestion invariant -----------------
 
     #[test]
     fn flash_error_readback_and_short_share_suggestion_and_docs() {

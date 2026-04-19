@@ -25,6 +25,12 @@ tempfile = "3.14"
 sha2 = "0.10"
 hex = "0.4"
 thiserror = { workspace = true }
+# Per-stage progress UI during dd (#244 PR3). Captures dd's
+# status=progress stderr lines via a background reader thread and
+# renders a bytes/sec + ETA bar. macOS dd doesn't emit progress on
+# stderr, so the bar is Linux-only; macOS falls back to the original
+# silent .status() call.
+indicatif = { version = "0.17", default-features = false }
 
 [dev-dependencies]
 tempfile = "3.14"
