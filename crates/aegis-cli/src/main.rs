@@ -80,14 +80,34 @@ fn main() -> ExitCode {
         }
         Some("--version" | "version") => {
             // `--json` can appear anywhere after the `--version` /
-            // `version` subcommand. Consistent with the rest of the
-            // --json sweep, the envelope carries schema_version + the
-            // full semver so tools can match against a registry.
+            // `version` subcommand. The envelope shape lives in
+            // `aegis_manifest::Version` — a typed, drift-checked
+            // wire contract that scripted consumers pin against
+            // via `docs/reference/schemas/aegis-boot-version.schema.json`
+            // (Phase 4b-1 of #286).
             if args.iter().skip(1).any(|a| a == "--json") {
-                println!(
-                    "{{ \"schema_version\": 1, \"tool\": \"aegis-boot\", \"version\": \"{}\" }}",
-                    env!("CARGO_PKG_VERSION")
-                );
+                let envelope = aegis_manifest::Version {
+                    schema_version: aegis_manifest::VERSION_SCHEMA_VERSION,
+                    tool: "aegis-boot".to_string(),
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                };
+                // `to_string_pretty` matches the multi-line style
+                // used by the other `--json` surfaces (doctor,
+                // list, verify, …). The full `--json` suite's
+                // serde-refactor is tracked as Phase 4b of #290;
+                // byte-level output for `--version --json`
+                // changes from single-line to pretty across this
+                // refactor — scripted consumers that parse via a
+                // JSON library see no change (field shape is
+                // identical), consumers that byte-grep the
+                // whole string see a whitespace diff only.
+                match serde_json::to_string_pretty(&envelope) {
+                    Ok(body) => println!("{body}"),
+                    Err(e) => {
+                        eprintln!("aegis-boot: failed to serialize version envelope: {e}");
+                        return ExitCode::from(2);
+                    }
+                }
             } else {
                 println!("aegis-boot v{}", env!("CARGO_PKG_VERSION"));
             }

@@ -10,6 +10,9 @@
 //! * [`aegis_manifest::Attestation`] →
 //!   `docs/reference/schemas/aegis-attestation.schema.json`
 //!   (Phase 4c-1 of [#286])
+//! * [`aegis_manifest::Version`] →
+//!   `docs/reference/schemas/aegis-boot-version.schema.json`
+//!   (Phase 4b-1 of [#286])
 //!
 //! CI's `manifest-schema-drift` job runs this in `--check` mode on
 //! every PR. Any time a field is added, removed, or retyped on any
@@ -35,7 +38,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use aegis_manifest::{Attestation, Manifest};
+use aegis_manifest::{Attestation, Manifest, Version};
 use schemars::schema_for;
 
 /// A single schema target: logical name, relative output path, and
@@ -58,6 +61,11 @@ fn targets() -> Vec<Target> {
             relative_path: "docs/reference/schemas/aegis-attestation.schema.json",
             render: render_attestation_schema,
         },
+        Target {
+            name: "Version",
+            relative_path: "docs/reference/schemas/aegis-boot-version.schema.json",
+            render: render_version_schema,
+        },
     ]
 }
 
@@ -67,6 +75,10 @@ fn render_manifest_schema() -> Result<String, String> {
 
 fn render_attestation_schema() -> Result<String, String> {
     render_pretty(&schema_for!(Attestation))
+}
+
+fn render_version_schema() -> Result<String, String> {
+    render_pretty(&schema_for!(Version))
 }
 
 /// Serialize a JSON Schema as pretty-printed JSON with a trailing

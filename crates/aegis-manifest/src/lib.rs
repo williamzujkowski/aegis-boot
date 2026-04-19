@@ -41,13 +41,18 @@
 //!   [`ATTESTATION_SCHEMA_VERSION`]) — per-flash audit record
 //!   written to `$XDG_DATA_HOME/aegis-boot/attestations/` for
 //!   chain-of-custody + fleet inventory. Phase 4c-1 of [#286].
+//! * **CLI envelopes** (currently [`Version`], with
+//!   [`VERSION_SCHEMA_VERSION`]) — the tiny `--json` envelope
+//!   emitted by `aegis-boot --version --json` and its siblings.
+//!   Phase 4b-1 onward of [#286].
 //!
-//! The two contracts are independently versioned — a change to one
-//! schema does not require bumping the other. They are co-located
-//! in the same crate because they are both "aegis-boot wire-format
+//! Each contract is independently versioned — a change to one
+//! schema does not require bumping the others. They are co-located
+//! in the same crate because they are all "aegis-boot wire-format
 //! structs for third-party consumers" and sharing the optional
 //! `schema` feature + docgen infrastructure is cheaper than forking
-//! it across two crates.
+//! it across N crates. A future crate rename (`aegis-wire-formats`
+//! or similar) may follow once the full CLI envelope set lands.
 //!
 //! [#286]: https://github.com/williamzujkowski/aegis-boot/issues/286
 
@@ -64,6 +69,11 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// Independent of [`SCHEMA_VERSION`] — either contract can advance
 /// without the other.
 pub const ATTESTATION_SCHEMA_VERSION: u32 = 1;
+
+/// Locked schema version for the [`Version`] envelope emitted by
+/// `aegis-boot --version --json`. Independent of the manifest and
+/// attestation contract versions.
+pub const VERSION_SCHEMA_VERSION: u32 = 1;
 
 /// Top-level manifest body. Serialized field order matches the
 /// declaration order below — relied on for canonical JSON stability
@@ -291,6 +301,36 @@ pub struct IsoRecord {
     pub added_at: String,
 }
 
+// -----------------------------------------------------------------
+// CLI envelopes (Phase 4b-1 onward of #286).
+//
+// These are the `--json` output shapes emitted by `aegis-boot`
+// subcommands. The envelopes are tiny, stable, and
+// independently-versioned wire contracts scripted consumers
+// (monitoring, install-one-liner assertions, Homebrew formula
+// tests) depend on.
+// -----------------------------------------------------------------
+
+/// Envelope emitted by `aegis-boot --version --json`. Lets scripted
+/// consumers (install-one-liner assertions, Homebrew formula tests,
+/// ansible-verified installs) parse the version without regex on
+/// the human-readable string.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Version {
+    /// Wire-format version. See [`VERSION_SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// Always `"aegis-boot"` for this CLI — field exists to make a
+    /// future migration to a multi-tool repo (where the same
+    /// envelope shape might be emitted by a sibling binary) a
+    /// zero-schema-bump operation.
+    pub tool: String,
+    /// Semver string matching the workspace version (`Cargo.toml`
+    /// `[workspace.package].version`). Does NOT include a `v`
+    /// prefix — `"0.14.1"`, not `"v0.14.1"`.
+    pub version: String,
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -409,5 +449,40 @@ mod tests {
         a.isos.clear();
         let body = serde_json::to_string(&a).expect("serialize");
         assert!(body.contains("\"isos\":[]"), "isos must be present: {body}");
+    }
+
+    fn sample_version() -> Version {
+        Version {
+            schema_version: VERSION_SCHEMA_VERSION,
+            tool: "aegis-boot".to_string(),
+            version: "0.14.1".to_string(),
+        }
+    }
+
+    #[test]
+    fn version_schema_version_is_one() {
+        assert_eq!(VERSION_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn version_round_trip_preserves_all_fields() {
+        let v = sample_version();
+        let body = serde_json::to_string(&v).expect("serialize");
+        let parsed: Version = serde_json::from_str(&body).expect("parse");
+        assert_eq!(v, parsed);
+    }
+
+    #[test]
+    fn version_wire_field_order_matches_documented_shape() {
+        // docs/CLI.md pins the shape as `{ schema_version, tool,
+        // version }` — serde's default field order is declaration
+        // order; this test is the guard against accidental reorder.
+        let v = sample_version();
+        let body = serde_json::to_string(&v).expect("serialize");
+        let sv_pos = body.find("\"schema_version\"").expect("sv");
+        let tool_pos = body.find("\"tool\"").expect("tool");
+        let ver_pos = body.find("\"version\"").expect("version");
+        assert!(sv_pos < tool_pos, "schema_version before tool: {body}");
+        assert!(tool_pos < ver_pos, "tool before version: {body}");
     }
 }
