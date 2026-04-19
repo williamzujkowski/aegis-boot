@@ -83,10 +83,13 @@ PATTERNS=(
     'docs/CLI.md|"tool_version": "@VERSION@"|CLI.md tool_version JSON envelope'
     'docs/CLI.md|reports the workspace version \(currently `@VERSION@`\)|CLI.md prose'
 
-    # man page .TH header must carry the current version. Phase 1b
-    # (#287 child) replaces this with a build.rs template + @VERSION@
-    # literal; until then, drift-check.
-    'man/aegis-boot.1|"aegis-boot @VERSION@"|man page .TH header'
+    # NOTE: man/aegis-boot.1.in is the authored TEMPLATE, not a rendered
+    # man page. It deliberately carries the literal `@VERSION@` +
+    # `@DATE@` placeholders — substituted at build time by
+    # crates/aegis-cli/build.rs (Phase 1b of #286/#287). The template's
+    # "always has the placeholder" contract is enforced by the
+    # man::tests::template_contains_version_placeholder unit test
+    # in crates/aegis-cli/src/man.rs, not by this drift check.
 )
 
 drift_found=0
