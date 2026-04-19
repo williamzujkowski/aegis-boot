@@ -1,0 +1,79 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DoctorReport",
+  "description": "Envelope emitted by `aegis-boot doctor --json`. Reports host + stick health as a rollup score + per-check rows. The monitoring / CI consumer target — a non-zero `has_any_fail` is the signal to surface to an operator.",
+  "type": "object",
+  "required": [
+    "band",
+    "has_any_fail",
+    "rows",
+    "schema_version",
+    "score",
+    "tool_version"
+  ],
+  "properties": {
+    "band": {
+      "description": "Human-readable score band: typically `\"EXCELLENT\"`, `\"GOOD\"`, `\"FAIR\"`, or `\"POOR\"`. Exact thresholds are an implementation detail of the CLI; consumers should treat these as opaque labels paired with the numeric `score`.",
+      "type": "string"
+    },
+    "has_any_fail": {
+      "description": "True iff any row's `verdict` is `\"FAIL\"`. The minimal rollup bit for monitoring: operator attention required.",
+      "type": "boolean"
+    },
+    "next_action": {
+      "description": "Operator-facing remediation hint pulled from the first `FAIL` row's `next_action` text. `None` when no row failed or none carried a remedy.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "rows": {
+      "description": "One entry per check run. Order is check-declaration order inside `doctor.rs` — stable across invocations on the same host.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/DoctorRow"
+      }
+    },
+    "schema_version": {
+      "description": "Wire-format version. See [`DOCTOR_SCHEMA_VERSION`].",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0.0
+    },
+    "score": {
+      "description": "Aggregate score (0–100). PASS = 1.0, WARN = 0.7, FAIL = 0.0; skipped rows are excluded from the denominator.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0.0
+    },
+    "tool_version": {
+      "description": "`aegis-boot` binary version that produced this envelope.",
+      "type": "string"
+    }
+  },
+  "definitions": {
+    "DoctorRow": {
+      "description": "One check result in a [`DoctorReport`].",
+      "type": "object",
+      "required": [
+        "detail",
+        "name",
+        "verdict"
+      ],
+      "properties": {
+        "detail": {
+          "description": "Single-line detail (filepath, value, or error message).",
+          "type": "string"
+        },
+        "name": {
+          "description": "Short check name (e.g. `\"command: mcopy\"`).",
+          "type": "string"
+        },
+        "verdict": {
+          "description": "Verdict label — `\"PASS\"`, `\"WARN\"`, `\"FAIL\"`, or `\"SKIP\"`. String (not enum) because the CLI's verdict vocabulary is intentionally loose: new verdicts can be added without a `schema_version` bump so long as consumers treat unknown values as \"don't block on this.\"",
+          "type": "string"
+        }
+      }
+    }
+  }
+}

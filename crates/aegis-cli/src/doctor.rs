@@ -199,32 +199,27 @@ impl Report {
     fn print_json_summary(&self) {
         let score = self.score();
         let band = band_for_score(score);
-        println!("{{");
-        println!("  \"schema_version\": 1,");
-        println!("  \"tool_version\": \"{}\",", env!("CARGO_PKG_VERSION"));
-        println!("  \"score\": {score},");
-        println!("  \"band\": \"{band}\",");
-        println!(
-            "  \"has_any_fail\": {},",
-            if self.has_any_fail() { "true" } else { "false" }
-        );
-        match &self.next_action {
-            Some(na) => println!("  \"next_action\": \"{}\",", json_escape(na)),
-            None => println!("  \"next_action\": null,"),
+        let report = aegis_manifest::DoctorReport {
+            schema_version: aegis_manifest::DOCTOR_SCHEMA_VERSION,
+            tool_version: env!("CARGO_PKG_VERSION").to_string(),
+            score: u32::from(score),
+            band: band.to_string(),
+            has_any_fail: self.has_any_fail(),
+            next_action: self.next_action.clone(),
+            rows: self
+                .rows
+                .iter()
+                .map(|(verdict, name, detail)| aegis_manifest::DoctorRow {
+                    verdict: verdict.label().to_string(),
+                    name: name.clone(),
+                    detail: detail.clone(),
+                })
+                .collect(),
+        };
+        match serde_json::to_string_pretty(&report) {
+            Ok(body) => println!("{body}"),
+            Err(e) => eprintln!("aegis-boot doctor: failed to serialize --json envelope: {e}"),
         }
-        println!("  \"rows\": [");
-        let last = self.rows.len().saturating_sub(1);
-        for (i, (verdict, name, detail)) in self.rows.iter().enumerate() {
-            let comma = if i == last { "" } else { "," };
-            println!(
-                "    {{ \"verdict\": \"{}\", \"name\": \"{}\", \"detail\": \"{}\" }}{comma}",
-                verdict.label(),
-                json_escape(name),
-                json_escape(detail),
-            );
-        }
-        println!("  ]");
-        println!("}}");
     }
 }
 

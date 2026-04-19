@@ -44,8 +44,8 @@
 //! * **CLI envelopes** ([`Version`], [`ListReport`],
 //!   [`AttestListReport`], [`VerifyReport`], [`UpdateReport`],
 //!   [`RecommendReport`], [`CompatReport`], [`CompatSubmitReport`],
-//!   with their `*_SCHEMA_VERSION` constants) — the `--json`
-//!   envelopes emitted by `aegis-boot --version --json`,
+//!   [`DoctorReport`], with their `*_SCHEMA_VERSION` constants) —
+//!   the `--json` envelopes emitted by `aegis-boot --version --json`,
 //!   `... list --json`, `... attest list --json`, `... verify --json`,
 //!   `... update --json`, `... recommend --json`, `... compat --json`,
 //!   `... compat --submit --json`, and siblings. Phase 4b of [#286].
@@ -117,6 +117,11 @@ pub const COMPAT_SCHEMA_VERSION: u32 = 1;
 /// consumer contracts (operators draft-submit vs. scripted
 /// lookup).
 pub const COMPAT_SUBMIT_SCHEMA_VERSION: u32 = 1;
+
+/// Locked schema version for the [`DoctorReport`] envelope emitted
+/// by `aegis-boot doctor --json`. Independent of the other envelope
+/// contracts.
+pub const DOCTOR_SCHEMA_VERSION: u32 = 1;
 
 /// Top-level manifest body. Serialized field order matches the
 /// declaration order below — relied on for canonical JSON stability
@@ -946,6 +951,54 @@ pub struct CompatSubmitReport {
     pub firmware: String,
 }
 
+/// Envelope emitted by `aegis-boot doctor --json`. Reports host +
+/// stick health as a rollup score + per-check rows. The monitoring /
+/// CI consumer target — a non-zero `has_any_fail` is the signal to
+/// surface to an operator.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct DoctorReport {
+    /// Wire-format version. See [`DOCTOR_SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// `aegis-boot` binary version that produced this envelope.
+    pub tool_version: String,
+    /// Aggregate score (0–100). PASS = 1.0, WARN = 0.7, FAIL =
+    /// 0.0; skipped rows are excluded from the denominator.
+    pub score: u32,
+    /// Human-readable score band: typically `"EXCELLENT"`,
+    /// `"GOOD"`, `"FAIR"`, or `"POOR"`. Exact thresholds are an
+    /// implementation detail of the CLI; consumers should treat
+    /// these as opaque labels paired with the numeric `score`.
+    pub band: String,
+    /// True iff any row's `verdict` is `"FAIL"`. The minimal
+    /// rollup bit for monitoring: operator attention required.
+    pub has_any_fail: bool,
+    /// Operator-facing remediation hint pulled from the first
+    /// `FAIL` row's `next_action` text. `None` when no row failed
+    /// or none carried a remedy.
+    pub next_action: Option<String>,
+    /// One entry per check run. Order is check-declaration order
+    /// inside `doctor.rs` — stable across invocations on the same
+    /// host.
+    pub rows: Vec<DoctorRow>,
+}
+
+/// One check result in a [`DoctorReport`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct DoctorRow {
+    /// Verdict label — `"PASS"`, `"WARN"`, `"FAIL"`, or `"SKIP"`.
+    /// String (not enum) because the CLI's verdict vocabulary is
+    /// intentionally loose: new verdicts can be added without a
+    /// `schema_version` bump so long as consumers treat unknown
+    /// values as "don't block on this."
+    pub verdict: String,
+    /// Short check name (e.g. `"command: mcopy"`).
+    pub name: String,
+    /// Single-line detail (filepath, value, or error message).
+    pub detail: String,
+}
+
 /// One curated catalog entry. Used in both
 /// [`RecommendCatalogReport::entries`] and
 /// [`RecommendSingleReport::entry`].
@@ -1745,5 +1798,85 @@ mod tests {
         assert!(body.contains("\"tool\":\"aegis-boot\""));
         assert!(!body.contains("\"tool_version\""), "{body}");
         assert!(body.contains("\"submit_url\""));
+    }
+
+    fn sample_doctor_report() -> DoctorReport {
+        DoctorReport {
+            schema_version: DOCTOR_SCHEMA_VERSION,
+            tool_version: "0.14.1".to_string(),
+            score: 85,
+            band: "GOOD".to_string(),
+            has_any_fail: false,
+            next_action: None,
+            rows: vec![
+                DoctorRow {
+                    verdict: "PASS".to_string(),
+                    name: "OS".to_string(),
+                    detail: "Linux 6.17.0".to_string(),
+                },
+                DoctorRow {
+                    verdict: "WARN".to_string(),
+                    name: "Secure Boot (host)".to_string(),
+                    detail: "disabled".to_string(),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn doctor_schema_version_is_one() {
+        assert_eq!(DOCTOR_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn doctor_round_trips_and_preserves_all_fields() {
+        let r = sample_doctor_report();
+        let body = serde_json::to_string(&r).expect("serialize");
+        let parsed: DoctorReport = serde_json::from_str(&body).expect("parse");
+        assert_eq!(r, parsed);
+    }
+
+    #[test]
+    fn doctor_next_action_null_when_absent() {
+        // next_action = null when no FAIL row carried a remedy.
+        // Must serialize as `null` (not omitted) to keep the field
+        // set stable for consumers.
+        let r = sample_doctor_report();
+        let body = serde_json::to_string(&r).expect("serialize");
+        assert!(
+            body.contains("\"next_action\":null"),
+            "next_action must be explicit null: {body}"
+        );
+    }
+
+    #[test]
+    fn doctor_next_action_populated_on_fail() {
+        let mut r = sample_doctor_report();
+        r.has_any_fail = true;
+        r.next_action = Some("install mcopy".to_string());
+        r.rows.push(DoctorRow {
+            verdict: "FAIL".to_string(),
+            name: "command: mcopy".to_string(),
+            detail: "not found in PATH".to_string(),
+        });
+        let body = serde_json::to_string(&r).expect("serialize");
+        assert!(body.contains("\"has_any_fail\":true"));
+        assert!(body.contains("\"next_action\":\"install mcopy\""));
+    }
+
+    #[test]
+    fn doctor_row_verdict_is_free_string_not_enum() {
+        // The verdict field accepts any string — the CLI's
+        // vocabulary can grow with new verdict labels without
+        // bumping schema_version. Consumer contract: treat
+        // unknown verdicts as "informational / don't block."
+        let r = DoctorRow {
+            verdict: "FUTURE-VERDICT-LABEL".to_string(),
+            name: "some new check".to_string(),
+            detail: "novel condition".to_string(),
+        };
+        let body = serde_json::to_string(&r).expect("serialize");
+        let parsed: DoctorRow = serde_json::from_str(&body).expect("parse");
+        assert_eq!(r, parsed);
     }
 }
