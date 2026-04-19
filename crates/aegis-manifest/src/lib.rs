@@ -41,10 +41,12 @@
 //!   [`ATTESTATION_SCHEMA_VERSION`]) — per-flash audit record
 //!   written to `$XDG_DATA_HOME/aegis-boot/attestations/` for
 //!   chain-of-custody + fleet inventory. Phase 4c-1 of [#286].
-//! * **CLI envelopes** ([`Version`], [`ListReport`], with
-//!   [`VERSION_SCHEMA_VERSION`] / [`LIST_SCHEMA_VERSION`]) — the
-//!   `--json` envelopes emitted by `aegis-boot --version --json`,
-//!   `aegis-boot list --json`, and siblings. Phase 4b of [#286].
+//! * **CLI envelopes** ([`Version`], [`ListReport`],
+//!   [`AttestListReport`], with [`VERSION_SCHEMA_VERSION`] /
+//!   [`LIST_SCHEMA_VERSION`] / [`ATTEST_LIST_SCHEMA_VERSION`]) —
+//!   the `--json` envelopes emitted by `aegis-boot --version --json`,
+//!   `aegis-boot list --json`, `aegis-boot attest list --json`, and
+//!   siblings. Phase 4b of [#286].
 //!
 //! Each contract is independently versioned — a change to one
 //! schema does not require bumping the others. They are co-located
@@ -79,6 +81,11 @@ pub const VERSION_SCHEMA_VERSION: u32 = 1;
 /// by `aegis-boot list --json`. Independent of the other envelope
 /// contracts.
 pub const LIST_SCHEMA_VERSION: u32 = 1;
+
+/// Locked schema version for the [`AttestListReport`] envelope
+/// emitted by `aegis-boot attest list --json`. Independent of the
+/// other envelope contracts.
+pub const ATTEST_LIST_SCHEMA_VERSION: u32 = 1;
 
 /// Top-level manifest body. Serialized field order matches the
 /// declaration order below — relied on for canonical JSON stability
@@ -406,6 +413,90 @@ pub struct ListIsoSummary {
     pub description: Option<String>,
 }
 
+/// Envelope emitted by `aegis-boot attest list --json`. Scans the
+/// host's attestation directory, attempts to parse each file, and
+/// reports either a parsed summary or a parse-error placeholder per
+/// entry. Enables monitoring / fleet tools to audit chain-of-custody
+/// across all flashed sticks on a host.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct AttestListReport {
+    /// Wire-format version. See [`ATTEST_LIST_SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// `aegis-boot` binary version that produced this envelope.
+    pub tool_version: String,
+    /// Host filesystem path of the attestations directory scanned
+    /// (typically `$XDG_DATA_HOME/aegis-boot/attestations/`).
+    pub attestations_dir: String,
+    /// Number of files scanned (including parse-failure entries).
+    pub count: u32,
+    /// One entry per file found. See [`AttestListEntry`] for the
+    /// success/error shape selection.
+    pub attestations: Vec<AttestListEntry>,
+}
+
+/// One entry in an [`AttestListReport`]. Two mutually-exclusive
+/// wire shapes via serde's `untagged` tagging:
+///
+/// * **Success** — a successful parse, reporting the manifest's
+///   headline fields. The `error` field is absent.
+/// * **Error** — the file existed but could not be parsed. Only
+///   `manifest_path` + `error` are emitted; the summary fields
+///   are absent.
+///
+/// Schemars emits this as a JSON Schema `oneOf` so consumers know
+/// to branch on the presence of the `error` field.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(untagged)]
+pub enum AttestListEntry {
+    /// Parsed manifest summary.
+    Success(AttestListSuccess),
+    /// Placeholder for a file that existed but failed to parse.
+    Error(AttestListError),
+}
+
+/// Successfully-parsed attestation summary inside an
+/// [`AttestListReport`]. Deliberately a strict subset of the full
+/// [`Attestation`] — enough to drive a dashboard without requiring
+/// consumers to re-parse each file. Full detail is one
+/// `aegis-boot attest show <path>` away.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct AttestListSuccess {
+    /// Host filesystem path of the attestation manifest file.
+    pub manifest_path: String,
+    /// Schema version declared inside the attestation manifest
+    /// (see [`ATTESTATION_SCHEMA_VERSION`]).
+    pub schema_version: u32,
+    /// `tool_version` field from the attestation manifest.
+    pub tool_version: String,
+    /// `flashed_at` timestamp from the attestation manifest.
+    pub flashed_at: String,
+    /// Operator that ran the flash (from the attestation).
+    pub operator: String,
+    /// `target.device` from the attestation (e.g. `/dev/sda`).
+    pub target_device: String,
+    /// `target.model` from the attestation.
+    pub target_model: String,
+    /// GPT disk GUID from the attestation's target info.
+    pub disk_guid: String,
+    /// Number of [`IsoRecord`] entries inside the attestation.
+    pub iso_count: u32,
+}
+
+/// Parse-failure entry inside an [`AttestListReport`]. Consumer
+/// decision: show the operator which file failed + why, so they
+/// can audit / repair / delete.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct AttestListError {
+    /// Host filesystem path of the unparseable file.
+    pub manifest_path: String,
+    /// Human-readable error message from the parser.
+    pub error: String,
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -642,5 +733,85 @@ mod tests {
             body.contains("\"description\":null"),
             "description missing or omitted: {body}"
         );
+    }
+
+    fn sample_attest_list_success() -> AttestListSuccess {
+        AttestListSuccess {
+            manifest_path: "/home/alice/.local/share/aegis-boot/attestations/abc.json".to_string(),
+            schema_version: ATTESTATION_SCHEMA_VERSION,
+            tool_version: "aegis-boot 0.14.1".to_string(),
+            flashed_at: "2026-04-19T14:30:00Z".to_string(),
+            operator: "alice".to_string(),
+            target_device: "/dev/sda".to_string(),
+            target_model: "SanDisk Cruzer".to_string(),
+            disk_guid: "00000000-0000-0000-0000-000000000001".to_string(),
+            iso_count: 3,
+        }
+    }
+
+    #[test]
+    fn attest_list_schema_version_is_one() {
+        assert_eq!(ATTEST_LIST_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn attest_list_success_serializes_without_error_field() {
+        // The untagged enum's Success variant must NOT emit an
+        // `error` key — that's how consumers branch between the
+        // two shapes.
+        let entry = AttestListEntry::Success(sample_attest_list_success());
+        let body = serde_json::to_string(&entry).expect("serialize");
+        assert!(!body.contains("\"error\""), "must not have error: {body}");
+        assert!(body.contains("\"operator\":\"alice\""));
+    }
+
+    #[test]
+    fn attest_list_error_serializes_without_summary_fields() {
+        // The Error variant must NOT emit any of the success
+        // fields (schema_version, tool_version, flashed_at,
+        // operator, target_device, target_model, disk_guid,
+        // iso_count). This is the mutually-exclusive shape
+        // contract that Phase 4b-3's untagged enum preserves.
+        let entry = AttestListEntry::Error(AttestListError {
+            manifest_path: "/tmp/broken.json".to_string(),
+            error: "parse failed: missing field".to_string(),
+        });
+        let body = serde_json::to_string(&entry).expect("serialize");
+        assert!(body.contains("\"error\":"));
+        for success_field in &[
+            "schema_version",
+            "tool_version",
+            "flashed_at",
+            "operator",
+            "target_device",
+            "target_model",
+            "disk_guid",
+            "iso_count",
+        ] {
+            let pattern = format!("\"{success_field}\"");
+            assert!(
+                !body.contains(&pattern),
+                "Error variant must not emit {success_field}: {body}"
+            );
+        }
+    }
+
+    #[test]
+    fn attest_list_entry_round_trips() {
+        // An untagged-enum round-trip through serde must pick the
+        // right variant based on field shape. Success → Success,
+        // Error → Error.
+        let success = AttestListEntry::Success(sample_attest_list_success());
+        let body = serde_json::to_string(&success).expect("serialize");
+        let parsed: AttestListEntry = serde_json::from_str(&body).expect("parse");
+        assert_eq!(success, parsed);
+
+        let err = AttestListEntry::Error(AttestListError {
+            manifest_path: "/tmp/x.json".to_string(),
+            error: "nope".to_string(),
+        });
+        let body = serde_json::to_string(&err).expect("serialize");
+        let parsed: AttestListEntry = serde_json::from_str(&body).expect("parse");
+        assert_eq!(err, parsed);
     }
 }

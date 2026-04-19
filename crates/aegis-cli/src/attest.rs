@@ -366,77 +366,51 @@ fn run_list(json_mode: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Emit the attestation list as a stable `schema_version=1` JSON
-/// document on stdout. Each entry carries the parsed attestation
-/// summary plus the on-disk manifest path so downstream tooling can
-/// follow the chain to `aegis-boot attest show <file>` for full detail.
+/// Emit the attestation list as a stable JSON document on stdout.
+///
+/// Phase 4b-3 of #286 migrated this from a hand-rolled
+/// `println!()` chain to the typed [`aegis_manifest::AttestListReport`]
+/// envelope. The per-entry shape (success / error) is a
+/// `#[serde(untagged)]` enum in aegis-manifest; the wire contract
+/// is pinned via `docs/reference/schemas/aegis-boot-attest-list.schema.json`.
 fn print_attest_list_json(dir: &Path, entries: &[std::fs::DirEntry]) {
-    use crate::doctor::json_escape;
-    println!("{{");
-    println!("  \"schema_version\": 1,");
-    println!("  \"tool_version\": \"{}\",", env!("CARGO_PKG_VERSION"));
-    println!(
-        "  \"attestations_dir\": \"{}\",",
-        json_escape(&dir.display().to_string())
-    );
-    println!("  \"count\": {},", entries.len());
-    println!("  \"attestations\": [");
-    let last = entries.len().saturating_sub(1);
-    for (i, entry) in entries.iter().enumerate() {
-        let path = entry.path();
-        let comma = if i == last { "" } else { "," };
-        match read_attestation(&path) {
-            Ok(att) => {
-                // Emit a subset of the full manifest — enough to drive
-                // a CI/monitoring dashboard without requiring the
-                // consumer to re-parse each file. Full detail is one
-                // `aegis-boot attest show <path>` away.
-                println!("    {{");
-                println!(
-                    "      \"manifest_path\": \"{}\",",
-                    json_escape(&path.display().to_string())
-                );
-                println!("      \"schema_version\": {},", att.schema_version);
-                println!(
-                    "      \"tool_version\": \"{}\",",
-                    json_escape(&att.tool_version)
-                );
-                println!(
-                    "      \"flashed_at\": \"{}\",",
-                    json_escape(&att.flashed_at)
-                );
-                println!("      \"operator\": \"{}\",", json_escape(&att.operator));
-                println!(
-                    "      \"target_device\": \"{}\",",
-                    json_escape(&att.target.device)
-                );
-                println!(
-                    "      \"target_model\": \"{}\",",
-                    json_escape(&att.target.model)
-                );
-                println!(
-                    "      \"disk_guid\": \"{}\",",
-                    json_escape(&att.target.disk_guid)
-                );
-                println!("      \"iso_count\": {}", att.isos.len());
-                println!("    }}{comma}");
+    let attestations: Vec<aegis_manifest::AttestListEntry> = entries
+        .iter()
+        .map(|entry| {
+            let path = entry.path();
+            let path_str = path.display().to_string();
+            match read_attestation(&path) {
+                Ok(att) => {
+                    aegis_manifest::AttestListEntry::Success(aegis_manifest::AttestListSuccess {
+                        manifest_path: path_str,
+                        schema_version: att.schema_version,
+                        tool_version: att.tool_version,
+                        flashed_at: att.flashed_at,
+                        operator: att.operator,
+                        target_device: att.target.device,
+                        target_model: att.target.model,
+                        disk_guid: att.target.disk_guid,
+                        iso_count: u32::try_from(att.isos.len()).unwrap_or(u32::MAX),
+                    })
+                }
+                Err(e) => aegis_manifest::AttestListEntry::Error(aegis_manifest::AttestListError {
+                    manifest_path: path_str,
+                    error: format!("parse failed: {e}"),
+                }),
             }
-            Err(e) => {
-                println!("    {{");
-                println!(
-                    "      \"manifest_path\": \"{}\",",
-                    json_escape(&path.display().to_string())
-                );
-                println!(
-                    "      \"error\": \"{}\"",
-                    json_escape(&format!("parse failed: {e}"))
-                );
-                println!("    }}{comma}");
-            }
-        }
+        })
+        .collect();
+    let report = aegis_manifest::AttestListReport {
+        schema_version: aegis_manifest::ATTEST_LIST_SCHEMA_VERSION,
+        tool_version: env!("CARGO_PKG_VERSION").to_string(),
+        attestations_dir: dir.display().to_string(),
+        count: u32::try_from(entries.len()).unwrap_or(u32::MAX),
+        attestations,
+    };
+    match serde_json::to_string_pretty(&report) {
+        Ok(body) => println!("{body}"),
+        Err(e) => eprintln!("aegis-boot attest list: failed to serialize --json envelope: {e}"),
     }
-    println!("  ]");
-    println!("}}");
 }
 
 fn run_show(args: &[String]) -> ExitCode {
