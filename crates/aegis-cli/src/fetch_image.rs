@@ -472,13 +472,16 @@ fn parse_args(args: &[String]) -> Result<ParsedArgs, u8> {
 fn print_help() {
     println!("aegis-boot fetch-image — download + verify a pre-built aegis-boot image");
     println!();
+    let current_ver = env!("CARGO_PKG_VERSION");
     println!("USAGE:");
     println!("  aegis-boot fetch-image                               # latest release, cosign auto-verify");
-    println!("  aegis-boot fetch-image --version v0.14.0             # pin to a specific release");
+    println!(
+        "  aegis-boot fetch-image --version v{current_ver}             # pin to a specific release"
+    );
     println!("  aegis-boot fetch-image --url URL [--sha256 HEX]      # arbitrary URL");
     println!();
     println!("  --url URL       HTTPS URL of the aegis-boot.img to download (overrides --version)");
-    println!("  --version TAG   Pin to a specific release tag (e.g. v0.14.0)");
+    println!("  --version TAG   Pin to a specific release tag (e.g. v{current_ver})");
     println!("  --out PATH      Where to write the image (default: $XDG_CACHE_HOME/aegis-boot/)");
     println!("  --sha256 HEX    Required sha256; mismatch deletes the download + exits 1");
     println!("  --no-cosign     Skip the cosign keyless signature check (air-gap, offline)");

@@ -167,11 +167,11 @@ aegis-boot fetch-image — download + verify a pre-built aegis-boot image
 
 USAGE:
   aegis-boot fetch-image                               # latest release, cosign auto-verify
-  aegis-boot fetch-image --version v0.14.0             # pin to a specific release
+  aegis-boot fetch-image --version v0.14.1             # pin to a specific release
   aegis-boot fetch-image --url URL [--sha256 HEX]      # arbitrary URL
 
   --url URL       HTTPS URL of the aegis-boot.img to download (overrides --version)
-  --version TAG   Pin to a specific release tag (e.g. v0.14.0)
+  --version TAG   Pin to a specific release tag (e.g. v0.14.1)
   --out PATH      Where to write the image (default: $XDG_CACHE_HOME/aegis-boot/)
   --sha256 HEX    Required sha256; mismatch deletes the download + exits 1
   --no-cosign     Skip the cosign keyless signature check (air-gap, offline)
