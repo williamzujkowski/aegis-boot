@@ -68,7 +68,7 @@ Behind the scenes:
 1. Verifies the aegis-boot signed image's signature
 2. Refuses if `/dev/sda` isn't removable + USB
 3. `dd`s the signed shim/grub/kernel/rescue-tui chain onto partition 1
-4. Reads back the first 64 MB and re-verifies the chain's sha256
+4. Reads back the first <!-- constants:BEGIN:READBACK_WINDOW -->64 MB<!-- constants:END:READBACK_WINDOW --> and re-verifies the chain's sha256
 5. Writes an attestation receipt under `~/.local/share/aegis-boot/attestations/`
 
 After this completes the stick is bootable and the menu will show whatever curated ISOs the `init` profile included.

@@ -8,7 +8,7 @@ This document describes the on-disk layout of an aegis-boot USB stick built by [
 ┌─────────────────────────────────────────────────────────┐
 │  GPT partition table                                    │
 ├─────────────────────────────────────────────────────────┤
-│  Part 1 — ESP (FAT32, label AEGIS_ESP, ~400 MB)         │
+│  Part 1 — ESP (FAT32, label AEGIS_ESP, ~<!-- constants:BEGIN:ESP_SIZE_MB -->400 MB<!-- constants:END:ESP_SIZE_MB -->)         │
 │    /EFI/BOOT/BOOTX64.EFI   ← MS-signed shim             │
 │    /EFI/BOOT/grubx64.efi   ← Canonical-signed grub      │
 │    /EFI/BOOT/grub.cfg                                   │

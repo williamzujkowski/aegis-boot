@@ -11,6 +11,21 @@ description = "Operator CLI for aegis-boot — flash, add, list, verify"
 name = "aegis-boot"
 path = "src/main.rs"
 
+# Doc-drift tool: renders shared constants from `src/constants.rs`
+# into HTML-marker regions in the user-facing docs. Feature-gated so
+# the normal release binary does not pull the walkdir dep.
+# Phase 2 of #286.
+[[bin]]
+name = "constants-docgen"
+path = "src/bin/constants_docgen.rs"
+required-features = ["docgen"]
+
+[features]
+# Gates the `constants-docgen` bin target so the normal release
+# `aegis-boot` binary does not compile the doc-rendering code path.
+# Pure stdlib — no extra deps pulled in.
+docgen = []
+
 [dependencies]
 serde = { workspace = true }
 serde_json = "1.0"

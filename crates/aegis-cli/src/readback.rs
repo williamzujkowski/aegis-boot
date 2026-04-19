@@ -30,11 +30,10 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
-/// Default number of bytes to read back. Sized to comfortably cover
-/// the signed-chain payload (shim + grub + kernel + initramfs ≈ 50 MB)
-/// with margin, while keeping the readback under 10s on a slow USB 2.0
-/// stick (~7 MB/s).
-pub const DEFAULT_READBACK_BYTES: u64 = 64 * 1024 * 1024;
+/// Re-export the default readback window from the shared constants
+/// registry. See [`crate::constants::DEFAULT_READBACK_BYTES`] for
+/// the rationale.
+pub(crate) use crate::constants::DEFAULT_READBACK_BYTES;
 
 /// Stream up to `n_bytes` from `reader` and return the lowercased hex
 /// sha256. Stops at EOF if the reader has fewer than `n_bytes` bytes

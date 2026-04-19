@@ -60,11 +60,10 @@ pub(crate) const MANIFEST_ESP_PATH: &str = "::/aegis-boot-manifest.json";
 /// Canonical file name of the detached signature on the ESP.
 pub(crate) const MANIFEST_SIG_ESP_PATH: &str = "::/aegis-boot-manifest.json.minisig";
 
-/// Hard cap on manifest body size. The verifier refuses to parse a
-/// manifest larger than this — bounds JSON-parser attack surface in
-/// the early-boot rescue-tui code path. 64 KiB is ~100× the expected
-/// body size so legitimate future growth has room.
-pub(crate) const MAX_MANIFEST_BYTES: usize = 64 * 1024;
+/// Re-export the manifest size cap from the shared constants
+/// registry. See [`crate::constants::MAX_MANIFEST_BYTES`] for the
+/// rationale.
+pub(crate) use crate::constants::MAX_MANIFEST_BYTES;
 
 /// GPT type GUID for EFI System Partition.
 pub(crate) const TYPE_GUID_ESP: &str = "C12A7328-F81F-11D2-BA4B-00A0C93EC93B";

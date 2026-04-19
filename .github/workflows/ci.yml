@@ -168,3 +168,18 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: ./scripts/check-doc-version.sh
+
+  # Shared-constants drift-check (Phase 2 of #288 / #286).
+  # Runs the `constants-docgen` binary in --check mode. Fails if
+  # running `--write` would change any target doc. Prevents docs
+  # from drifting out of sync with numeric values they reference
+  # (ESP_SIZE_MB, readback window, manifest size cap, grub timeout).
+  constants-drift:
+    name: Doc constants drift-check
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust
+        run: rustup toolchain install 1.85.0 --profile minimal && rustup override set 1.85.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo run -p aegis-cli --bin constants-docgen --features docgen --locked -- --check

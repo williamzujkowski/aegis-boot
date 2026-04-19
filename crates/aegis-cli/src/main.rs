@@ -25,6 +25,7 @@ mod attest;
 mod catalog;
 mod compat;
 mod completions;
+mod constants;
 mod detect;
 mod direct_install;
 mod direct_install_manifest;

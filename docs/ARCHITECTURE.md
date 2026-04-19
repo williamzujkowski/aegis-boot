@@ -86,7 +86,7 @@ rescue-tui ──┬──► iso-probe ──► iso-parser   (on the stick, in
 ┌─────────────────────────────────────────────────────────┐
 │  GPT partition table                                    │
 ├─────────────────────────────────────────────────────────┤
-│  Part 1 — ESP (FAT32, label AEGIS_ESP, ~400 MB)         │  ← signed boot chain
+│  Part 1 — ESP (FAT32, label AEGIS_ESP, ~<!-- constants:BEGIN:ESP_SIZE_MB -->400 MB<!-- constants:END:ESP_SIZE_MB -->)         │  ← signed boot chain
 │    /EFI/BOOT/BOOTX64.EFI   (MS-signed shim)             │     immutable in normal use
 │    /EFI/BOOT/grubx64.efi   (Canonical-signed grub)      │
 │    /EFI/BOOT/grub.cfg                                   │

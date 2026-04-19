@@ -29,11 +29,12 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-/// ESP partition size in megabytes. Matches `scripts/mkusb.sh`'s
-/// `ESP_SIZE_MB` default. 400 MB is enough for the signed chain
-/// (shim ~1 MB, grub ~2 MB, kernel ~15 MB, initrd ~60 MB) plus
-/// comfortable headroom for future binary growth.
-pub(crate) const ESP_SIZE_MB: u64 = 400;
+/// Re-export the ESP partition size from the shared constants
+/// registry. See [`crate::constants::ESP_SIZE_MB`] for the rationale
+/// and [#286] for the single-source-of-truth pattern this implements.
+///
+/// [#286]: https://github.com/williamzujkowski/aegis-boot/issues/286
+pub(crate) use crate::constants::ESP_SIZE_MB;
 
 /// Label for the data partition. Keyed on by rescue-tui's ISO
 /// discovery + by `aegis-boot list` / `add` mount recovery. Must
@@ -136,8 +137,9 @@ pub(crate) fn format_data_partition(part2_path: &Path) -> Result<(), String> {
     run_sudo(&["mkfs.exfat", "-L", AEGIS_ISOS_LABEL, &p]).map_err(|e| format!("mkfs.exfat: {e}"))
 }
 
-/// Default grub timeout (seconds). Matches `scripts/mkusb.sh:146`.
-pub(crate) const GRUB_TIMEOUT_SECS: u32 = 3;
+/// Re-export the grub menu timeout from the shared constants
+/// registry. See [`crate::constants::GRUB_TIMEOUT_SECS`].
+pub(crate) use crate::constants::GRUB_TIMEOUT_SECS;
 
 /// Default menuentry selected on boot. 0 = tty0-primary rescue (the
 /// right choice for a local-monitor operator). Matches mkusb.sh's
