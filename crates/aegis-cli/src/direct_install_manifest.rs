@@ -390,6 +390,194 @@ pub(crate) fn compute_esp_file_hashes(
     })
 }
 
+// ---- Phase 3b: GPT + blkid device-identity readers ------------------------
+//
+// The helpers below compose the `Device` manifest field from the
+// runtime GPT + filesystem metadata. They're split into pure argv
+// builders + pure parsers + thin subprocess runners so the parser
+// logic is unit-testable without root / without a real block device.
+
+/// Build argv for `sgdisk -p` on a disk path.
+pub(crate) fn build_sgdisk_p_argv(disk_dev: &str) -> Vec<String> {
+    vec!["sgdisk".to_string(), "-p".to_string(), disk_dev.to_string()]
+}
+
+/// Build argv for `sgdisk --info=N` on a disk path.
+pub(crate) fn build_sgdisk_info_argv(disk_dev: &str, part_num: u32) -> Vec<String> {
+    vec![
+        "sgdisk".to_string(),
+        format!("--info={part_num}"),
+        disk_dev.to_string(),
+    ]
+}
+
+/// Build argv for `blkid -o value -s <key> <part_dev>`.
+pub(crate) fn build_blkid_tag_argv(part_dev: &str, tag: &str) -> Vec<String> {
+    vec![
+        "blkid".to_string(),
+        "-o".to_string(),
+        "value".to_string(),
+        "-s".to_string(),
+        tag.to_string(),
+        part_dev.to_string(),
+    ]
+}
+
+/// Parse the disk GUID line out of `sgdisk -p` stdout.
+/// Format: `Disk identifier (GUID): ABCD1234-...`
+pub(crate) fn parse_disk_guid_from_sgdisk_p(stdout: &str) -> Option<String> {
+    for line in stdout.lines() {
+        if let Some(rest) = line.strip_prefix("Disk identifier (GUID): ") {
+            return Some(rest.trim().to_string());
+        }
+    }
+    None
+}
+
+/// Count the partition rows in `sgdisk -p` stdout.
+/// The partition table is preceded by a header line
+/// `Number  Start (sector)    End (sector)  Size       Code  Name`
+/// and each subsequent non-blank line is a partition.
+pub(crate) fn parse_partition_count_from_sgdisk_p(stdout: &str) -> u32 {
+    let mut in_table = false;
+    let mut count: u32 = 0;
+    for raw in stdout.lines() {
+        let line = raw.trim_start();
+        if line.starts_with("Number") && line.contains("Start") && line.contains("End") {
+            in_table = true;
+            continue;
+        }
+        if in_table {
+            if line.is_empty() {
+                break;
+            }
+            // Partition rows start with a decimal digit (the number).
+            if line.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+/// Parse `First sector: N` and `Last sector: N` out of `sgdisk --info=X`
+/// stdout. Both fields use "N (at HUMAN)" format; we want the raw
+/// sector number.
+pub(crate) fn parse_first_last_lba_from_sgdisk_info(stdout: &str) -> Option<(u64, u64)> {
+    let mut first: Option<u64> = None;
+    let mut last: Option<u64> = None;
+    for line in stdout.lines() {
+        let l = line.trim();
+        if let Some(rest) = l.strip_prefix("First sector: ") {
+            first = parse_sector_number(rest);
+        } else if let Some(rest) = l.strip_prefix("Last sector: ") {
+            last = parse_sector_number(rest);
+        }
+    }
+    match (first, last) {
+        (Some(f), Some(lv)) => Some((f, lv)),
+        _ => None,
+    }
+}
+
+/// Pull the leading decimal out of a `sgdisk` "N (at HUMAN)" line
+/// fragment. Returns `None` if the first token isn't a u64.
+fn parse_sector_number(s: &str) -> Option<u64> {
+    s.split_whitespace().next().and_then(|t| t.parse().ok())
+}
+
+/// Read device identity off a freshly-partitioned stick and return a
+/// populated [`Device`] for the manifest writer. The caller passes
+/// the disk device path (e.g. `/dev/sda`) and the ESP + data
+/// partition device paths (`/dev/sda1`, `/dev/sda2`) — path
+/// construction varies by device kind (SCSI vs `NVMe` vs `mmcblk`)
+/// and is already handled in `flash.rs`'s partition helpers.
+///
+/// Shells out to `sudo sgdisk -p`, `sudo sgdisk --info=1`, and
+/// `sudo blkid -o value -s {PARTUUID,UUID}` four times. All are
+/// read-only operations. Fails closed on any non-zero exit.
+pub(crate) fn read_device_identity(
+    disk_dev: &Path,
+    esp_dev: &Path,
+    data_dev: &Path,
+) -> Result<Device, ManifestError> {
+    let disk_str = disk_dev.display().to_string();
+
+    let p_out = run_capture(&build_sgdisk_p_argv(&disk_str))?;
+    let disk_guid = parse_disk_guid_from_sgdisk_p(&p_out).ok_or_else(|| {
+        ManifestError::Minisign("sgdisk -p: no Disk identifier (GUID) line".to_string())
+    })?;
+    let partition_count = parse_partition_count_from_sgdisk_p(&p_out);
+
+    let info1 = run_capture(&build_sgdisk_info_argv(&disk_str, 1))?;
+    let (esp_first, esp_last) = parse_first_last_lba_from_sgdisk_info(&info1)
+        .ok_or_else(|| ManifestError::Minisign("sgdisk --info=1: missing LBAs".to_string()))?;
+
+    let esp_partuuid = run_capture(&build_blkid_tag_argv(
+        &esp_dev.display().to_string(),
+        "PARTUUID",
+    ))?
+    .trim()
+    .to_string();
+    let esp_fs_uuid = run_capture(&build_blkid_tag_argv(
+        &esp_dev.display().to_string(),
+        "UUID",
+    ))?
+    .trim()
+    .to_string();
+    let data_partuuid = run_capture(&build_blkid_tag_argv(
+        &data_dev.display().to_string(),
+        "PARTUUID",
+    ))?
+    .trim()
+    .to_string();
+    let data_fs_uuid = run_capture(&build_blkid_tag_argv(
+        &data_dev.display().to_string(),
+        "UUID",
+    ))?
+    .trim()
+    .to_string();
+
+    Ok(Device {
+        disk_guid,
+        partition_count,
+        esp: EspPartition {
+            partuuid: esp_partuuid,
+            type_guid: TYPE_GUID_ESP.to_string(),
+            fs_uuid: esp_fs_uuid,
+            first_lba: esp_first,
+            last_lba: esp_last,
+        },
+        data: DataPartition {
+            partuuid: data_partuuid,
+            type_guid: TYPE_GUID_MSFT_BASIC_DATA.to_string(),
+            fs_uuid: data_fs_uuid,
+            label: "AEGIS_ISOS".to_string(),
+        },
+    })
+}
+
+/// Run `sudo <argv>` and capture stdout on success. Used by
+/// [`read_device_identity`] for the 6 read-only GPT/blkid reads.
+fn run_capture(argv: &[String]) -> Result<String, ManifestError> {
+    use std::process::Command;
+    let out = Command::new("sudo").args(argv).output().map_err(|e| {
+        ManifestError::Minisign(format!(
+            "{} exec: {e}",
+            argv.first().map_or("?", String::as_str)
+        ))
+    })?;
+    if !out.status.success() {
+        return Err(ManifestError::Minisign(format!(
+            "{} exited {}: {}",
+            argv.first().map_or("?", String::as_str),
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
 /// Helper for the verifier (Phase 3) — returns `true` if every
 /// `esp_files` entry's path is one of the 6 canonical paths and no
 /// canonical path is missing. Callers layer the sha256 + size checks
@@ -834,5 +1022,114 @@ mod tests {
 
         let err = compute_esp_file_hashes(&sources).expect_err("should fail");
         assert!(matches!(err, ManifestError::Io { .. }), "got {err:?}");
+    }
+
+    // ---- Phase 3b: device-identity argv + parsers -------------------
+
+    #[test]
+    fn build_sgdisk_p_argv_has_three_tokens_in_order() {
+        let argv = build_sgdisk_p_argv("/dev/sda");
+        assert_eq!(argv, vec!["sgdisk", "-p", "/dev/sda"]);
+    }
+
+    #[test]
+    fn build_sgdisk_info_argv_formats_info_flag_with_partnum() {
+        let argv = build_sgdisk_info_argv("/dev/nvme0n1", 2);
+        assert_eq!(argv, vec!["sgdisk", "--info=2", "/dev/nvme0n1"]);
+    }
+
+    #[test]
+    fn build_blkid_tag_argv_emits_value_only_flags() {
+        // `-o value -s PARTUUID` is the narrow form we want: single
+        // value, no key=value pair, no device-wide dump. Drift here
+        // would either break parsing (extra noise) or widen the
+        // surface of what blkid returns.
+        let argv = build_blkid_tag_argv("/dev/sda1", "PARTUUID");
+        assert_eq!(
+            argv,
+            vec!["blkid", "-o", "value", "-s", "PARTUUID", "/dev/sda1"]
+        );
+    }
+
+    const SAMPLE_SGDISK_P_OUTPUT: &str = "Disk /dev/sda: 62521344 sectors, 29.8 GiB
+Sector size (logical): 512 bytes
+Disk identifier (GUID): 03EFA1BB-4F1F-4213-BC80-252030C43B24
+Partition table holds up to 128 entries
+Main partition table begins at sector 2 and ends at sector 33
+First usable sector is 34, last usable sector is 62521310
+Partitions will be aligned on 2048-sector boundaries
+Total free space is 0 sectors (0 bytes)
+
+Number  Start (sector)    End (sector)  Size       Code  Name
+   1            2048          821247   400.0 MiB   EF00  EFI System
+   2          821248        62521343   29.4 GiB    0700  AEGIS_ISOS
+";
+
+    #[test]
+    fn parse_disk_guid_from_sgdisk_p_extracts_guid() {
+        let got =
+            parse_disk_guid_from_sgdisk_p(SAMPLE_SGDISK_P_OUTPUT).expect("guid present in sample");
+        assert_eq!(got, "03EFA1BB-4F1F-4213-BC80-252030C43B24");
+    }
+
+    #[test]
+    fn parse_disk_guid_from_sgdisk_p_returns_none_on_missing_line() {
+        let got = parse_disk_guid_from_sgdisk_p("no identifier line here\n");
+        assert!(got.is_none());
+    }
+
+    #[test]
+    fn parse_partition_count_from_sgdisk_p_counts_rows() {
+        let n = parse_partition_count_from_sgdisk_p(SAMPLE_SGDISK_P_OUTPUT);
+        assert_eq!(n, 2);
+    }
+
+    #[test]
+    fn parse_partition_count_from_sgdisk_p_returns_zero_on_empty_table() {
+        let stdout = "Disk /dev/sda: ...\n\nNumber  Start (sector)    End (sector)  Size       Code  Name\n\n";
+        let n = parse_partition_count_from_sgdisk_p(stdout);
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn parse_partition_count_from_sgdisk_p_flags_rogue_third_partition() {
+        // If some other tooling has written a 3rd partition, the
+        // count rises — the verifier uses this to reject the stick
+        // (device.partition_count=2 in the manifest, actual=3).
+        let stdout = "Disk /dev/sda: ...\n\nNumber  Start (sector)    End (sector)  Size       Code  Name\n   1            2048          821247   400.0 MiB   EF00  EFI System\n   2          821248        62521343   29.4 GiB    0700  AEGIS_ISOS\n   3        62521344        62537727   8.0 MiB     0700  ROGUE\n";
+        let n = parse_partition_count_from_sgdisk_p(stdout);
+        assert_eq!(n, 3);
+    }
+
+    const SAMPLE_SGDISK_INFO_1: &str =
+        "Partition GUID code: C12A7328-F81F-11D2-BA4B-00A0C93EC93B (EFI System)
+Partition unique GUID: 39C73252-7FD2-4116-B92D-462CA5B8C5C0
+First sector: 2048 (at 1024.0 KiB)
+Last sector: 821247 (at 400.0 MiB)
+Partition size: 819200 sectors (400.0 MiB)
+Attribute flags: 0000000000000000
+Partition name: 'EFI System'
+";
+
+    #[test]
+    fn parse_first_last_lba_from_sgdisk_info_extracts_both() {
+        let (first, last) =
+            parse_first_last_lba_from_sgdisk_info(SAMPLE_SGDISK_INFO_1).expect("lbas present");
+        assert_eq!(first, 2048);
+        assert_eq!(last, 821_247);
+    }
+
+    #[test]
+    fn parse_first_last_lba_from_sgdisk_info_returns_none_on_partial_output() {
+        let partial = "First sector: 2048 (at 1024.0 KiB)\n";
+        let got = parse_first_last_lba_from_sgdisk_info(partial);
+        assert!(got.is_none(), "should need both lines, got {got:?}");
+    }
+
+    #[test]
+    fn parse_first_last_lba_from_sgdisk_info_returns_none_on_non_numeric() {
+        let bad = "First sector: NOT_A_NUMBER\nLast sector: ALSO_NOT\n";
+        let got = parse_first_last_lba_from_sgdisk_info(bad);
+        assert!(got.is_none());
     }
 }
