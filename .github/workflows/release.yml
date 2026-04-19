@@ -21,7 +21,11 @@ jobs:
   build-and-release:
     name: Build + sign + attach release artifacts
     runs-on: ubuntu-22.04
-    timeout-minutes: 25
+    # Bumped from 25 → 30 (#235 PR2): the mkusb.sh image build adds
+    # ~3-5 min for the signed shim+grub+kernel staging + initramfs copy
+    # + exfat data partition. 30 min gives headroom on slower-than-
+    # average GHA runners without masking a genuine hang.
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -42,8 +46,24 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
+          # Base prereqs (initramfs build): busybox-static + cpio.
+          # mkusb.sh prereqs (#235 PR2): signed shim/grub from Ubuntu's
+          # secure-boot archive + the linux-image-virtual meta-package
+          # for the kernel the image boots, plus the filesystem tooling
+          # mkusb.sh wires into the ESP + AEGIS_ISOS partitions.
+          # Kept identical to mkusb.yml's list so the two environments
+          # stay in sync — the release image is expected to boot under
+          # the same OVMF SecBoot path that mkusb.yml smoke-tests.
           sudo apt-get install -y --no-install-recommends \
-            busybox-static cpio
+            busybox-static cpio \
+            shim-signed grub-efi-amd64-signed linux-image-virtual \
+            mtools dosfstools exfatprogs gdisk
+          # Kernels ship mode 0600 on Ubuntu; mcopy needs them readable.
+          # Conservative chmod across all matching files matches
+          # mkusb.yml. Silenced errors for the case where one of the
+          # globs doesn't match (e.g. initrd absent on some kernel sets).
+          sudo chmod 0644 /boot/vmlinuz-* /boot/initrd.img-* 2>/dev/null || true
+          ls -l /boot/vmlinuz-* /boot/initrd.img-*
 
       - name: Install Rust toolchain (pinned) + musl target
         run: |
@@ -103,15 +123,39 @@ jobs:
           ( cd crates/rescue-tui && cargo cyclonedx --format json )
           cp crates/rescue-tui/rescue-tui.cdx.json out/sbom.cdx.json
 
+      # ---------- Disk image (#235 PR2) ------------------------------
+      # Build the same signed-chain disk image mkusb.yml smoke-tests,
+      # but at mkusb.sh's default size (not the 1 GB CI override) so
+      # the published artifact is the one operators would produce
+      # locally. AEGIS_ISOS ships empty — the stick is ready to `add`
+      # ISOs, not pre-populated; keeps the asset small and avoids
+      # distribution-rights questions around bundling third-party ISOs.
+      # Operators who want `init --profile panic-room` run that step
+      # post-flash against the catalog.
+      - name: Build aegis-boot.img via mkusb.sh
+        env:
+          SOURCE_DATE_EPOCH: "1700000000"
+        run: |
+          ./scripts/mkusb.sh
+          ls -lh out/aegis-boot.img out/aegis-boot.img.sha256
+          # Emit the partition table so release logs record the exact
+          # shape a verifier can reproduce (GPT, ESP EF00 + AEGIS_ISOS
+          # 0700 / exfat).
+          sgdisk -p out/aegis-boot.img
+
       # ---------- Stage + checksum --------------------------------------
       - name: Stage release artifacts + aggregate SHA256SUMS
         run: |
           cp target/release/rescue-tui out/rescue-tui
+          # aegis-boot.img sits alongside the other artifacts in
+          # SHA256SUMS so a single `cosign verify-blob` on SHA256SUMS
+          # transitively pins every asset in the release (#235).
           ( cd out && sha256sum \
               aegis-boot-x86_64-linux \
               rescue-tui \
               initramfs.cpio.gz \
               sbom.cdx.json \
+              aegis-boot.img \
               > SHA256SUMS )
           echo "--- Staged artifacts ---"
           ls -lh out/
@@ -132,8 +176,12 @@ jobs:
           COSIGN_EXPERIMENTAL: "1"
         run: |
           cd out
+          # aegis-boot.img joins the signing loop (#235 PR2). Produces
+          # aegis-boot.img.sig + aegis-boot.img.pem alongside the .img,
+          # which `aegis-boot fetch-image` auto-discovers via the same-
+          # origin convention (<URL>.sig, <URL>.pem).
           for f in aegis-boot-x86_64-linux rescue-tui initramfs.cpio.gz \
-                   sbom.cdx.json SHA256SUMS; do
+                   sbom.cdx.json aegis-boot.img SHA256SUMS; do
             cosign sign-blob --yes \
               --output-signature  "${f}.sig" \
               --output-certificate "${f}.pem" \
@@ -186,6 +234,7 @@ jobs:
               --notes-file "${{ steps.notes.outputs.path }}"
           fi
           # --clobber overwrites if a re-run uploads the same asset name.
+          # aegis-boot.img + .sha256 + .sig + .pem added in #235 PR2.
           gh release upload "$tag" --clobber \
             out/aegis-boot-x86_64-linux \
             out/aegis-boot-x86_64-linux.sig \
@@ -200,6 +249,10 @@ jobs:
             out/sbom.cdx.json \
             out/sbom.cdx.json.sig \
             out/sbom.cdx.json.pem \
+            out/aegis-boot.img \
+            out/aegis-boot.img.sha256 \
+            out/aegis-boot.img.sig \
+            out/aegis-boot.img.pem \
             out/SHA256SUMS \
             out/SHA256SUMS.sig \
             out/SHA256SUMS.pem
