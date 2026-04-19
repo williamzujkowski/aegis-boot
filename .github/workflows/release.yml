@@ -124,17 +124,31 @@ jobs:
           cp crates/rescue-tui/rescue-tui.cdx.json out/sbom.cdx.json
 
       # ---------- Disk image (#235 PR2) ------------------------------
-      # Build the same signed-chain disk image mkusb.yml smoke-tests,
-      # but at mkusb.sh's default size (not the 1 GB CI override) so
-      # the published artifact is the one operators would produce
-      # locally. AEGIS_ISOS ships empty — the stick is ready to `add`
-      # ISOs, not pre-populated; keeps the asset small and avoids
-      # distribution-rights questions around bundling third-party ISOs.
-      # Operators who want `init --profile panic-room` run that step
-      # post-flash against the catalog.
+      # Build the signed-chain disk image as small as we can get away
+      # with. The .img contains GPT + ESP (400 MB signed chain: shim
+      # + grub + kernel + initrd + grub.cfg — real content ~56 MB,
+      # rest is headroom for future kernel growth) + an empty
+      # AEGIS_ISOS data partition. ISOs go onto AEGIS_ISOS POST-flash,
+      # and `flash` already auto-expands AEGIS_ISOS to fill any-size
+      # stick (closes #242) — so shipping a larger empty data
+      # partition in the release .img wastes download bandwidth for
+      # no operator-visible benefit.
+      #
+      # DISK_SIZE_MB=512 → AEGIS_ISOS ~108 MB (mkusb.sh floors at
+      # ESP_SIZE_MB + 32), total .img ~512 MB — ~4x smaller than
+      # the 1900 MB we'd need to stay under GitHub's 2 GiB asset cap
+      # (v0.14.0's first tag hit exactly 2 GiB and the upload
+      # failed with HTTP 422). Fetch time improves commensurately.
+      #
+      # AEGIS_ISOS ships empty — the stick is ready to `add` ISOs,
+      # not pre-populated; avoids distribution-rights questions
+      # around bundling third-party ISOs. Operators who want
+      # `init --profile panic-room` run that step post-flash
+      # against the catalog.
       - name: Build aegis-boot.img via mkusb.sh
         env:
           SOURCE_DATE_EPOCH: "1700000000"
+          DISK_SIZE_MB: "512"
         run: |
           ./scripts/mkusb.sh
           ls -lh out/aegis-boot.img out/aegis-boot.img.sha256

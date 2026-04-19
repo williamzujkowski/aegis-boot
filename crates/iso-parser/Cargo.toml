@@ -1,6 +1,6 @@
 [package]
 name = "iso-parser"
-version = "0.14.0"
+version = "0.14.1"
 edition.workspace = true
 rust-version.workspace = true
 license = "MIT OR Apache-2.0"

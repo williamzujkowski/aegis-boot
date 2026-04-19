@@ -37,7 +37,7 @@ Option B (Homebrew) auto-installs the Brew-tracked runtime deps (`curl`, `gnupg`
 Sanity check:
 
 ```bash
-aegis-boot --version       # → aegis-boot v0.13.0
+aegis-boot --version       # → aegis-boot v0.14.1
 aegis-boot doctor          # 0–100 health score for host + stick
 ```
 

@@ -4,6 +4,20 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 
 ## [Unreleased]
 
+## [0.14.1] — 2026-04-19
+
+### Bug fixes (release-workflow)
+
+- **`release.yml` hits GitHub's 2 GiB asset upload cap + ships a much smaller .img** — v0.14.0's publish step failed at the final asset upload with `HTTP 422 Validation Failed` on `aegis-boot.img`. Root cause: `mkusb.sh`'s default `DISK_SIZE_MB=2048` produces a file exactly at GitHub's 2 GiB release-asset cap (2,147,483,648 bytes). The build + cosign-sign steps succeeded, so the release gained orphaned `aegis-boot.img.sig` + `aegis-boot.img.sha256` assets whose target image wasn't uploaded. Fix: set `DISK_SIZE_MB=512` in `release.yml`. The .img only needs to carry the ESP's signed chain (~56 MB actual payload, 400 MB partition for headroom) + an empty AEGIS_ISOS data partition; operators add ISOs post-flash, and `flash` auto-expands AEGIS_ISOS to fill any-size stick (#242). The previous 2048 MB default shipped ~1644 MB of empty data partition that operators never saw — 512 MB is ~4× smaller, ~4× faster to fetch, same UX.
+
+### Documentation
+
+- **Doc version refs rolled to 0.14.1** — `README.md`, `docs/INSTALL.md`, `docs/CLI.md`, `man/aegis-boot.1`. Motivates the doc-automation tracking issue ([#286](https://github.com/williamzujkowski/aegis-boot/issues/286)) for workspace-level version single-source + CI drift-check.
+
+### Release workflow
+
+- v0.14.0 is left in place on GitHub as a partial release (all non-`.img` assets valid + signed); operators should use v0.14.1.
+
 ## [0.14.0] — 2026-04-19
 
 ### Bug fixes (operator-reported)
