@@ -2,6 +2,8 @@
 
 The `aegis-boot` binary is the operator-facing front end. It wraps the build/flash/inventory operations that previously required running shell scripts and `dd` by hand.
 
+> **Looking for the authoritative flag list?** See [`reference/CLI_SYNOPSIS.md`](./reference/CLI_SYNOPSIS.md) — an auto-generated file that captures the exact `--help` output of every subcommand. It's drift-checked against the binary in CI (Phase 3b of [#286](https://github.com/williamzujkowski/aegis-boot/issues/286)). This document is the prose companion: examples, exit-code meanings, and "why this flag exists" context that the `--help` output doesn't cover.
+
 ```
 aegis-boot — Signed boot. Any ISO. Your keys.
 
