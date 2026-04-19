@@ -184,11 +184,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo run -p aegis-cli --bin constants-docgen --features docgen --locked -- --check
 
-  # CLI subcommand drift-check (Phase 3a of #289 / #286).
-  # Validates that every subcommand in the dispatch table has a
-  # corresponding section in docs/CLI.md and a `.TP` entry in
-  # man/aegis-boot.1.in. Prevents the class of drift that hid
-  # `fetch-image` from user-facing docs on the previous release.
+  # CLI subcommand + synopsis drift-check (Phase 3a + 3b of #289 / #286).
+  # Phase 3a: validates every dispatch-table subcommand has a
+  # `## `aegis-boot X`` heading in docs/CLI.md and a `.TP` entry in
+  # man/aegis-boot.1.in.
+  # Phase 3b: additionally rebuilds docs/reference/CLI_SYNOPSIS.md by
+  # capturing `aegis-boot <sub> --help` for every subcommand and
+  # diffing against the committed copy. Catches help-text drift that
+  # would otherwise silently diverge from the CLI's actual output.
   cli-drift:
     name: Doc CLI subcommand drift-check
     runs-on: ubuntu-22.04
@@ -197,4 +200,7 @@ jobs:
       - name: Install Rust
         run: rustup toolchain install 1.85.0 --profile minimal && rustup override set 1.85.0
       - uses: Swatinem/rust-cache@v2
-      - run: cargo run -p aegis-cli --bin cli-docgen --features docgen --locked
+      - name: Build aegis-boot binary
+        run: cargo build -p aegis-cli --release --locked
+      - name: Check CLI doc drift
+        run: cargo run -p aegis-cli --bin cli-docgen --features docgen --locked -- --check
