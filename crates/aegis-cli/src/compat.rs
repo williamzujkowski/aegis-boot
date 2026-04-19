@@ -266,24 +266,20 @@ fn run_submit(json_mode: bool) -> Result<(), u8> {
             tool_version,
         );
         if json_mode {
-            use crate::doctor::json_escape;
-            println!("{{");
-            println!("  \"schema_version\": 1,");
-            println!("  \"tool\": \"aegis-boot\",");
-            println!("  \"submit_url\": \"{}\",", json_escape(&url));
-            println!(
-                "  \"vendor\": \"{}\",",
-                json_escape(vendor.as_deref().unwrap_or(""))
-            );
-            println!(
-                "  \"model\": \"{}\",",
-                json_escape(product.as_deref().unwrap_or(""))
-            );
-            println!(
-                "  \"firmware\": \"{}\"",
-                json_escape(bios.as_deref().unwrap_or(""))
-            );
-            println!("}}");
+            let report = aegis_manifest::CompatSubmitReport {
+                schema_version: aegis_manifest::COMPAT_SUBMIT_SCHEMA_VERSION,
+                tool: "aegis-boot".to_string(),
+                submit_url: url.clone(),
+                vendor: vendor.clone().unwrap_or_default(),
+                model: product.clone().unwrap_or_default(),
+                firmware: bios.clone().unwrap_or_default(),
+            };
+            match serde_json::to_string_pretty(&report) {
+                Ok(body) => println!("{body}"),
+                Err(e) => {
+                    eprintln!("aegis-boot compat --submit: failed to serialize envelope: {e}");
+                }
+            }
         } else {
             println!("aegis-boot compat — draft hardware-report submission");
             println!();
@@ -375,14 +371,16 @@ pub(crate) fn build_hardware_report_url(
 /// distinguish it from a normal miss (1) — an auto-resolve failure is
 /// a host-environment issue, not a DB-coverage issue.
 fn report_my_machine_miss(json_mode: bool) -> Result<(), u8> {
-    use crate::doctor::json_escape;
     if json_mode {
-        println!(
-            "{{ \"schema_version\": 1, \"error\": \"{}\" }}",
-            json_escape(
-                "--my-machine: DMI fields unavailable (non-Linux host or placeholder values)"
-            )
+        let report = aegis_manifest::CompatReport::MyMachineMiss(
+            aegis_manifest::CompatMyMachineMissReport {
+                schema_version: aegis_manifest::COMPAT_SCHEMA_VERSION,
+                error:
+                    "--my-machine: DMI fields unavailable (non-Linux host or placeholder values)"
+                        .to_string(),
+            },
         );
+        emit_compat_report(&report);
     } else {
         eprintln!("aegis-boot compat --my-machine: could not determine machine identity from DMI.");
         eprintln!(
@@ -468,78 +466,73 @@ fn print_miss(query: &str) {
     eprintln!("Run 'aegis-boot compat' to see what's currently recorded.");
 }
 
+/// `aegis-boot compat --json [slug]` — emit lookup results via the
+/// typed [`aegis_manifest::CompatReport`] envelope.
+///
+/// Phase 4b-7 of #286 migrated this from hand-rolled `println!()`
+/// chains + manual comma handling. Wire contract pinned via
+/// `docs/reference/schemas/aegis-boot-compat.schema.json`.
 fn run_json(query: Option<&str>) -> Result<(), u8> {
-    use crate::doctor::json_escape;
     match query {
         None => {
-            println!("{{");
-            println!("  \"schema_version\": 1,");
-            println!("  \"tool_version\": \"{}\",", env!("CARGO_PKG_VERSION"));
-            println!("  \"report_url\": \"{}\",", json_escape(REPORT_URL));
-            println!("  \"count\": {},", COMPAT_DB.len());
-            println!("  \"entries\": [");
-            let last = COMPAT_DB.len().saturating_sub(1);
-            for (i, entry) in COMPAT_DB.iter().enumerate() {
-                let comma = if i == last { "" } else { "," };
-                emit_entry_json(entry, "    ", comma);
-            }
-            println!("  ]");
-            println!("}}");
+            let report =
+                aegis_manifest::CompatReport::Catalog(aegis_manifest::CompatCatalogReport {
+                    schema_version: aegis_manifest::COMPAT_SCHEMA_VERSION,
+                    tool_version: env!("CARGO_PKG_VERSION").to_string(),
+                    report_url: REPORT_URL.to_string(),
+                    count: u32::try_from(COMPAT_DB.len()).unwrap_or(u32::MAX),
+                    entries: COMPAT_DB.iter().map(entry_to_wire).collect(),
+                });
+            emit_compat_report(&report);
             Ok(())
         }
         Some(q) => {
             if let Some(entry) = find_entry(q) {
-                println!("{{");
-                println!("  \"schema_version\": 1,");
-                println!("  \"tool_version\": \"{}\",", env!("CARGO_PKG_VERSION"));
-                println!("  \"report_url\": \"{}\",", json_escape(REPORT_URL));
-                println!("  \"entry\":");
-                emit_entry_json(entry, "  ", "");
-                println!("}}");
+                let report =
+                    aegis_manifest::CompatReport::Single(aegis_manifest::CompatSingleReport {
+                        schema_version: aegis_manifest::COMPAT_SCHEMA_VERSION,
+                        tool_version: env!("CARGO_PKG_VERSION").to_string(),
+                        report_url: REPORT_URL.to_string(),
+                        entry: entry_to_wire(entry),
+                    });
+                emit_compat_report(&report);
                 Ok(())
             } else {
-                println!(
-                    "{{ \"schema_version\": 1, \"report_url\": \"{}\", \"error\": \"{}\" }}",
-                    json_escape(REPORT_URL),
-                    json_escape(&format!("no platform matching '{q}'"))
-                );
+                let report = aegis_manifest::CompatReport::Miss(aegis_manifest::CompatMissReport {
+                    schema_version: aegis_manifest::COMPAT_SCHEMA_VERSION,
+                    report_url: REPORT_URL.to_string(),
+                    error: format!("no platform matching '{q}'"),
+                });
+                emit_compat_report(&report);
                 Err(1)
             }
         }
     }
 }
 
-fn emit_entry_json(entry: &CompatEntry, indent: &str, comma: &str) {
-    use crate::doctor::json_escape;
-    println!("{indent}{{");
-    println!("{indent}  \"vendor\": \"{}\",", json_escape(entry.vendor));
-    println!("{indent}  \"model\": \"{}\",", json_escape(entry.model));
-    println!(
-        "{indent}  \"firmware\": \"{}\",",
-        json_escape(entry.firmware)
-    );
-    println!(
-        "{indent}  \"sb_state\": \"{}\",",
-        json_escape(entry.sb_state)
-    );
-    println!(
-        "{indent}  \"boot_key\": \"{}\",",
-        json_escape(entry.boot_key)
-    );
-    println!("{indent}  \"level\": \"{}\",", entry.level.label());
-    println!(
-        "{indent}  \"reported_by\": \"{}\",",
-        json_escape(entry.reported_by)
-    );
-    println!("{indent}  \"date\": \"{}\",", json_escape(entry.date));
-    println!("{indent}  \"notes\": [");
-    let last = entry.notes.len().saturating_sub(1);
-    for (i, note) in entry.notes.iter().enumerate() {
-        let note_comma = if i == last { "" } else { "," };
-        println!("{indent}    \"{}\"{note_comma}", json_escape(note));
+fn emit_compat_report(report: &aegis_manifest::CompatReport) {
+    match serde_json::to_string_pretty(report) {
+        Ok(body) => println!("{body}"),
+        Err(e) => eprintln!("aegis-boot compat: failed to serialize --json envelope: {e}"),
     }
-    println!("{indent}  ]");
-    println!("{indent}}}{comma}");
+}
+
+/// Map the in-binary `CompatEntry` struct onto the wire-format
+/// [`aegis_manifest::CompatEntry`]. Local uses `&'static str` + a
+/// `CompatLevel` enum; wire is `String` fields with a stable
+/// string `level` label.
+fn entry_to_wire(entry: &CompatEntry) -> aegis_manifest::CompatEntry {
+    aegis_manifest::CompatEntry {
+        vendor: entry.vendor.to_string(),
+        model: entry.model.to_string(),
+        firmware: entry.firmware.to_string(),
+        sb_state: entry.sb_state.to_string(),
+        boot_key: entry.boot_key.to_string(),
+        level: entry.level.label().to_string(),
+        reported_by: entry.reported_by.to_string(),
+        date: entry.date.to_string(),
+        notes: entry.notes.iter().map(|s| (*s).to_string()).collect(),
+    }
 }
 
 /// Case-insensitive substring match against vendor + model. A query

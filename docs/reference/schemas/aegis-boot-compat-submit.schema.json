@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CompatSubmitReport",
+  "description": "Envelope emitted by `aegis-boot compat --submit --json` — the draft-a-hardware-report flow. Collects DMI identity + builds a pre-filled GitHub issue URL the operator can open to file a report. Independent schema from [`CompatReport`] because the consumer contracts diverge: lookup drives scripted decisions, submit drives an operator workflow.",
+  "type": "object",
+  "required": [
+    "firmware",
+    "model",
+    "schema_version",
+    "submit_url",
+    "tool",
+    "vendor"
+  ],
+  "properties": {
+    "firmware": {
+      "description": "DMI BIOS label (vendor + version + date). Empty if unavailable.",
+      "type": "string"
+    },
+    "model": {
+      "description": "DMI product label (name + version). Empty if unavailable.",
+      "type": "string"
+    },
+    "schema_version": {
+      "description": "Wire-format version. See [`COMPAT_SUBMIT_SCHEMA_VERSION`].",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0.0
+    },
+    "submit_url": {
+      "description": "Pre-filled GitHub issue URL with `vendor`, `model`, `firmware`, and `aegis-version` query-string parameters set from DMI.",
+      "type": "string"
+    },
+    "tool": {
+      "description": "Always `\"aegis-boot\"`. Deliberately named `tool` (not `tool_version`) to match the existing wire format; this envelope carries the draft template, not a version pin.",
+      "type": "string"
+    },
+    "vendor": {
+      "description": "DMI `sys_vendor`. Empty string if unavailable.",
+      "type": "string"
+    }
+  }
+}

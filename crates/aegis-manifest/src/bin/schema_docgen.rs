@@ -28,6 +28,15 @@
 //! * [`aegis_manifest::RecommendReport`] →
 //!   `docs/reference/schemas/aegis-boot-recommend.schema.json`
 //!   (Phase 4b-6 of [#286])
+//! * [`aegis_manifest::CompatReport`] →
+//!   `docs/reference/schemas/aegis-boot-compat.schema.json`
+//!   (Phase 4b-7 of [#286])
+//! * [`aegis_manifest::CompatSubmitReport`] →
+//!   `docs/reference/schemas/aegis-boot-compat-submit.schema.json`
+//!   (Phase 4b-7 of [#286])
+//! * [`aegis_manifest::RecommendReport`] →
+//!   `docs/reference/schemas/aegis-boot-recommend.schema.json`
+//!   (Phase 4b-6 of [#286])
 //!
 //! CI's `manifest-schema-drift` job runs this in `--check` mode on
 //! every PR. Any time a field is added, removed, or retyped on any
@@ -54,8 +63,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use aegis_manifest::{
-    AttestListReport, Attestation, ListReport, Manifest, RecommendReport, UpdateReport,
-    VerifyReport, Version,
+    AttestListReport, Attestation, CompatReport, CompatSubmitReport, ListReport, Manifest,
+    RecommendReport, UpdateReport, VerifyReport, Version,
 };
 use schemars::schema_for;
 
@@ -109,6 +118,16 @@ fn targets() -> Vec<Target> {
             relative_path: "docs/reference/schemas/aegis-boot-recommend.schema.json",
             render: render_recommend_schema,
         },
+        Target {
+            name: "CompatReport",
+            relative_path: "docs/reference/schemas/aegis-boot-compat.schema.json",
+            render: render_compat_schema,
+        },
+        Target {
+            name: "CompatSubmitReport",
+            relative_path: "docs/reference/schemas/aegis-boot-compat-submit.schema.json",
+            render: render_compat_submit_schema,
+        },
     ]
 }
 
@@ -142,6 +161,14 @@ fn render_update_schema() -> Result<String, String> {
 
 fn render_recommend_schema() -> Result<String, String> {
     render_pretty(&schema_for!(RecommendReport))
+}
+
+fn render_compat_schema() -> Result<String, String> {
+    render_pretty(&schema_for!(CompatReport))
+}
+
+fn render_compat_submit_schema() -> Result<String, String> {
+    render_pretty(&schema_for!(CompatSubmitReport))
 }
 
 /// Serialize a JSON Schema as pretty-printed JSON with a trailing
