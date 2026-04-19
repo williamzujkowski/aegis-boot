@@ -49,6 +49,22 @@ We follow semver pre-1.0 loosely:
 
 Each release gets a CHANGELOG section, a tag, and a GitHub release. Build artifacts are uploaded by hand for now (CI release workflow paused; tracked in [#51](https://github.com/williamzujkowski/aegis-boot/issues/51)).
 
+### Drafting release notes
+
+At release-cut time, run the git-cliff drafting assist to produce a first-cut changelog entry from conventional-commit subjects:
+
+```bash
+# Draft "what's in [Unreleased]" against last tag → HEAD:
+./scripts/draft-release-notes.sh
+
+# Draft a specific new-version heading:
+./scripts/draft-release-notes.sh v0.15.0
+```
+
+The output is advisory, not authoritative — promote it into `CHANGELOG.md` by (1) re-wording bullets into aegis-boot's prose style (commit subjects say "what"; the CHANGELOG needs the "why" + user-visible impact), (2) dropping scaffolding PRs, and (3) promoting critical bug fixes out of their section into the lead. See the existing versioned entries in `CHANGELOG.md` for the target tone.
+
+The draft script needs `git-cliff` locally (`cargo install --locked git-cliff@2.6.1`). It is intentionally not wired into CI — editorial control stays with the maintainer. Phase 7 of [#286](https://github.com/williamzujkowski/aegis-boot/issues/286).
+
 ## Security issues
 
 **Do not file public issues for vulnerabilities.** See [SECURITY.md](./SECURITY.md) for the private reporting path.
