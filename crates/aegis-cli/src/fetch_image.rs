@@ -59,11 +59,34 @@ fn try_run(args: &[String]) -> Result<PathBuf, u8> {
         print_help();
         return Err(0);
     }
-    let url = parsed.url.ok_or_else(|| {
-        eprintln!("aegis-boot fetch-image: --url is required");
-        eprintln!("Run 'aegis-boot fetch-image --help' for usage.");
-        2
-    })?;
+    // URL resolution precedence (#235 PR3, "most automatic"):
+    //   1. Explicit --url  → use it verbatim (warns if --version also set)
+    //   2. --version TAG   → expand to the tag-pinned download URL
+    //   3. neither         → use the `latest` alias on aegis-boot's
+    //                        release page (any published version)
+    //
+    // Cosign identity verification (#267) re-anchors trust on the
+    // signing workflow regardless of which URL form was picked — the
+    // regex allows any tag ref on release.yml, so `latest`'s redirect
+    // to a specific tag doesn't affect verification.
+    let url = match (parsed.url, parsed.version) {
+        (Some(explicit), version) => {
+            if version.is_some() {
+                eprintln!(
+                    "aegis-boot fetch-image: --url supplied — ignoring --version \
+                     (explicit overrides inferred)."
+                );
+            }
+            explicit
+        }
+        (None, Some(tag)) => release_download_url_for_tag(&tag)?,
+        (None, None) => {
+            eprintln!(
+                "aegis-boot fetch-image: no --url or --version supplied — using latest release"
+            );
+            DEFAULT_RELEASE_URL.to_string()
+        }
+    };
 
     if !is_safe_https_url(&url) {
         eprintln!(
@@ -302,11 +325,18 @@ fn sibling_with_suffix(image: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(s)
 }
 
-/// Parsed argv. All options optional; --url is required at runtime.
+/// Parsed argv. All options optional; if neither `--url` nor
+/// `--version` is supplied, the `latest` release alias is used
+/// (#235 PR3, "most automatic" contract).
 #[derive(Debug)]
 struct ParsedArgs {
     help_requested: bool,
     url: Option<String>,
+    /// Release tag to pin the download to (e.g. `v0.14.0`). Mutually
+    /// exclusive with `--url`. When both are supplied, `--url` wins
+    /// (explicit over inferred) and a warning surfaces so the
+    /// operator notices.
+    version: Option<String>,
     out: Option<PathBuf>,
     expected_sha256: Option<String>,
     /// When true, skip the cosign auto-verification step entirely.
@@ -315,10 +345,51 @@ struct ParsedArgs {
     cosign_disabled: bool,
 }
 
+/// Default release URL used when neither `--url` nor `--version` is
+/// supplied. Resolves via GitHub's `latest` alias so operators never
+/// have to pin a version manually for the typical fetch case.
+///
+/// Cosign identity verification (#267) is what anchors trust — the
+/// hardcoded identity regex allows any tag ref on aegis-boot's
+/// release workflow, so the URL redirect from `latest` to the actual
+/// tag doesn't affect verification.
+const DEFAULT_RELEASE_URL: &str =
+    "https://github.com/williamzujkowski/aegis-boot/releases/latest/download/aegis-boot.img";
+
+/// Expand a release tag (e.g. `v0.14.0`) into the tag-pinned download
+/// URL on aegis-boot's GitHub releases. Defensive against shell-meta
+/// / path-traversal in the tag argument — refuses anything that isn't
+/// `[A-Za-z0-9._-]{1..32}`. Matches GitHub's own tag shape for our
+/// releases (`v` + semver).
+fn release_download_url_for_tag(tag: &str) -> Result<String, u8> {
+    if !is_valid_release_tag(tag) {
+        eprintln!(
+            "aegis-boot fetch-image: --version {tag:?} is not a valid release tag \
+             (expected 1-32 chars of [A-Za-z0-9._-])."
+        );
+        return Err(2);
+    }
+    Ok(format!(
+        "https://github.com/williamzujkowski/aegis-boot/releases/download/{tag}/aegis-boot.img"
+    ))
+}
+
+/// Accept a tag shape compatible with aegis-boot's release tags
+/// (`v0.14.0`, `v1.0.0-rc1`) without letting `../..` or shell-meta
+/// sneak in.
+fn is_valid_release_tag(tag: &str) -> bool {
+    !tag.is_empty()
+        && tag.len() <= 32
+        && tag
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+}
+
 fn parse_args(args: &[String]) -> Result<ParsedArgs, u8> {
     let mut p = ParsedArgs {
         help_requested: false,
         url: None,
+        version: None,
         out: None,
         expected_sha256: None,
         cosign_disabled: false,
@@ -362,6 +433,19 @@ fn parse_args(args: &[String]) -> Result<ParsedArgs, u8> {
                 p.expected_sha256 = Some(arg["--sha256=".len()..].to_string());
             }
             "--no-cosign" => p.cosign_disabled = true,
+            "--version" => {
+                i += 1;
+                let Some(v) = args.get(i) else {
+                    eprintln!(
+                        "aegis-boot fetch-image: --version requires a release tag (e.g. v0.14.0)"
+                    );
+                    return Err(2);
+                };
+                p.version = Some(v.clone());
+            }
+            arg if arg.starts_with("--version=") => {
+                p.version = Some(arg["--version=".len()..].to_string());
+            }
             arg if arg.starts_with("--") => {
                 eprintln!("aegis-boot fetch-image: unknown option '{arg}'");
                 return Err(2);
@@ -389,9 +473,12 @@ fn print_help() {
     println!("aegis-boot fetch-image — download + verify a pre-built aegis-boot image");
     println!();
     println!("USAGE:");
-    println!("  aegis-boot fetch-image --url URL [--out PATH] [--sha256 HEX] [--no-cosign]");
+    println!("  aegis-boot fetch-image                               # latest release, cosign auto-verify");
+    println!("  aegis-boot fetch-image --version v0.14.0             # pin to a specific release");
+    println!("  aegis-boot fetch-image --url URL [--sha256 HEX]      # arbitrary URL");
     println!();
-    println!("  --url URL       HTTPS URL of the aegis-boot.img to download (required)");
+    println!("  --url URL       HTTPS URL of the aegis-boot.img to download (overrides --version)");
+    println!("  --version TAG   Pin to a specific release tag (e.g. v0.14.0)");
     println!("  --out PATH      Where to write the image (default: $XDG_CACHE_HOME/aegis-boot/)");
     println!("  --sha256 HEX    Required sha256; mismatch deletes the download + exits 1");
     println!("  --no-cosign     Skip the cosign keyless signature check (air-gap, offline)");
@@ -403,8 +490,7 @@ fn print_help() {
     println!("           identity. Graceful-degrades when signatures aren't published.");
     println!();
     println!("Composes with `flash`:");
-    println!("  img=$(aegis-boot fetch-image --url ... --sha256 ...) && \\");
-    println!("    aegis-boot flash --image \"$img\" /dev/sdX");
+    println!("  img=$(aegis-boot fetch-image) && aegis-boot flash --image \"$img\" /dev/sdX");
 }
 
 /// Reject anything that isn't a plain `https://` URL. We don't accept
@@ -560,11 +646,14 @@ mod tests {
     }
 
     #[test]
-    fn parse_args_requires_url_at_runtime_not_at_parse() {
-        // parse_args succeeds without --url; try_run is the gate.
+    fn parse_args_succeeds_with_no_args() {
+        // parse_args is tolerant of empty args; try_run auto-resolves
+        // to DEFAULT_RELEASE_URL (#235 PR3) when both --url and
+        // --version are absent.
         let args: Vec<String> = vec![];
         let p = parse_args(&args).unwrap();
         assert!(p.url.is_none());
+        assert!(p.version.is_none());
     }
 
     #[test]
@@ -699,5 +788,75 @@ mod tests {
             COSIGN_OIDC_ISSUER,
             "https://token.actions.githubusercontent.com"
         );
+    }
+
+    // ---- #235 PR3: auto-URL resolution ---------------------------------
+
+    #[test]
+    fn default_release_url_anchors_on_latest_alias() {
+        // The default URL is what `aegis-boot fetch-image` (no args)
+        // resolves to. GitHub's `latest` alias redirects to the most
+        // recent release — cosign verification still works because
+        // the hardcoded identity regex accepts any tag ref.
+        assert!(DEFAULT_RELEASE_URL.starts_with("https://github.com/williamzujkowski/aegis-boot/"));
+        assert!(DEFAULT_RELEASE_URL.contains("/releases/latest/download/"));
+        assert!(DEFAULT_RELEASE_URL.ends_with("/aegis-boot.img"));
+        // Safety gate must pass on the default URL or the whole
+        // auto-resolution path is broken.
+        assert!(is_safe_https_url(DEFAULT_RELEASE_URL));
+    }
+
+    #[test]
+    fn release_download_url_for_tag_builds_tag_pinned_url() {
+        let url = release_download_url_for_tag("v0.14.0").unwrap();
+        assert_eq!(
+            url,
+            "https://github.com/williamzujkowski/aegis-boot/releases/download/v0.14.0/aegis-boot.img"
+        );
+        assert!(is_safe_https_url(&url));
+    }
+
+    #[test]
+    fn release_download_url_for_tag_accepts_prerelease_shape() {
+        let url = release_download_url_for_tag("v1.0.0-rc1").unwrap();
+        assert!(url.contains("/v1.0.0-rc1/"));
+        assert!(is_safe_https_url(&url));
+    }
+
+    #[test]
+    fn release_download_url_for_tag_rejects_shell_meta() {
+        // Defensive: refuse anything that could inject into the URL
+        // path. The operator's `--version` input flows directly into
+        // the URL, so a tag like `../../..` would be a path-traversal
+        // primitive on a permissive URL parser.
+        assert!(release_download_url_for_tag("").is_err());
+        assert!(release_download_url_for_tag("../evil").is_err());
+        assert!(release_download_url_for_tag("v0.14.0;rm -rf /").is_err());
+        assert!(release_download_url_for_tag("v0.14.0/").is_err());
+        assert!(release_download_url_for_tag("v 0.14.0").is_err());
+        assert!(release_download_url_for_tag(&"x".repeat(33)).is_err());
+    }
+
+    #[test]
+    fn is_valid_release_tag_accepts_canonical_shapes() {
+        assert!(is_valid_release_tag("v0.14.0"));
+        assert!(is_valid_release_tag("v1.0.0-rc1"));
+        assert!(is_valid_release_tag("v1.0.0-beta.2"));
+        assert!(is_valid_release_tag("main"));
+        assert!(is_valid_release_tag("2026-04-19_snapshot"));
+    }
+
+    #[test]
+    fn parse_args_accepts_version_flag_both_forms() {
+        let p = parse_args(&["--version".to_string(), "v0.14.0".to_string()]).unwrap();
+        assert_eq!(p.version.as_deref(), Some("v0.14.0"));
+        let p = parse_args(&["--version=v0.14.0".to_string()]).unwrap();
+        assert_eq!(p.version.as_deref(), Some("v0.14.0"));
+    }
+
+    #[test]
+    fn parse_args_rejects_dangling_version_flag() {
+        let err = parse_args(&["--version".to_string()]).unwrap_err();
+        assert_eq!(err, 2);
     }
 }
