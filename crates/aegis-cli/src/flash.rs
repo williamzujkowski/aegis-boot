@@ -592,9 +592,20 @@ fn build_image_via_mkusb(drive: &Drive) -> Result<(PathBuf, u64), String> {
 
     #[cfg(target_os = "linux")]
     {
-        let repo_root =
-            find_repo_root().ok_or("cannot find aegis-boot repo root (no Cargo.toml)")?;
+        // Resolve the dev-checkout's mkusb.sh. If the operator is
+        // running a released binary (no repo tree nearby), surface a
+        // classified `NoImageSource` error pointing them at the three
+        // actionable alternatives: pass `--image`, `fetch-image` from
+        // a release, or clone + build from source. #282 — regression
+        // from not having the image-build path fall back to
+        // fetch-image when no source tree is reachable.
+        let Some(repo_root) = find_repo_root() else {
+            return Err(no_image_source_error(drive));
+        };
         let mkusb = repo_root.join("scripts/mkusb.sh");
+        if !mkusb.is_file() {
+            return Err(no_image_source_error(drive));
+        }
         let out_dir = repo_root.join("out");
 
         println!();
@@ -669,6 +680,24 @@ fn raw_disk_path(dev: &Path) -> PathBuf {
     } else {
         dev.to_path_buf()
     }
+}
+
+/// Render the `NoImageSource` error message string that `classify()`
+/// picks up (the classifier keys on the literal "no image source
+/// available" prefix). Carries the device path through the message
+/// so the `suggestions()` renderer can copy-paste it into the three
+/// alternatives. Pure function — no fs i/o.
+///
+/// Linux-only because its sole caller is `build_image_via_mkusb`,
+/// which is behind `#[cfg(target_os = "linux")]` — the macOS /
+/// Windows cross-compile check otherwise fails on `-D warnings` with
+/// "function is never used".
+#[cfg(target_os = "linux")]
+fn no_image_source_error(drive: &Drive) -> String {
+    format!(
+        "no image source available (not in a repo checkout and --image not supplied) for device {}",
+        drive.dev.display()
+    )
 }
 
 #[cfg(target_os = "linux")]
@@ -1006,6 +1035,12 @@ pub(crate) enum FlashError {
     /// always a silent short-write on a failing / counterfeit stick.
     #[error("short readback: {0}")]
     ShortReadback(String),
+    /// Flash was invoked on an installed binary (no repo tree
+    /// reachable) without `--image`, so there's no source for the
+    /// image. #282. Carries the target device path so suggestions
+    /// can be rendered with the exact `/dev/sdX` interpolation.
+    #[error("no image source available (not in a repo checkout and --image not supplied) for device {0}")]
+    NoImageSource(String),
     /// Any other internal failure (stat, sync, attestation write, ...).
     /// Preserved verbatim so operators can grep it; the suggestion is
     /// generic ("re-run with `RUST_LOG=debug`" / "file an issue").
@@ -1018,7 +1053,9 @@ impl FlashError {
     /// with a specific operator suggestion. Pure function; unit-tested.
     pub(crate) fn classify(msg: &str) -> Self {
         let lower = msg.to_lowercase();
-        if lower.contains("mkusb.sh") || lower.starts_with("image build") {
+        if lower.contains("no image source available") {
+            Self::NoImageSource(msg.to_string())
+        } else if lower.contains("mkusb.sh") || lower.starts_with("image build") {
             Self::ImageBuild(msg.to_string())
         } else if lower.contains("dd exited") || lower.contains("dd exec failed") {
             Self::DdFailed(msg.to_string())
@@ -1041,6 +1078,9 @@ impl crate::userfacing::UserFacing for FlashError {
                 "readback verification failed — bytes on stick don't match source"
             }
             Self::ShortReadback(_) => "readback short — stick returned fewer bytes than requested",
+            Self::NoImageSource(_) => {
+                "no image to flash — aegis-boot doesn't know where to get one"
+            }
             Self::Other(_) => "flash failed",
         }
     }
@@ -1050,10 +1090,16 @@ impl crate::userfacing::UserFacing for FlashError {
             | Self::DdFailed(s)
             | Self::ReadbackMismatch(s)
             | Self::ShortReadback(s)
+            | Self::NoImageSource(s)
             | Self::Other(s) => s,
         }
     }
     fn suggestion(&self) -> Option<&str> {
+        // Multi-option variants use suggestions() (plural); the
+        // single-line form is the default for everything else.
+        if matches!(self, Self::NoImageSource(_)) {
+            return None;
+        }
         Some(match self {
             Self::ImageBuild(_) => {
                 "Check the mkusb.sh prerequisites (mtools, dosfstools, exfatprogs, gdisk); \
@@ -1074,7 +1120,31 @@ impl crate::userfacing::UserFacing for FlashError {
                 "Re-run with RUST_LOG=debug for more detail. If the error persists, \
                  `aegis-boot doctor --report` captures the host state for a bug report."
             }
+            // NoImageSource is handled via suggestions() above.
+            Self::NoImageSource(_) => unreachable!(),
         })
+    }
+    fn suggestions(&self) -> Vec<String> {
+        match self {
+            Self::NoImageSource(s) => {
+                // Detail string carries the device path so operators
+                // can copy-paste without editing. Extract between
+                // "device " and end-of-string; fall back to /dev/sdX.
+                let dev = s
+                    .rsplit_once("device ")
+                    .map_or("/dev/sdX", |(_, tail)| tail.trim());
+                vec![
+                    format!(
+                        "Supply a pre-built image: sudo aegis-boot flash --image /path/to/aegis-boot.img {dev}"
+                    ),
+                    format!(
+                        "Fetch the latest signed release image (available from v0.14.0+), then flash it:\n       aegis-boot fetch-image\n       sudo aegis-boot flash --image <downloaded-path> {dev}"
+                    ),
+                    "Build from source (the repo must be on disk because mkusb.sh lives there):\n       git clone https://github.com/williamzujkowski/aegis-boot\n       cd aegis-boot\n       cargo install --path crates/aegis-cli\n       sudo aegis-boot flash".to_string(),
+                ]
+            }
+            _ => Vec::new(),
+        }
     }
     fn docs_url(&self) -> Option<&str> {
         Some(match self {
@@ -1084,7 +1154,7 @@ impl crate::userfacing::UserFacing for FlashError {
             Self::DdFailed(_) | Self::ReadbackMismatch(_) | Self::ShortReadback(_) => {
                 "https://github.com/williamzujkowski/aegis-boot/blob/main/docs/TROUBLESHOOTING.md#dd-exited-with-a-non-zero-status-partway-through"
             }
-            Self::Other(_) => {
+            Self::NoImageSource(_) | Self::Other(_) => {
                 "https://github.com/williamzujkowski/aegis-boot/blob/main/docs/TROUBLESHOOTING.md"
             }
         })
@@ -1095,6 +1165,7 @@ impl crate::userfacing::UserFacing for FlashError {
             Self::DdFailed(_) => "FLASH_DD_FAILED",
             Self::ReadbackMismatch(_) => "FLASH_READBACK_MISMATCH",
             Self::ShortReadback(_) => "FLASH_READBACK_SHORT",
+            Self::NoImageSource(_) => "FLASH_NO_IMAGE_SOURCE",
             Self::Other(_) => "FLASH_OTHER",
         })
     }
@@ -1414,6 +1485,86 @@ mod tests {
         assert!(s.contains("what happened:"), "missing detail line: {s}");
         assert!(s.contains("try:"), "missing try line: {s}");
         assert!(s.contains("see: https://"), "missing docs URL: {s}");
+    }
+
+    // ---- #282: NoImageSource error path -----------------------------------
+
+    #[test]
+    fn classify_no_image_source_into_dedicated_variant() {
+        // The only signal the classifier gets from the build path is
+        // the message string; key on the literal "no image source
+        // available" prefix so a refactor that drops this variant
+        // still surfaces a regression here.
+        let msg = "no image source available (not in a repo checkout and --image not supplied) for device /dev/sda";
+        assert!(
+            matches!(FlashError::classify(msg), FlashError::NoImageSource(_)),
+            "classified as {:?}",
+            FlashError::classify(msg)
+        );
+    }
+
+    #[test]
+    fn no_image_source_render_lists_three_alternatives_with_device_path() {
+        use crate::userfacing::render_string;
+        let err = FlashError::NoImageSource(
+            "no image source available (not in a repo checkout and --image not supplied) for device /dev/sdc".to_string(),
+        );
+        let s = render_string(&err);
+        assert!(
+            s.contains("error[FLASH_NO_IMAGE_SOURCE]"),
+            "missing stable code: {s}"
+        );
+        assert!(s.contains("try one of:"), "missing numbered list: {s}");
+        assert!(s.contains("1. "), "missing option 1: {s}");
+        assert!(s.contains("2. "), "missing option 2: {s}");
+        assert!(s.contains("3. "), "missing option 3: {s}");
+        assert!(
+            s.contains("--image /path/to/aegis-boot.img /dev/sdc"),
+            "option 1 must interpolate the device path: {s}"
+        );
+        assert!(
+            s.contains("aegis-boot fetch-image"),
+            "option 2 must name fetch-image: {s}"
+        );
+        assert!(
+            s.contains("git clone"),
+            "option 3 must offer source build: {s}"
+        );
+    }
+
+    #[test]
+    fn no_image_source_render_falls_back_to_dev_sdx_when_device_missing() {
+        // Defensive: if someone in the future hand-constructs a
+        // NoImageSource without the "device " suffix, the renderer
+        // must still produce usable output — not an empty path.
+        use crate::userfacing::render_string;
+        let err = FlashError::NoImageSource("no image source available".to_string());
+        let s = render_string(&err);
+        assert!(
+            s.contains("/dev/sdX"),
+            "fallback placeholder should appear: {s}"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn no_image_source_error_message_carries_device_path() {
+        // Unit test the helper that produces the classifier-friendly
+        // string; guards against a future drift that would either
+        // change the prefix (breaking classify) or drop the device
+        // path (breaking suggestions() interpolation).
+        //
+        // Linux-only: the helper is cfg-gated to the only target
+        // where `build_image_via_mkusb` actually calls it.
+        let drive = Drive {
+            dev: PathBuf::from("/dev/sdc"),
+            model: String::new(),
+            size_bytes: 0,
+            partitions: 0,
+        };
+        let msg = no_image_source_error(&drive);
+        assert!(msg.starts_with("no image source available"));
+        assert!(msg.ends_with("/dev/sdc"));
     }
 
     // ---- #244 PR3: dd progress-line parser --------------------------------
