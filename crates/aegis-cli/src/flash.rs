@@ -526,9 +526,17 @@ fn flash(
             Ok(()) => println!("✓ AEGIS_ISOS now spans the full stick"),
             Err(e) => {
                 eprintln!("warning: failed to auto-expand AEGIS_ISOS: {e}");
+                // The sgdisk steps might have succeeded even if the
+                // mkfs.exfat step failed — the partition table can be
+                // resized without the filesystem being reformatted
+                // (#272: desktop automount races). The stick still
+                // boots either way; the only loss is usable capacity
+                // on partition 2.
                 eprintln!(
-                    "(stick is usable; data partition is the mkusb default size — \
-                     you can still add ISOs, just less of them)"
+                    "(stick is usable and boots; capacity on AEGIS_ISOS may be limited \
+                     to the mkusb default — you can still add ISOs, just less of them. \
+                     To reclaim the remaining capacity manually: \
+                     `sudo umount /dev/<stick>2 ; sudo mkfs.exfat -L AEGIS_ISOS /dev/<stick>2`)"
                 );
             }
         }
@@ -762,17 +770,56 @@ fn expand_data_partition(dev: &Path) -> Result<(), String> {
     //    directly will still work because sgdisk already synced.
     let _ = Command::new("sudo").args(["partprobe", &dev_str]).status();
 
-    // 4. Format the new partition as exfat (#243 default).
+    // 3b. Close the automount race from #272. On Linux desktops with
+    //     udisks2 (GNOME / KDE / XFCE), the kernel's partition rescan
+    //     triggered by step 3 causes the newly-resized /dev/sdX2 to be
+    //     auto-mounted before we can mkfs.exfat it — mkfs then fails
+    //     with EBUSY. Wait for udev + gvfs to settle, and if the new
+    //     partition ended up mounted, unmount it.
+    //
+    //     `udevadm settle` is a no-op on initramfs / CI where udev
+    //     isn't running, so it's safe to always call. `findmnt` +
+    //     `umount` are similarly defensive — no automount, no entries
+    //     to unmount, `findmnt -n <dev>` returns empty and we skip.
     let part2 = partition2_path(dev);
-    sudo_cmd_success(&[
-        "mkfs.exfat",
-        "-L",
-        "AEGIS_ISOS",
-        &part2.display().to_string(),
-    ])
-    .map_err(|e| format!("mkfs.exfat: {e}"))?;
+    let part2_str = part2.display().to_string();
+    let _ = Command::new("udevadm").arg("settle").status();
+    unmount_if_mounted(&part2_str);
+
+    // 4. Format the new partition as exfat (#243 default).
+    sudo_cmd_success(&["mkfs.exfat", "-L", "AEGIS_ISOS", &part2_str])
+        .map_err(|e| format!("mkfs.exfat: {e}"))?;
 
     Ok(())
+}
+
+/// Unmount `dev` if `findmnt` reports it currently mounted. Ignores
+/// all errors — this is a best-effort helper called before mkfs.exfat
+/// to close the automount race (#272); if findmnt isn't on PATH or
+/// umount fails for some other reason, the subsequent mkfs.exfat will
+/// produce its own diagnostic. Kept on crate-private visibility since
+/// no caller outside `expand_data_partition` needs this today.
+#[cfg(target_os = "linux")]
+fn unmount_if_mounted(dev: &str) {
+    // findmnt -n -o TARGET <dev> prints the mountpoint line-by-line
+    // if mounted, empty if not. -n suppresses the header row.
+    let out = match Command::new("findmnt")
+        .args(["-n", "-o", "TARGET", dev])
+        .output()
+    {
+        Ok(o) if o.status.success() => o,
+        _ => return,
+    };
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for mount_point in stdout.lines().map(str::trim).filter(|s| !s.is_empty()) {
+        // umount -l (lazy) so an open fd from gvfs doesn't block us;
+        // the mkfs that follows will still see the block device as
+        // !busy because the lazy unmount detaches the mount tree
+        // synchronously from the caller's POV.
+        let _ = Command::new("sudo")
+            .args(["umount", "-l", mount_point])
+            .status();
+    }
 }
 
 /// Run `sudo <argv>` and return Ok if the exit status is success,
