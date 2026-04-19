@@ -43,11 +43,12 @@
 //!   chain-of-custody + fleet inventory. Phase 4c-1 of [#286].
 //! * **CLI envelopes** ([`Version`], [`ListReport`],
 //!   [`AttestListReport`], [`VerifyReport`], [`UpdateReport`],
-//!   [`RecommendReport`], with their `*_SCHEMA_VERSION` constants)
-//!   — the `--json` envelopes emitted by `aegis-boot --version --json`,
+//!   [`RecommendReport`], [`CompatReport`], [`CompatSubmitReport`],
+//!   with their `*_SCHEMA_VERSION` constants) — the `--json`
+//!   envelopes emitted by `aegis-boot --version --json`,
 //!   `... list --json`, `... attest list --json`, `... verify --json`,
-//!   `... update --json`, `... recommend --json`, and siblings.
-//!   Phase 4b of [#286].
+//!   `... update --json`, `... recommend --json`, `... compat --json`,
+//!   `... compat --submit --json`, and siblings. Phase 4b of [#286].
 //!
 //! Each contract is independently versioned — a change to one
 //! schema does not require bumping the others. They are co-located
@@ -102,6 +103,20 @@ pub const UPDATE_SCHEMA_VERSION: u32 = 1;
 /// emitted by `aegis-boot recommend --json`. Independent of the
 /// other envelope contracts.
 pub const RECOMMEND_SCHEMA_VERSION: u32 = 1;
+
+/// Locked schema version for the [`CompatReport`] envelope emitted
+/// by `aegis-boot compat --json`. Shared by the 4 mutually-exclusive
+/// shapes (catalog / single / miss / my-machine-miss). Independent
+/// of the other envelope contracts.
+pub const COMPAT_SCHEMA_VERSION: u32 = 1;
+
+/// Locked schema version for the [`CompatSubmitReport`] envelope
+/// emitted by `aegis-boot compat --submit --json` — the
+/// draft-a-hardware-report flow. Deliberately a separate schema
+/// from [`CompatReport`] because the two surfaces have different
+/// consumer contracts (operators draft-submit vs. scripted
+/// lookup).
+pub const COMPAT_SUBMIT_SCHEMA_VERSION: u32 = 1;
 
 /// Top-level manifest body. Serialized field order matches the
 /// declaration order below — relied on for canonical JSON stability
@@ -779,6 +794,156 @@ pub struct RecommendMissReport {
     pub schema_version: u32,
     /// Human-readable error ("no catalog entry matching '<slug>'").
     pub error: String,
+}
+
+/// Envelope emitted by `aegis-boot compat --json`. Untagged
+/// wrapper around 4 mutually-exclusive shapes: full catalog,
+/// single match, miss (query matched no DB entry), or
+/// my-machine-miss (DMI lookup couldn't resolve an identity).
+///
+/// Dispatch by field presence:
+/// * `entries` → [`CompatReport::Catalog`]
+/// * `entry` → [`CompatReport::Single`]
+/// * `report_url` + `error` (no entries/entry) → [`CompatReport::Miss`]
+/// * `error` without `report_url` → [`CompatReport::MyMachineMiss`]
+///
+/// The separate `CompatSubmitReport` carries the `--submit` flow's
+/// own shape and schema version.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(untagged)]
+pub enum CompatReport {
+    /// Full catalog listing. Emitted with no query argument.
+    Catalog(CompatCatalogReport),
+    /// Single match. Emitted when the query resolved exactly one
+    /// DB entry.
+    Single(CompatSingleReport),
+    /// Miss. Emitted when the query didn't match any DB entry
+    /// (but the query was well-formed).
+    Miss(CompatMissReport),
+    /// My-machine miss. Emitted when `--my-machine` or
+    /// `--submit` couldn't resolve DMI identity (non-Linux host,
+    /// placeholder values). Exit code on the CLI side is 2
+    /// (host-environment issue) vs the Miss case's 1 (DB coverage
+    /// gap).
+    MyMachineMiss(CompatMyMachineMissReport),
+}
+
+/// Full-catalog variant of [`CompatReport`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct CompatCatalogReport {
+    /// Wire-format version. See [`COMPAT_SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// `aegis-boot` binary version that produced this envelope.
+    pub tool_version: String,
+    /// URL operators visit to file a new hardware report.
+    pub report_url: String,
+    /// Number of entries in the DB. Equals `entries.len()`.
+    pub count: u32,
+    /// All entries in DB declaration order.
+    pub entries: Vec<CompatEntry>,
+}
+
+/// Single-entry variant of [`CompatReport`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct CompatSingleReport {
+    /// Wire-format version. See [`COMPAT_SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// `aegis-boot` binary version that produced this envelope.
+    pub tool_version: String,
+    /// URL operators visit to file a new hardware report.
+    pub report_url: String,
+    /// The matched DB entry.
+    pub entry: CompatEntry,
+}
+
+/// Miss variant of [`CompatReport`] — the query was well-formed but
+/// didn't match any DB entry. Carries `report_url` so the operator
+/// can file a new entry; deliberately omits `tool_version` to match
+/// the existing wire format.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct CompatMissReport {
+    /// Wire-format version. See [`COMPAT_SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// URL operators visit to file a new hardware report.
+    pub report_url: String,
+    /// Human-readable error (`"no platform matching '<query>'"`).
+    pub error: String,
+}
+
+/// My-machine-miss variant of [`CompatReport`] — `--my-machine` or
+/// `--submit` couldn't auto-fill the query from DMI. Minimal
+/// envelope (just `schema_version` + `error`) to match the existing
+/// wire format.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct CompatMyMachineMissReport {
+    /// Wire-format version. See [`COMPAT_SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// Human-readable error
+    /// (`"--my-machine: DMI fields unavailable (…)"`).
+    pub error: String,
+}
+
+/// One hardware-compatibility DB row. Mirrors
+/// `docs/HARDWARE_COMPAT.md`; every entry corresponds to a real
+/// operator report (or the QEMU reference environment).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct CompatEntry {
+    /// Vendor (e.g. `"Lenovo"`, `"Framework"`, `"QEMU"`).
+    pub vendor: String,
+    /// Model (e.g. `"ThinkPad X1 Carbon Gen 11"`).
+    pub model: String,
+    /// Firmware vendor + version, free-form from BIOS.
+    pub firmware: String,
+    /// Secure Boot state at the time of the report
+    /// (typically `"enforcing"` or `"disabled"`).
+    pub sb_state: String,
+    /// Boot-menu key for this firmware (`"F12"`, `"Esc"`, etc.).
+    /// `"n/a"` for reference / virtualized environments.
+    pub boot_key: String,
+    /// Confidence level: `"verified"`, `"partial"`, or
+    /// `"reference"`.
+    pub level: String,
+    /// GitHub handle or `"aegis-team"` that filed the report.
+    pub reported_by: String,
+    /// ISO-8601 date string (`"2026-04-18"`).
+    pub date: String,
+    /// Free-text operator notes (quirks, BIOS tweaks,
+    /// fast-boot caveats). May be empty for a clean boot.
+    pub notes: Vec<String>,
+}
+
+/// Envelope emitted by `aegis-boot compat --submit --json` — the
+/// draft-a-hardware-report flow. Collects DMI identity + builds a
+/// pre-filled GitHub issue URL the operator can open to file a
+/// report. Independent schema from [`CompatReport`] because the
+/// consumer contracts diverge: lookup drives scripted decisions,
+/// submit drives an operator workflow.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct CompatSubmitReport {
+    /// Wire-format version. See [`COMPAT_SUBMIT_SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// Always `"aegis-boot"`. Deliberately named `tool` (not
+    /// `tool_version`) to match the existing wire format; this
+    /// envelope carries the draft template, not a version pin.
+    pub tool: String,
+    /// Pre-filled GitHub issue URL with `vendor`, `model`,
+    /// `firmware`, and `aegis-version` query-string parameters
+    /// set from DMI.
+    pub submit_url: String,
+    /// DMI `sys_vendor`. Empty string if unavailable.
+    pub vendor: String,
+    /// DMI product label (name + version). Empty if unavailable.
+    pub model: String,
+    /// DMI BIOS label (vendor + version + date). Empty if
+    /// unavailable.
+    pub firmware: String,
 }
 
 /// One curated catalog entry. Used in both
@@ -1471,5 +1636,114 @@ mod tests {
         let miss_body = r#"{"schema_version":1,"error":"not found"}"#;
         let parsed: RecommendReport = serde_json::from_str(miss_body).expect("miss parse");
         assert!(matches!(parsed, RecommendReport::Miss(_)));
+    }
+
+    fn sample_compat_entry() -> CompatEntry {
+        CompatEntry {
+            vendor: "Framework".to_string(),
+            model: "Laptop (12th Gen Intel Core) / A6".to_string(),
+            firmware: "INSYDE Corp. 03.19".to_string(),
+            sb_state: "enforcing".to_string(),
+            boot_key: "F12".to_string(),
+            level: "verified".to_string(),
+            reported_by: "@williamzujkowski".to_string(),
+            date: "2026-04-18".to_string(),
+            notes: vec!["Full chain validated".to_string()],
+        }
+    }
+
+    #[test]
+    fn compat_schema_versions_are_one() {
+        assert_eq!(COMPAT_SCHEMA_VERSION, 1);
+        assert_eq!(COMPAT_SUBMIT_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn compat_report_catalog_round_trips() {
+        let report = CompatReport::Catalog(CompatCatalogReport {
+            schema_version: COMPAT_SCHEMA_VERSION,
+            tool_version: "0.14.1".to_string(),
+            report_url: "https://example.com/report".to_string(),
+            count: 1,
+            entries: vec![sample_compat_entry()],
+        });
+        let body = serde_json::to_string(&report).expect("serialize");
+        let parsed: CompatReport = serde_json::from_str(&body).expect("parse");
+        assert_eq!(report, parsed);
+        assert!(body.contains("\"entries\""));
+    }
+
+    #[test]
+    fn compat_report_miss_omits_tool_version() {
+        let report = CompatReport::Miss(CompatMissReport {
+            schema_version: COMPAT_SCHEMA_VERSION,
+            report_url: "https://example.com/report".to_string(),
+            error: "no platform matching 'foo'".to_string(),
+        });
+        let body = serde_json::to_string(&report).expect("serialize");
+        assert!(body.contains("\"report_url\""));
+        assert!(body.contains("\"error\""));
+        assert!(
+            !body.contains("\"tool_version\""),
+            "miss omits tool_version: {body}"
+        );
+    }
+
+    #[test]
+    fn compat_report_my_machine_miss_has_minimal_shape() {
+        let report = CompatReport::MyMachineMiss(CompatMyMachineMissReport {
+            schema_version: COMPAT_SCHEMA_VERSION,
+            error: "--my-machine: DMI fields unavailable".to_string(),
+        });
+        let body = serde_json::to_string(&report).expect("serialize");
+        assert!(body.contains("\"error\""));
+        assert!(!body.contains("\"report_url\""));
+        assert!(!body.contains("\"tool_version\""));
+    }
+
+    #[test]
+    fn compat_untagged_dispatch_by_field_presence() {
+        let body =
+            r#"{"schema_version":1,"tool_version":"0.1","report_url":"x","count":0,"entries":[]}"#;
+        assert!(matches!(
+            serde_json::from_str::<CompatReport>(body).expect("catalog"),
+            CompatReport::Catalog(_)
+        ));
+
+        let body = r#"{"schema_version":1,"tool_version":"0.1","report_url":"x","entry":{"vendor":"","model":"","firmware":"","sb_state":"","boot_key":"","level":"","reported_by":"","date":"","notes":[]}}"#;
+        assert!(matches!(
+            serde_json::from_str::<CompatReport>(body).expect("single"),
+            CompatReport::Single(_)
+        ));
+
+        let body = r#"{"schema_version":1,"report_url":"x","error":"nope"}"#;
+        assert!(matches!(
+            serde_json::from_str::<CompatReport>(body).expect("miss"),
+            CompatReport::Miss(_)
+        ));
+
+        let body = r#"{"schema_version":1,"error":"dmi"}"#;
+        assert!(matches!(
+            serde_json::from_str::<CompatReport>(body).expect("mymachine"),
+            CompatReport::MyMachineMiss(_)
+        ));
+    }
+
+    #[test]
+    fn compat_submit_uses_tool_not_tool_version() {
+        let r = CompatSubmitReport {
+            schema_version: COMPAT_SUBMIT_SCHEMA_VERSION,
+            tool: "aegis-boot".to_string(),
+            submit_url: "https://example.com/new?vendor=x".to_string(),
+            vendor: "x".to_string(),
+            model: "y".to_string(),
+            firmware: "z".to_string(),
+        };
+        let body = serde_json::to_string(&r).expect("serialize");
+        let parsed: CompatSubmitReport = serde_json::from_str(&body).expect("parse");
+        assert_eq!(r, parsed);
+        assert!(body.contains("\"tool\":\"aegis-boot\""));
+        assert!(!body.contains("\"tool_version\""), "{body}");
+        assert!(body.contains("\"submit_url\""));
     }
 }
