@@ -25,7 +25,7 @@ A signed UEFI Secure Boot rescue environment that lets operators pick any ISO fr
 
 </div>
 
-**Status:** v0.14.1 — signed `aegis-boot.img` now ships as a release asset (cosign keyless-verified by `fetch-image`), installed-binary flash UX fixed ([#282](https://github.com/williamzujkowski/aegis-boot/issues/282)), direct-install flash foundation landed behind a feature gate ([#274](https://github.com/williamzujkowski/aegis-boot/issues/274) phases 2a–3b). Real-hardware shakedown validated on Alpine + Ubuntu under Secure Boot enforcing ([#109](https://github.com/williamzujkowski/aegis-boot/issues/109)). Multi-vendor real-hardware sweep (Framework / ThinkPad / Dell) gates v1.0.0 ([#51](https://github.com/williamzujkowski/aegis-boot/issues/51)).
+**Status:** v0.14.1 — signed `aegis-boot.img` now ships as a release asset (cosign keyless-verified by `fetch-image`), installed-binary flash UX fixed ([#282](https://github.com/williamzujkowski/aegis-boot/issues/282)), direct-install flash foundation landed behind a feature gate ([#274](https://github.com/williamzujkowski/aegis-boot/issues/274) phases 2a–3b). Real-hardware shakedown under Secure Boot enforcing validated Ubuntu (successful kexec) + Alpine (unsigned-kernel rejection surfaces the MOK-enrollment hint as designed) ([#109](https://github.com/williamzujkowski/aegis-boot/issues/109)). Multi-vendor real-hardware sweep (Framework / ThinkPad / Dell) gates v1.0.0 ([#51](https://github.com/williamzujkowski/aegis-boot/issues/51)).
 
 ## What it does
 
@@ -68,7 +68,7 @@ curl -sSL https://raw.githubusercontent.com/williamzujkowski/aegis-boot/main/scr
 brew tap williamzujkowski/aegis-boot https://github.com/williamzujkowski/aegis-boot
 brew install aegis-boot
 
-# Or pin a version: sh install.sh --version v0.12.0
+# Or pin a version: sh install.sh --version v0.14.1
 # Or skip cosign (NOT recommended): sh install.sh --no-verify
 # Build from source: see BUILDING.md.
 ```

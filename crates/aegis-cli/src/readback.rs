@@ -10,8 +10,11 @@
 //! ~64 MB and re-checking the sha256 closes that window before the
 //! operator pulls the stick.
 //!
-//! No callers wired up in this PR. The `flash` integration lands in
-//! PR2 alongside the `indicatif`-based progress UI from #244.
+//! Wired up by `flash`: `sha256_of_first_bytes` + `DEFAULT_READBACK_BYTES`
+//! are called inline from `precompute_image_prefix_hash` (pre-dd) and
+//! `readback_verify_device` (post-dd). The high-level `verify_readback`
+//! wrapper is kept as the library-shaped API but has no production
+//! caller. See #244 for the rollout history.
 //!
 //! # Why bound to a prefix
 //!
@@ -22,7 +25,12 @@
 //! data partition isn't readback-verified because it's mutable
 //! operator content (per `USB_LAYOUT.md`).
 
-#![allow(dead_code)] // Foundation PR — callers wired in PR2. See #244.
+// `flash` uses `sha256_of_first_bytes` + `DEFAULT_READBACK_BYTES` inline
+// and surfaces its own error strings; the high-level `verify_readback`
+// helper + typed `ReadbackError` remain unused in production but are
+// kept (and unit-tested) as the library-shaped API. Dead-code allow
+// covers that deliberate gap until a caller wants structured errors.
+#![allow(dead_code)]
 
 use std::fs::File;
 use std::io::{self, Read};

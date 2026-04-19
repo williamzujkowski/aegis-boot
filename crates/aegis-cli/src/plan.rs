@@ -1,9 +1,7 @@
-// Foundational scaffolding for #247 — every item in this module is
-// exercised by the unit tests below but has no production caller until
-// the per-command rollout lands. Module-scoped allow keeps clippy quiet
-// without masking dead-code regressions in real callers; once the first
-// caller (planned: `flash`) wires up, drop this allow and let
-// `dead_code` surface anything that's still unwired.
+// First production caller (`flash::build_flash_plan`) uses a subset of
+// `Operation` variants + `Plan::new`/`add`. Variants and accessors reserved
+// for the `update`/`add`/`init`/`expand` rollout per #247 are kept
+// behind this module-level allow until those commands wire up.
 #![allow(dead_code)]
 
 //! `Plan` — typed, inspectable description of operations a command would perform.
@@ -12,8 +10,8 @@
 //!   - prints the plan and exits (`--dry-run` mode), or
 //!   - executes the plan in order and emits a receipt.
 //!
-//! No callers wired up in this PR. Tracked in #247; per-command rollout
-//! lands in follow-up PRs (`flash`, `update`, `add`, `init`, `expand`).
+//! First production caller: `flash::build_flash_plan`. Per-command rollout
+//! continues in follow-ups (`update`, `add`, `init`, `expand`) per #247.
 //!
 //! # Why a typed plan, not a `Vec<String>`
 //!
