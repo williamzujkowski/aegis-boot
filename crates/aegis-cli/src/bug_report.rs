@@ -446,7 +446,10 @@ fn collect_aegis_state(tool_version: String) -> AegisStateSection {
     // fails (e.g., PATH issue inside a weird sudo context). We look
     // up *this* binary — `/proc/self/exe` — rather than the PATH
     // `aegis-boot`, so operators who have a stale binary in PATH
-    // still get a consistent report.
+    // still get a consistent report. No security decision keys off
+    // the path; a tampered current_exe just makes us fail to find
+    // `doctor` and report an empty aegis_state section.
+    // nosemgrep: rust.lang.security.current-exe.current-exe
     let self_exe = std::env::current_exe().ok();
     let doctor_json = self_exe.and_then(|path| {
         Command::new(&path)
