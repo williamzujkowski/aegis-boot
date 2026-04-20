@@ -34,21 +34,26 @@ usage() {
 aegis-boot installer
 
 USAGE:
-  install.sh [--version VER] [--prefix DIR] [--no-verify] [--help]
+  install.sh [--version VER] [--prefix DIR] [--cosign PATH] [--no-verify] [--help]
 
 OPTIONS:
-  --version VER   Install a specific release tag (e.g. v0.12.0).
+  --version VER   Install a specific release tag (e.g. v0.14.1).
                   Default: latest GitHub release.
   --prefix DIR    Install destination. Default: $DEFAULT_PREFIX_ROOT
                   if running as root, else $DEFAULT_PREFIX_USER.
+  --cosign PATH   Explicit path to the cosign binary. Use this when
+                  cosign is installed but not on \$PATH (#328).
+                  Defaults to auto-detect: \$PATH, then script dir,
+                  then --prefix dir.
   --no-verify     Skip cosign signature verification.
                   Strongly discouraged outside dev/test.
   --help          This message.
 
 EXAMPLES:
   curl -sSL https://raw.githubusercontent.com/$REPO/main/scripts/install.sh | sh
-  sh install.sh --version v0.12.0
+  sh install.sh --version v0.14.1
   sudo sh install.sh --prefix /usr/local/bin
+  sh install.sh --cosign /mnt/Data/Downloads/aegis-boot/cosign
 EOF
 }
 
@@ -114,6 +119,7 @@ download() {
 main() {
     version=""
     prefix=""
+    cosign_bin=""
     skip_verify=0
     while [ "$#" -gt 0 ]; do
         case "$1" in
@@ -138,6 +144,17 @@ main() {
                 ;;
             --prefix=*)
                 prefix="${1#*=}"
+                ;;
+            --cosign)
+                shift
+                cosign_bin="${1:-}"
+                if [ -z "$cosign_bin" ]; then
+                    err "--cosign requires a path argument"
+                    return 2
+                fi
+                ;;
+            --cosign=*)
+                cosign_bin="${1#*=}"
                 ;;
             --no-verify)
                 skip_verify=1
@@ -194,10 +211,36 @@ main() {
     fi
 
     # Cosign required unless --no-verify.
+    # Resolution order (#328): explicit --cosign, then $PATH, then
+    # canonical fallbacks (script dir, --prefix dir). Operators who
+    # keep cosign alongside the installer or the installed binary
+    # get signature verification without having to edit $PATH.
     if [ "$skip_verify" -eq 0 ]; then
-        if ! command -v cosign >/dev/null 2>&1; then
-            err "cosign not found in PATH. Install from https://docs.sigstore.dev/cosign/system_config/installation/"
-            err "or re-run with --no-verify (not recommended)"
+        if [ -n "$cosign_bin" ]; then
+            if [ ! -x "$cosign_bin" ]; then
+                err "--cosign: $cosign_bin is not an executable file"
+                return 64
+            fi
+        elif command -v cosign >/dev/null 2>&1; then
+            cosign_bin="cosign"
+        else
+            script_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo '')"
+            for candidate in \
+                "${script_dir:+$script_dir/cosign}" \
+                "$prefix/cosign"
+            do
+                [ -z "$candidate" ] && continue
+                if [ -x "$candidate" ]; then
+                    cosign_bin="$candidate"
+                    note "cosign: auto-detected at $cosign_bin"
+                    break
+                fi
+            done
+        fi
+        if [ -z "$cosign_bin" ]; then
+            err "cosign not found in PATH, script dir, or --prefix dir."
+            err "Install from https://docs.sigstore.dev/cosign/system_config/installation/,"
+            err "re-run with --cosign PATH, or --no-verify (not recommended)"
             return 64
         fi
     fi
@@ -216,7 +259,7 @@ main() {
     # Verify cosign signature.
     if [ "$skip_verify" -eq 0 ]; then
         note "verifying cosign signature..."
-        if ! cosign verify-blob \
+        if ! "$cosign_bin" verify-blob \
             --certificate-identity-regexp "$COSIGN_IDENTITY_REGEXP" \
             --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
             --signature "$tmpdir/$asset.sig" \
