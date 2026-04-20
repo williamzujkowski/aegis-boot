@@ -17,7 +17,7 @@ exclude = ["crates/iso-parser/fuzz"]
 # Release-cut flow: bump this one line + amend CHANGELOG, tag.
 # CI's doc-version drift-check (Phase 1c) greps an allowlist of
 # user-facing doc files and fails if any version literal diverges.
-version = "0.14.1"
+version = "0.15.0"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
