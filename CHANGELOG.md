@@ -4,6 +4,10 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-04-20
+
+Doc-automation milestone release. Closes epic [#286](https://github.com/williamzujkowski/aegis-boot/issues/286) (7-phase auto-generation + drift-checks for every user-facing doc) and the operator-UX sweep umbrella [#310](https://github.com/williamzujkowski/aegis-boot/issues/310). 12 committed JSON Schemas for every `aegis-boot --json` surface. First community hardware-compat submission surfaced four bugs, all fixed. New local cross-distro test harness. CI grew from 17 → 22 drift-checks.
+
 ### Doc-automation + evergreen-numbers strategy (closes epic [#286](https://github.com/williamzujkowski/aegis-boot/issues/286))
 
 The v0.14.0 release incident — four docs stuck at v0.13.0 after a one-line version bump — motivated a full doc-automation sweep. Seven phases shipped; every user-facing doc that mirrors a code value is now generated, drift-checked, or both. CI grew from 17 to **22 checks** (+doc-version-drift, +lychee link-check, +doc constants drift, +CLI subcommand drift, +manifest JSON schema drift). Every auto-generated doc is gated on every PR.
