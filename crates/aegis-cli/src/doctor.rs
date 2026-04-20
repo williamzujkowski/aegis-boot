@@ -633,7 +633,7 @@ fn check_cosign_optional(report: &mut Report) {
             Verdict::Warn,
             name,
             "not found in PATH — `fetch-image` cannot cosign-verify signed images".to_string(),
-            "install cosign: https://docs.sigstore.dev/cosign/installation/ \
+            "install cosign: https://docs.sigstore.dev/cosign/system_config/installation/ \
              (not required unless you use `aegis-boot fetch-image`)"
                 .to_string(),
         );

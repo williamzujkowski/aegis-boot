@@ -196,7 +196,7 @@ main() {
     # Cosign required unless --no-verify.
     if [ "$skip_verify" -eq 0 ]; then
         if ! command -v cosign >/dev/null 2>&1; then
-            err "cosign not found in PATH. Install from https://docs.sigstore.dev/cosign/installation/"
+            err "cosign not found in PATH. Install from https://docs.sigstore.dev/cosign/system_config/installation/"
             err "or re-run with --no-verify (not recommended)"
             return 64
         fi

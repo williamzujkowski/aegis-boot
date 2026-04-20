@@ -172,7 +172,7 @@ fn try_cosign_verify(url: &str, image_path: &Path) {
     if !cosign_on_path() {
         eprintln!(
             "aegis-boot fetch-image: WARNING — cosign not on PATH; skipping signature \
-             verification. Install cosign (https://docs.sigstore.dev/cosign/installation/) \
+             verification. Install cosign (https://docs.sigstore.dev/cosign/system_config/installation/) \
              or pass --no-cosign to silence this warning."
         );
         return;
