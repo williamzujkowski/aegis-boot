@@ -67,7 +67,7 @@ use std::process::ExitCode;
 
 use aegis_wire_formats::{
     AttestListReport, Attestation, CliError, CompatReport, CompatSubmitReport, DoctorReport,
-    ListReport, Manifest, RecommendReport, UpdateReport, VerifyReport, Version,
+    FailureMicroreport, ListReport, Manifest, RecommendReport, UpdateReport, VerifyReport, Version,
 };
 use schemars::schema_for;
 
@@ -141,6 +141,11 @@ fn targets() -> Vec<Target> {
             relative_path: "docs/reference/schemas/aegis-boot-cli-error.schema.json",
             render: render_cli_error_schema,
         },
+        Target {
+            name: "FailureMicroreport",
+            relative_path: "docs/reference/schemas/aegis-boot-failure-microreport.schema.json",
+            render: render_failure_microreport_schema,
+        },
     ]
 }
 
@@ -190,6 +195,10 @@ fn render_doctor_schema() -> Result<String, String> {
 
 fn render_cli_error_schema() -> Result<String, String> {
     render_pretty(&schema_for!(CliError))
+}
+
+fn render_failure_microreport_schema() -> Result<String, String> {
+    render_pretty(&schema_for!(FailureMicroreport))
 }
 
 /// Serialize a JSON Schema as pretty-printed JSON with a trailing

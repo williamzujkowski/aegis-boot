@@ -7,6 +7,7 @@
 
 #![forbid(unsafe_code)]
 
+mod failure_log;
 mod persistence;
 mod render;
 mod state;
@@ -480,6 +481,12 @@ fn event_loop<B: ratatui::backend::Backend>(
                             "F10 save-log failed (continuing)"
                         ),
                     }
+                    // Anonymous Tier-A microreport for later
+                    // inclusion in `aegis-boot bug-report`. Best-
+                    // effort, non-blocking, no consent needed (the
+                    // Tier-A envelope carries no PII by
+                    // construction). #342 Phase 2.
+                    failure_log::record_failure(&text, "kexec_failure", "rescue_tui");
                 }
             }
 

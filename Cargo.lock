@@ -740,6 +740,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 name = "rescue-tui"
 version = "0.15.0"
 dependencies = [
+ "aegis-wire-formats",
  "crossterm",
  "hex",
  "iso-probe",

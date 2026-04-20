@@ -131,6 +131,14 @@ pub const DOCTOR_SCHEMA_VERSION: u32 = 1;
 /// across them.
 pub const CLI_ERROR_SCHEMA_VERSION: u32 = 1;
 
+/// Locked schema version for the [`FailureMicroreport`] envelope —
+/// the Tier-A anonymous on-stick failure log written by `rescue-tui`
+/// / initramfs when a classifiable boot failure occurs. Per #342
+/// Phase 2. Anonymous-by-construction: no hostname, no DMI serial,
+/// no free-form error text; just vendor_family + bios_year +
+/// classified error code + an opaque hash of the full error text.
+pub const FAILURE_MICROREPORT_SCHEMA_VERSION: u32 = 1;
+
 /// Top-level manifest body. Serialized field order matches the
 /// declaration order below — relied on for canonical JSON stability
 /// (the signature is computed over `serde_json::to_vec(&Manifest)`).
@@ -1023,6 +1031,58 @@ pub struct CliError {
     pub schema_version: u32,
     /// Human-readable error message.
     pub error: String,
+}
+
+/// Tier-A anonymous failure microreport — written by `rescue-tui`
+/// / initramfs to `AEGIS_ISOS/aegis-boot-logs/<ts>-<hash>.json`
+/// when a classifiable boot failure occurs, so the operator can
+/// later include the log in an `aegis-boot bug-report` bundle
+/// (#342 Phase 2).
+///
+/// **Anonymous by construction.** Every field is either an
+/// aegis-boot version, a loosely-bucketed machine-family hint, or
+/// an opaque content hash. No hostname, no DMI serial, no full
+/// error text. Matches [ABRT's uReport]
+/// (<https://fedoraproject.org/wiki/Features/SimplifiedCrashReporting>)
+/// pattern: safe to ship without operator review, useful for
+/// failure-class correlation across a fleet.
+///
+/// Tier B (full structured log, consent-gated) lands in a later
+/// phase with a distinct `schema_version` track.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct FailureMicroreport {
+    /// Wire-format version. See [`FAILURE_MICROREPORT_SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// Tier marker. Always `"A"` in this envelope; reserved for
+    /// `"B"` when the consent-gated full-log tier ships.
+    pub tier: String,
+    /// RFC-3339 UTC timestamp of when the microreport was written.
+    pub collected_at: String,
+    /// `aegis-boot` version string that produced this log.
+    pub aegis_boot_version: String,
+    /// Lowercased first token of the DMI `sys_vendor` field (e.g.
+    /// `"framework"`, `"lenovo"`, `"dell"`). Vendor-granularity
+    /// only — enough to correlate per-vendor bugs without
+    /// identifying the operator.
+    pub vendor_family: String,
+    /// Four-digit year extracted from the DMI `bios_date` (e.g.
+    /// `"2024"`). Year-granularity is coarse enough to preserve
+    /// anonymity on any laptop model older than a few months.
+    pub bios_year: String,
+    /// Classified boot stage the failure occurred at. One of:
+    /// `"pre_kernel"`, `"kernel_init"`, `"initramfs"`,
+    /// `"rescue_tui"`, `"kexec_handoff"`.
+    pub boot_step_reached: String,
+    /// Classified failure code. String (not enum) so new
+    /// classifications can be added without a `schema_version`
+    /// bump. Consumer convention: treat unknown codes as
+    /// `"unclassified"`.
+    pub failure_class: String,
+    /// Opaque hash (`sha256:<64-hex>`) of the full raw error text.
+    /// Lets a maintainer match two field reports as "same failure"
+    /// without either operator sharing the raw text.
+    pub failure_hash: String,
 }
 
 /// One curated catalog entry. Used in both
