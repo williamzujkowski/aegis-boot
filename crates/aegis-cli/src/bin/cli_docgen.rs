@@ -60,6 +60,7 @@ use std::process::{Command, ExitCode};
 const SUBCOMMANDS: &[&str] = &[
     "add",
     "attest",
+    "bug-report",
     "compat",
     "completions",
     "doctor",

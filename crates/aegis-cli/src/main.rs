@@ -22,6 +22,7 @@
 #![forbid(unsafe_code)]
 
 mod attest;
+mod bug_report;
 mod catalog;
 mod cmd_path;
 mod compat;
@@ -42,6 +43,7 @@ mod man;
 mod mounts;
 mod plan;
 mod readback;
+mod redact;
 mod tour;
 mod update;
 mod userfacing;
@@ -68,6 +70,7 @@ fn main() -> ExitCode {
         Some("fetch") => fetch::run(&args[1..]),
         Some("fetch-image") => fetch_image::run(&args[1..]),
         Some("attest") => attest::run(&args[1..]),
+        Some("bug-report") => bug_report::run(&args[1..]),
         Some("eject") => eject::run(&args[1..]),
         Some("update") => update::run(&args[1..]),
         Some("verify") => verify::run(&args[1..]),
@@ -136,6 +139,7 @@ fn print_help() {
     println!("  aegis-boot fetch-image --url URL [--sha256 HEX]");
     println!("                                Download + sha256-verify a pre-built aegis-boot.img");
     println!("  aegis-boot attest [list|show] Attestation receipts for past flashes");
+    println!("  aegis-boot bug-report         Generate a redacted bug-report bundle (#342)");
     println!("  aegis-boot eject [device]     Safely power-off a stick before removal");
     println!("  aegis-boot update <device>    Check eligibility for in-place update");
     println!("  aegis-boot verify [device]    Re-verify every ISO's sha256 against its sidecar");

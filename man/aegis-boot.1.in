@@ -84,6 +84,12 @@ for the "no local build" operator path.
 .B attest \fR{list|show} [\-\-json]
 List or inspect attestation receipts for past flashes.
 .TP
+.B bug-report \fR[\-\-output \fIpath\fR] [\-\-format markdown|json] [\-\-no-redact \-\-i-accept-pii-in-output] [\-\-dump-mapping \fIpath\fR]
+Generate a redacted bug-report bundle composing doctor + DMI + system captures
+(uname, /proc/cmdline, filtered lsmod, dmesg tail, lspci, lsusb, lsblk).
+Privacy-preserving by default — hostname, username and DMI/drive serials are
+deterministically obfuscated. Ship the output straight into a GitHub issue.
+.TP
 .B eject \fR[\fIdevice\fR]
 Sync and power-off a stick before physical removal.
 .TP

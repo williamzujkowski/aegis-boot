@@ -49,6 +49,38 @@ EXAMPLES:
   aegis-boot attest list --json | jq '.attestations[].flashed_at'
 ```
 
+## `aegis-boot bug-report`
+
+```text
+aegis-boot bug-report — generate a bug-report bundle
+
+USAGE:
+  aegis-boot bug-report [--output PATH|-] [--format markdown|json]
+                        [--no-redact --i-accept-pii-in-output]
+                        [--dump-mapping PATH]
+
+OUTPUT MODES:
+  --output -           Write markdown to stdout (default)
+  --output PATH.md     Write markdown to file
+  --output PATH.json   Write JSON to file
+  --format markdown|json   Force format when extension is ambiguous
+
+PRIVACY:
+  Redaction is ON by default. Hostname, username, DMI + drive serials,
+  MAC addresses and public IPv4 addresses are replaced with deterministic
+  synthetic tokens (e.g. `host-ab12cd`, `serial-ef34gh`).
+  --no-redact          Disable redaction (requires --i-accept-pii-in-output)
+  --dump-mapping PATH  Write the real ↔ synthetic map to PATH. Keep it LOCAL —
+                       it de-anonymizes any bundle you share.
+
+EXAMPLES:
+  aegis-boot bug-report                                # markdown to stdout
+  aegis-boot bug-report --output report.md
+  aegis-boot bug-report --output report.json --format json
+
+(aegis-boot v0.15.0)
+```
+
 ## `aegis-boot compat`
 
 ```text

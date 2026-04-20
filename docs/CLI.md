@@ -606,6 +606,70 @@ Each ISO resolves to exactly one verdict:
 
 ---
 
+## `aegis-boot bug-report`
+
+Generate a ready-to-paste bug-report bundle. Composes `aegis-boot doctor --json` + DMI + removable-drive detection + new system captures (`uname`, `/proc/cmdline`, filtered `lsmod`, `dmesg` tail, `lspci`, `lsusb`, `lsblk`) into a single markdown or JSON document. Privacy-preserving by default — hostname, username, DMI and drive serials are replaced with deterministic synthetic tokens (`host-ab12cd`, `serial-ef34gh`).
+
+### Usage
+
+```bash
+aegis-boot bug-report                       # markdown to stdout (redacted)
+aegis-boot bug-report --output report.md    # file; format inferred from extension
+aegis-boot bug-report --output r.json       # JSON envelope (schema_version=1)
+aegis-boot bug-report --format json         # force JSON regardless of extension
+aegis-boot bug-report --dump-mapping map.tsv  # write real↔synthetic map locally
+aegis-boot bug-report --help
+```
+
+### Privacy model
+
+Redaction is ON by default. Affected fields:
+
+- hostname (`/etc/hostname`, `$HOSTNAME`) → `host-<6hex>`
+- username (`$USER`) → `user-<6hex>`
+- DMI / drive serials → `serial-<6hex>`
+
+Unredacted fields (by design — correlating per-vendor behavior is the whole point):
+
+- DMI vendor / product / BIOS version / BIOS date
+- kernel version, module names, `/proc/cmdline`
+- `aegis-boot` version and every `doctor` verdict
+
+Turning redaction off requires both `--no-redact` AND the explicit `--i-accept-pii-in-output` confirmation flag. Without the confirmation, the tool exits 2 with a PII warning.
+
+`--dump-mapping PATH` writes the real↔synthetic mapping to a local file. **Never share that file** — it de-anonymizes any bundle generated in the same run. The mapping is not persisted to disk unless you explicitly pass `--dump-mapping`.
+
+### Output envelope
+
+```json
+{
+  "schema_version": 1,
+  "aegis_boot_version": "0.15.0",
+  "generated_at": "2026-04-20T12:34:56Z",
+  "redacted": true,
+  "system": { "os_release_pretty": "...", "uname": "...", "hostname": "host-ab12cd", "user": "user-ef34gh" },
+  "firmware": { "sys_vendor": "...", "product_name": "...", "bios_version": "...", ... },
+  "kernel": { "cmdline": "...", "modules_storage_usb": ["..."], "dmesg_tail": ["..."] },
+  "storage": { "removable_drives": ["..."], "lsblk": "...", "lsusb": "...", "lspci_storage": "..." },
+  "aegis_state": { "doctor_score": 96, "doctor_band": "EXCELLENT", "doctor_rows": [...] }
+}
+```
+
+### Deferred to later phases of #342
+
+- Clipboard output (`wl-copy` / `xclip` / `pbcopy`)
+- `tar.zst` bundle
+- `--include stick:/dev/sdX` — collect on-stick failure logs from AEGIS_ISOS
+- `--sign` — cosign keyless attestation bundle over the report
+
+### Exit codes
+
+- `0` — bundle written successfully
+- `1` — I/O error (couldn't read source, couldn't write output)
+- `2` — usage error (unknown flag, `--no-redact` without confirmation)
+
+---
+
 ## `aegis-boot compat`
 
 Look up a machine in the in-binary hardware-compatibility database. Every row is a verified outcome filed against real hardware or the QEMU reference environment — no speculation.
