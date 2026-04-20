@@ -58,6 +58,7 @@ USAGE:
   aegis-boot bug-report [--output PATH|-] [--format markdown|json]
                         [--no-redact --i-accept-pii-in-output]
                         [--dump-mapping PATH]
+                        [--include-stick PATH]
 
 OUTPUT MODES:
   --output -           Write markdown to stdout (default)
@@ -77,6 +78,7 @@ EXAMPLES:
   aegis-boot bug-report                                # markdown to stdout
   aegis-boot bug-report --output report.md
   aegis-boot bug-report --output report.json --format json
+  aegis-boot bug-report --include-stick /media/$USER/AEGIS_ISOS
 
 (aegis-boot v0.15.0)
 ```

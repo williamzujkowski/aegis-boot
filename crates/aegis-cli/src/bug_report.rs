@@ -18,10 +18,15 @@
 //!   (`.md` → markdown, `.json` → json) or forced with `--format`
 //! * `--format markdown` (default) / `--format json`
 //!
+//! Phase 3a adds `--include-stick PATH` which reads Tier-A
+//! microreports from a mounted stick's `aegis-boot-logs/`
+//! directory (written by rescue-tui per #342 Phase 2) and folds
+//! them into the output bundle.
+//!
 //! Deferred to later phases of #342:
 //! * Clipboard output (`wl-copy` / `xclip` / `pbcopy`)
 //! * tar.zst bundle
-//! * `--include stick:/dev/sdX` — Surface 2 on-stick log integration
+//! * Phase 3b: rescue-tui consent screen + Tier B full log
 //! * `--sign` — cosign keyless attestation bundle
 
 use std::fmt::Write as _;
@@ -30,6 +35,7 @@ use std::process::{Command, ExitCode};
 
 use crate::detect;
 use crate::redact::Redactor;
+use aegis_wire_formats::FailureMicroreport;
 use serde::Serialize;
 
 /// Top-level bundle envelope. Serializable directly for `--format json`
@@ -45,6 +51,12 @@ struct Bundle {
     kernel: KernelSection,
     storage: StorageSection,
     aegis_state: AegisStateSection,
+    /// Tier-A microreports collected from the operator-specified
+    /// stick mount via `--include-stick PATH` (#342 Phase 3a).
+    /// Empty when the flag isn't passed. Additive to `schema_version=1`
+    /// — consumers parsing older output without this field still work.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    on_stick_logs: Vec<FailureMicroreport>,
 }
 
 const BUNDLE_SCHEMA_VERSION: u32 = 1;
@@ -121,6 +133,12 @@ struct Args {
     redact: bool,
     redact_confirm: bool,
     dump_mapping_to: Option<PathBuf>,
+    /// `--include-stick PATH` — path to a mounted `AEGIS_ISOS`
+    /// partition (e.g. `/media/william/AEGIS_ISOS` on a modern
+    /// desktop, or `/run/media/<user>/AEGIS_ISOS`). The bundler
+    /// reads `<PATH>/aegis-boot-logs/*.json` and folds any Tier-A
+    /// microreports into the output. #342 Phase 3a.
+    include_stick: Option<PathBuf>,
     help: bool,
 }
 
@@ -132,6 +150,7 @@ impl Args {
             redact: true,
             redact_confirm: false,
             dump_mapping_to: None,
+            include_stick: None,
             help: false,
         }
     }
@@ -167,7 +186,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
     });
 
     let mut redactor = Redactor::new(opts.redact);
-    let bundle = collect_bundle(&mut redactor);
+    let bundle = collect_bundle(&mut redactor, opts.include_stick.as_deref());
 
     let body = match format {
         Format::Markdown => render_markdown(&bundle, &redactor),
@@ -247,6 +266,10 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
                 let v = next_value(argv, &mut i, "--dump-mapping")?;
                 a.dump_mapping_to = Some(PathBuf::from(v));
             }
+            "--include-stick" => {
+                let v = next_value(argv, &mut i, "--include-stick")?;
+                a.include_stick = Some(PathBuf::from(v));
+            }
             other => return Err(format!("unknown argument: {other}")),
         }
         i += 1;
@@ -269,7 +292,7 @@ fn format_from_extension(path: &std::path::Path) -> Option<Format> {
     }
 }
 
-fn collect_bundle(redactor: &mut Redactor) -> Bundle {
+fn collect_bundle(redactor: &mut Redactor, include_stick: Option<&std::path::Path>) -> Bundle {
     let tool_version = env!("CARGO_PKG_VERSION").to_string();
     Bundle {
         schema_version: BUNDLE_SCHEMA_VERSION,
@@ -281,7 +304,51 @@ fn collect_bundle(redactor: &mut Redactor) -> Bundle {
         kernel: collect_kernel(),
         storage: collect_storage(),
         aegis_state: collect_aegis_state(tool_version),
+        on_stick_logs: include_stick.map(read_stick_logs).unwrap_or_default(),
     }
+}
+
+/// Read every `*.json` file under `<stick_path>/aegis-boot-logs/`
+/// and parse as [`FailureMicroreport`]. Files that fail to parse
+/// are skipped with a warning to stderr — we never crash the
+/// bundler on a malformed log.
+fn read_stick_logs(stick_path: &std::path::Path) -> Vec<FailureMicroreport> {
+    let log_dir = stick_path.join("aegis-boot-logs");
+    let Ok(entries) = std::fs::read_dir(&log_dir) else {
+        eprintln!(
+            "aegis-boot bug-report: --include-stick {}: no `aegis-boot-logs/` directory \
+             (stick never wrote a microreport, or wrong path)",
+            stick_path.display()
+        );
+        return Vec::new();
+    };
+    let mut logs: Vec<FailureMicroreport> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(body) = std::fs::read_to_string(&path) else {
+            eprintln!(
+                "aegis-boot bug-report: --include-stick: cannot read {} (skipping)",
+                path.display()
+            );
+            continue;
+        };
+        match serde_json::from_str::<FailureMicroreport>(&body) {
+            Ok(report) => logs.push(report),
+            Err(e) => eprintln!(
+                "aegis-boot bug-report: --include-stick: malformed log at {}: {e} (skipping)",
+                path.display()
+            ),
+        }
+    }
+    // Sort chronologically — the collected_at prefix of each
+    // microreport orders them oldest-first inside the bundle so
+    // maintainers reading sequential failures see the earliest
+    // event at the top.
+    logs.sort_by(|a, b| a.collected_at.cmp(&b.collected_at));
+    logs
 }
 
 fn collect_system(redactor: &mut Redactor) -> SystemSection {
@@ -524,6 +591,7 @@ fn render_markdown(b: &Bundle, redactor: &Redactor) -> String {
     render_kernel(&mut out, &b.kernel);
     render_storage(&mut out, &b.storage);
     render_aegis_state(&mut out, &b.aegis_state);
+    render_on_stick_logs(&mut out, &b.on_stick_logs);
     if redactor.is_active() {
         let _ = writeln!(out, "---\n");
         out.push_str(
@@ -615,6 +683,39 @@ fn render_storage(out: &mut String, s: &StorageSection) {
     push_fenced(out, "lspci (storage)", s.lspci_storage.as_deref());
 }
 
+fn render_on_stick_logs(out: &mut String, logs: &[FailureMicroreport]) {
+    if logs.is_empty() {
+        return;
+    }
+    let _ = writeln!(out, "## On-stick failure logs\n");
+    let _ = writeln!(
+        out,
+        "{} Tier-A microreport(s) collected from the mounted stick \
+         (`--include-stick`). Each is anonymous by construction — \
+         vendor family + BIOS year + classified failure + opaque \
+         SHA-256 hash of the full error text. See #342 Phase 2.\n",
+        logs.len()
+    );
+    for log in logs {
+        let _ = writeln!(
+            out,
+            "- **{}** — `{}` at `{}` (vendor `{}`, BIOS `{}`, hash `{}`)",
+            log.collected_at,
+            log.failure_class,
+            log.boot_step_reached,
+            log.vendor_family,
+            log.bios_year,
+            log.failure_hash
+                .strip_prefix("sha256:")
+                .unwrap_or(&log.failure_hash)
+                .chars()
+                .take(12)
+                .collect::<String>()
+        );
+    }
+    out.push('\n');
+}
+
 fn render_aegis_state(out: &mut String, a: &AegisStateSection) {
     let _ = writeln!(out, "## aegis-boot state\n");
     let _ = writeln!(out, "**Tool version:** {}", a.tool_version);
@@ -677,6 +778,7 @@ fn print_help() {
     println!("  aegis-boot bug-report [--output PATH|-] [--format markdown|json]");
     println!("                        [--no-redact --i-accept-pii-in-output]");
     println!("                        [--dump-mapping PATH]");
+    println!("                        [--include-stick PATH]");
     println!();
     println!("OUTPUT MODES:");
     println!("  --output -           Write markdown to stdout (default)");
@@ -696,6 +798,7 @@ fn print_help() {
     println!("  aegis-boot bug-report                                # markdown to stdout");
     println!("  aegis-boot bug-report --output report.md");
     println!("  aegis-boot bug-report --output report.json --format json");
+    println!("  aegis-boot bug-report --include-stick /media/$USER/AEGIS_ISOS");
     println!();
     println!("(aegis-boot v{v})");
 }
@@ -828,6 +931,7 @@ mod tests {
                 doctor_next_action: None,
                 doctor_rows: Vec::new(),
             },
+            on_stick_logs: Vec::new(),
         };
         let r = Redactor::new(true);
         let md = render_markdown(&b, &r);
@@ -885,6 +989,7 @@ mod tests {
                 doctor_next_action: None,
                 doctor_rows: Vec::new(),
             },
+            on_stick_logs: Vec::new(),
         };
         let j = render_json(&b);
         assert!(j.contains("\"schema_version\": 1"));
@@ -892,5 +997,120 @@ mod tests {
         assert!(j.contains("\"redacted\": true"));
         // Pretty-printed JSON has newlines + indent.
         assert!(j.contains("\n  "));
+    }
+
+    #[test]
+    fn parse_args_include_stick() {
+        let a =
+            parse_args(&["--include-stick".into(), "/media/william/AEGIS_ISOS".into()]).unwrap();
+        assert_eq!(
+            a.include_stick,
+            Some(PathBuf::from("/media/william/AEGIS_ISOS"))
+        );
+    }
+
+    #[test]
+    fn read_stick_logs_parses_valid_and_skips_malformed() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_dir = dir.path().join("aegis-boot-logs");
+        std::fs::create_dir_all(&log_dir).unwrap();
+
+        // Valid Tier-A microreport.
+        let valid = r#"{
+          "schema_version": 1,
+          "tier": "A",
+          "collected_at": "2026-04-20T12:00:00Z",
+          "aegis_boot_version": "0.15.0",
+          "vendor_family": "framework",
+          "bios_year": "2025",
+          "boot_step_reached": "rescue_tui",
+          "failure_class": "kexec_failure",
+          "failure_hash": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+        }"#;
+        std::fs::write(
+            log_dir.join("2026-04-20T12:00:00Z-abcdef012345.json"),
+            valid,
+        )
+        .unwrap();
+
+        // Malformed JSON should be silently skipped (logged to stderr
+        // but not crashed on).
+        std::fs::write(log_dir.join("bad.json"), b"{ not valid json").unwrap();
+
+        // Non-json extensions should be ignored.
+        std::fs::write(log_dir.join("README.txt"), b"hello").unwrap();
+
+        let logs = read_stick_logs(dir.path());
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].vendor_family, "framework");
+        assert_eq!(logs[0].failure_class, "kexec_failure");
+    }
+
+    #[test]
+    fn read_stick_logs_empty_dir_returns_empty_vec() {
+        let dir = tempfile::tempdir().unwrap();
+        // No aegis-boot-logs/ subdir → returns empty, no panic.
+        let logs = read_stick_logs(dir.path());
+        assert!(logs.is_empty());
+    }
+
+    #[test]
+    fn read_stick_logs_sorts_chronologically() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_dir = dir.path().join("aegis-boot-logs");
+        std::fs::create_dir_all(&log_dir).unwrap();
+        let mk = |ts: &str, hash: &str| {
+            format!(
+                r#"{{"schema_version":1,"tier":"A","collected_at":"{ts}",
+                "aegis_boot_version":"0.15.0","vendor_family":"f","bios_year":"2025",
+                "boot_step_reached":"rescue_tui","failure_class":"x","failure_hash":"sha256:{hash}"}}"#
+            )
+        };
+        std::fs::write(
+            log_dir.join("later.json"),
+            mk("2026-04-20T14:00:00Z", "aaaa"),
+        )
+        .unwrap();
+        std::fs::write(
+            log_dir.join("earliest.json"),
+            mk("2026-04-20T10:00:00Z", "bbbb"),
+        )
+        .unwrap();
+        std::fs::write(log_dir.join("mid.json"), mk("2026-04-20T12:00:00Z", "cccc")).unwrap();
+        let logs = read_stick_logs(dir.path());
+        assert_eq!(logs.len(), 3);
+        assert_eq!(logs[0].collected_at, "2026-04-20T10:00:00Z");
+        assert_eq!(logs[1].collected_at, "2026-04-20T12:00:00Z");
+        assert_eq!(logs[2].collected_at, "2026-04-20T14:00:00Z");
+    }
+
+    #[test]
+    fn render_on_stick_logs_skips_empty() {
+        let mut out = String::new();
+        render_on_stick_logs(&mut out, &[]);
+        assert!(out.is_empty(), "empty logs should render nothing");
+    }
+
+    #[test]
+    fn render_on_stick_logs_emits_section_and_entries() {
+        let logs = vec![FailureMicroreport {
+            schema_version: 1,
+            tier: "A".to_string(),
+            collected_at: "2026-04-20T12:00:00Z".to_string(),
+            aegis_boot_version: "0.15.0".to_string(),
+            vendor_family: "framework".to_string(),
+            bios_year: "2025".to_string(),
+            boot_step_reached: "rescue_tui".to_string(),
+            failure_class: "kexec_failure".to_string(),
+            failure_hash: "sha256:abcdef0123456789abcdef".to_string(),
+        }];
+        let mut out = String::new();
+        render_on_stick_logs(&mut out, &logs);
+        assert!(out.contains("## On-stick failure logs"));
+        assert!(out.contains("2026-04-20T12:00:00Z"));
+        assert!(out.contains("kexec_failure"));
+        assert!(out.contains("framework"));
+        // Hash truncated to 12 chars for readability.
+        assert!(out.contains("abcdef012345"));
     }
 }

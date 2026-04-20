@@ -655,11 +655,21 @@ Turning redaction off requires both `--no-redact` AND the explicit `--i-accept-p
 }
 ```
 
+### `--include-stick PATH` (#342 Phase 3a)
+
+When the operator experiences a rescue-tui failure on a target machine, rescue-tui writes anonymous Tier-A microreports to `AEGIS_ISOS/aegis-boot-logs/` ([#342 Phase 2](https://github.com/williamzujkowski/aegis-boot/issues/342)). To include them in the bundle, plug the stick back into your workstation and pass `--include-stick` pointing at its mount:
+
+```bash
+aegis-boot bug-report --include-stick /media/$USER/AEGIS_ISOS
+```
+
+Each Tier-A log is anonymous by construction (vendor family + BIOS year + classified failure class + opaque SHA-256 of the full error text) so no extra redaction gate is needed. Malformed log files are silently skipped with a stderr warning; missing `aegis-boot-logs/` directory is a no-op with an informational message.
+
 ### Deferred to later phases of #342
 
 - Clipboard output (`wl-copy` / `xclip` / `pbcopy`)
 - `tar.zst` bundle
-- `--include stick:/dev/sdX` — collect on-stick failure logs from AEGIS_ISOS
+- Phase 3b: rescue-tui consent screen + Tier B full structured log
 - `--sign` — cosign keyless attestation bundle over the report
 
 ### Exit codes

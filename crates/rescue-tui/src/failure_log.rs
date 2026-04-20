@@ -152,10 +152,23 @@ pub(crate) fn write(report: &FailureMicroreport) -> Result<PathBuf, String> {
     let body = serialize(report)?;
     let filename = format!(
         "{}-{}.json",
-        report.collected_at,
+        fs_safe_timestamp(&report.collected_at),
         short_hash(&report.failure_hash)
     );
     write_to_preferred_dir(&filename, body.as_bytes())
+}
+
+/// Sanitize an ISO-8601 timestamp for use as a filename component.
+/// exFAT — the default filesystem on `AEGIS_ISOS` since #243 — rejects
+/// `:` in filenames (Windows convention). Replace with `-` so the
+/// filename is valid on exFAT, FAT32, NTFS, ext4, APFS, btrfs, and
+/// every other filesystem the harness might encounter.
+///
+/// Sort order is preserved: `YYYY-MM-DDTHH-MM-SSZ` sorts alphabetically
+/// the same as `YYYY-MM-DDTHH:MM:SSZ` because the only change is
+/// same-position substitution of one character class for another.
+fn fs_safe_timestamp(ts: &str) -> String {
+    ts.replace(':', "-")
 }
 
 fn short_hash(full: &str) -> String {
@@ -519,5 +532,21 @@ mod tests {
     fn short_hash_takes_12_after_prefix() {
         assert_eq!(short_hash("sha256:abcdef0123456789abcdef"), "abcdef012345");
         assert_eq!(short_hash("abcdef0123456789"), "abcdef012345");
+    }
+
+    #[test]
+    fn fs_safe_timestamp_strips_colons() {
+        // exFAT rejects `:` in filenames. AEGIS_ISOS defaults to exFAT
+        // since #243, so this substitution is load-bearing for the
+        // write path to succeed on the real partition. Live-tested
+        // against /media/<user>/AEGIS_ISOS during #342 Phase 3a.
+        assert_eq!(
+            fs_safe_timestamp("2026-04-20T12:34:56Z"),
+            "2026-04-20T12-34-56Z"
+        );
+        assert_eq!(
+            fs_safe_timestamp("2026-04-20T12-34-56Z"),
+            "2026-04-20T12-34-56Z"
+        );
     }
 }
