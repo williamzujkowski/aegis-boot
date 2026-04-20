@@ -304,16 +304,20 @@ fn run_cosign_verify_blob(image: &Path, sig: &Path, pem: &Path) -> Result<(), St
     }
 }
 
-/// Check `cosign --version` returns 0 on the operator's PATH. Same
-/// pattern as the `sudo` / `sha256sum` presence checks in
-/// `aegis-boot doctor`. Called from both here (lazy) and from doctor
-/// (eager) so operators get the same answer either way.
+/// True if cosign is present at a file path the OS will find when
+/// we `exec` it. Uses the same shared probe as `aegis-boot doctor`
+/// (see `cmd_path::which`), so the two surfaces agree.
+///
+/// Previously this was `cosign --version`-based, which returned false
+/// for reasons unrelated to whether cosign was installed — a broken
+/// binary, a non-zero exit from a cosign version that's fussy about
+/// its config dir, or an intermittent transparency-log lookup would
+/// all read as "cosign not on PATH". #332 surfaced the disagreement
+/// in the wild: `doctor` saw cosign at `/usr/local/bin/cosign`
+/// (PASS), but `fetch-image` said cosign not on PATH. Unified probe
+/// fixes that.
 pub(crate) fn cosign_on_path() -> bool {
-    Command::new("cosign")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    crate::cmd_path::which("cosign").is_some()
 }
 
 /// Append a suffix to the file path. `/tmp/a.img` + `.sig` →

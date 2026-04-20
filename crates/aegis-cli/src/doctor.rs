@@ -667,39 +667,10 @@ fn check_command_present_with_pkg(report: &mut Report, cmd: &str, pkg: &str, why
     }
 }
 
-/// Canonical sbin directories probed when `$PATH` lookup misses.
-/// Many distros (notably openSUSE, #328) do not include `/usr/sbin`
-/// in the `$PATH` inherited by `sudo` or by child processes of the
-/// install.sh post-install preflight. Root-utility commands that
-/// live only in sbin (e.g. `sgdisk`) would otherwise produce a
-/// FAIL row in `doctor` despite being installed.
-const SBIN_FALLBACKS: &[&str] = &["/usr/sbin", "/sbin", "/usr/local/sbin"];
-
-fn which(cmd: &str) -> Option<PathBuf> {
-    which_in(cmd, std::env::var_os("PATH").as_deref(), SBIN_FALLBACKS)
-}
-
-fn which_in(
-    cmd: &str,
-    path_env: Option<&std::ffi::OsStr>,
-    sbin_fallbacks: &[&str],
-) -> Option<PathBuf> {
-    if let Some(path) = path_env {
-        for dir in std::env::split_paths(path) {
-            let candidate = dir.join(cmd);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    for sbin in sbin_fallbacks {
-        let candidate = PathBuf::from(sbin).join(cmd);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
-}
+// `which` lives in the `cmd_path` module so `fetch-image` and every
+// other command-presence caller use the same probe. See #332 for why
+// unified lookup matters.
+use crate::cmd_path::which;
 
 fn check_secureboot_state(report: &mut Report) {
     // Try mokutil first (most operator hosts have it). Fall back to reading
@@ -1103,47 +1074,6 @@ mod tests {
             r.rows[0].0
         );
         assert!(r.rows[0].2.contains("canary"));
-    }
-
-    #[test]
-    fn which_in_finds_binary_on_path() {
-        let Ok(dir) = tempfile::tempdir() else { return };
-        let bin = dir.path().join("fake-cmd");
-        if std::fs::write(&bin, b"#!/bin/sh\n").is_err() {
-            return;
-        }
-        let path_env = std::ffi::OsString::from(dir.path());
-        let found = which_in("fake-cmd", Some(path_env.as_os_str()), &[]);
-        assert_eq!(found.as_deref(), Some(bin.as_path()));
-    }
-
-    #[test]
-    fn which_in_falls_back_to_sbin_when_path_misses() {
-        // #328: on openSUSE the invoking shell's PATH often lacks
-        // /usr/sbin, so `sgdisk` (installed at /usr/sbin/sgdisk)
-        // reads as absent. The sbin-fallback closes that hole.
-        let Ok(dir) = tempfile::tempdir() else { return };
-        let bin = dir.path().join("sbin-only-cmd");
-        if std::fs::write(&bin, b"#!/bin/sh\n").is_err() {
-            return;
-        }
-        let fallback = dir.path().to_string_lossy().into_owned();
-        let found = which_in(
-            "sbin-only-cmd",
-            Some(std::ffi::OsStr::new("/nonexistent-path")),
-            &[&fallback],
-        );
-        assert_eq!(found.as_deref(), Some(bin.as_path()));
-    }
-
-    #[test]
-    fn which_in_returns_none_when_both_miss() {
-        let found = which_in(
-            "definitely-not-a-real-binary-for-aegis-test",
-            Some(std::ffi::OsStr::new("/nonexistent-path")),
-            &["/nonexistent-sbin"],
-        );
-        assert!(found.is_none());
     }
 
     #[test]

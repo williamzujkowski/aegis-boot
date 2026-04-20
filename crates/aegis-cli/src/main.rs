@@ -23,6 +23,7 @@
 
 mod attest;
 mod catalog;
+mod cmd_path;
 mod compat;
 mod completions;
 mod constants;
