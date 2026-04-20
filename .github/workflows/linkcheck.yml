@@ -55,6 +55,14 @@ jobs:
       - name: Run lychee
         id: lychee
         uses: lycheeverse/lychee-action@v2
+        env:
+          # github.com responds 500 to unauthenticated link-check
+          # requests under rate-limit pressure. Passing the default
+          # CI token raises the per-hour ceiling from 60 → 5,000 and
+          # keeps lychee from failing on our own pull-request URLs
+          # (surfaced on PR #338 via CHANGELOG refs and README's
+          # /releases/latest link).
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           # Input files: all markdown + the man-page template (which
           # contains URLs in SEE ALSO / TROUBLESHOOTING refs). Exclude
