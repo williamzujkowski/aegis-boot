@@ -349,7 +349,11 @@ fn report_source_url(url: &str, local_path: &Path, label: &str) {
     println!("  {label:<11}  {url}{cached_note}");
 }
 
-fn default_cache_dir(slug: &str) -> PathBuf {
+/// Default cache directory for a catalog slug. Exposed via
+/// `pub(crate)` so `aegis-boot add <slug>` (#352 UX-4) can resolve
+/// the post-fetch ISO path without duplicating the XDG / HOME /
+/// /tmp fallback chain.
+pub(crate) fn default_cache_dir(slug: &str) -> PathBuf {
     let base = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
@@ -357,8 +361,19 @@ fn default_cache_dir(slug: &str) -> PathBuf {
     base.join("aegis-boot").join(slug)
 }
 
-fn filename_from_url(url: &str) -> String {
+/// Extract the trailing filename from a catalog URL. Exposed via
+/// `pub(crate)` so `add <slug>` can compute the cached ISO filename
+/// without another round-trip to the catalog entry (#352 UX-4).
+pub(crate) fn filename_from_url(url: &str) -> String {
     url.rsplit('/').next().unwrap_or("download").to_string()
+}
+
+/// Resolve the post-fetch ISO path for a catalog slug. Returns `None`
+/// if the slug is unknown to the catalog. The returned path may not
+/// exist yet — callers should check and fetch if absent.
+pub(crate) fn cached_iso_path(slug: &str) -> Option<PathBuf> {
+    let entry = crate::catalog::find_entry(slug)?;
+    Some(default_cache_dir(entry.slug).join(filename_from_url(entry.iso_url)))
 }
 
 /// Download `url` to `dest`. When `show_progress` is true, curl

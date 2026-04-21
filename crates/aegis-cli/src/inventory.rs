@@ -170,17 +170,24 @@ pub(crate) fn try_run_add(args: &[String]) -> Result<(), u8> {
     }
 
     let AddArgs {
-        iso_path: iso_arg,
+        iso_path: raw_iso_arg,
         mount_arg,
         description,
         version,
         category,
     } = parse_add_args(args)?;
 
-    if !iso_arg.is_file() {
-        eprintln!("aegis-boot add: not a file: {}", iso_arg.display());
+    // #352 UX-4: if the positional arg is a catalog slug (not a real
+    // file path), fetch it first and substitute the cached ISO path.
+    // Collapses today's `fetch <slug> && add <resolved-path>` 2-step
+    // into one `add <slug>` action. Only triggers when:
+    //   - the arg is NOT a file on disk AND
+    //   - the arg IS a known catalog slug
+    // so existing flows (local path, typo'd slug) behave unchanged.
+    let Some(iso_arg) = resolve_iso_arg(&raw_iso_arg)? else {
+        eprintln!("aegis-boot add: not a file: {}", raw_iso_arg.display());
         return Err(1);
-    }
+    };
     let iso_filename = iso_arg
         .file_name()
         .and_then(|n| n.to_str())
@@ -557,13 +564,65 @@ fn copy_classic_sidecars(iso_src: &Path, iso_filename: &str, mount: &Path) -> Ve
 fn print_add_help() {
     println!("aegis-boot add — copy an ISO onto the stick with verification");
     println!();
-    println!("USAGE: aegis-boot add <iso-file> [/dev/sdX | /mnt/aegis-isos]");
+    println!("USAGE: aegis-boot add <iso-file-or-catalog-slug> [/dev/sdX | /mnt/aegis-isos]");
     println!("                  [--description TEXT] [--version VER] [--category CAT]");
+    println!();
+    println!("If the first arg is NOT a file on disk but IS a known catalog slug");
+    println!("(e.g. 'ubuntu-24.04-live-server'), add fetches + verifies it first,");
+    println!("then stages the cached copy — collapses 'fetch X && add <path>' (#352).");
     println!();
     println!("Optional sidecar metadata (#246) is written next to the ISO as");
     println!("<iso>.aegis.toml so rescue-tui can show 'Network-install Debian 12'");
     println!("instead of the bare filename. The sidecar is unsigned cosmetic");
     println!("metadata — boot decisions still key off the sha256-attested manifest.");
+}
+
+/// #352 UX-4: resolve the `<iso-or-slug>` positional arg to a file
+/// path.
+///
+/// If the arg is a real file, returns it unchanged. If it's not a
+/// file but IS a known catalog slug, runs `fetch` to download +
+/// verify it, then returns the cached ISO path. Otherwise returns
+/// `Ok(None)` to signal a usage error (neither file nor slug).
+///
+/// Intentionally preserves the existing "not a file" error path for
+/// unknown / typo'd slugs — we don't want `add --help-typo-lookup`
+/// to silently try to interpret every typo as a slug.
+fn resolve_iso_arg(raw: &Path) -> Result<Option<PathBuf>, u8> {
+    if raw.is_file() {
+        return Ok(Some(raw.to_path_buf()));
+    }
+    // Catalog-slug path: arg must be a bare slug (no /, no spaces),
+    // else it looks like a mistyped path and we preserve the old
+    // "not a file" error.
+    let Some(s) = raw.to_str() else {
+        return Ok(None);
+    };
+    if s.contains('/') || s.contains(char::is_whitespace) || s.starts_with('.') {
+        return Ok(None);
+    }
+    let Some(expected) = crate::fetch::cached_iso_path(s) else {
+        return Ok(None); // unknown slug — fall through to "not a file"
+    };
+    if expected.is_file() {
+        println!(
+            "aegis-boot add: catalog slug '{s}' already cached at {}",
+            expected.display()
+        );
+    } else {
+        println!("aegis-boot add: catalog slug '{s}' — fetching before stage");
+        println!();
+        crate::fetch::try_run(&[s.to_string()])?;
+        println!();
+    }
+    if !expected.is_file() {
+        eprintln!(
+            "aegis-boot add: fetch succeeded but cached ISO not found at {}",
+            expected.display()
+        );
+        return Err(1);
+    }
+    Ok(Some(expected))
 }
 
 /// Operator-supplied aegis sidecar fields collected from `--description`,
@@ -1361,5 +1420,42 @@ mod tests {
         assert_eq!(entries[0].folder, None);
         assert_eq!(entries[1].folder.as_deref(), Some("alpha"));
         assert_eq!(entries[2].folder.as_deref(), Some("zeta"));
+    }
+
+    // ---- #352 UX-4: catalog-slug shortcut for `add` ------------------------
+
+    #[test]
+    fn resolve_iso_arg_returns_path_for_existing_file() {
+        use std::fs;
+        let dir = tempfile::tempdir().unwrap();
+        let iso = dir.path().join("local.iso");
+        fs::write(&iso, b"x").unwrap();
+        let got = resolve_iso_arg(&iso).unwrap();
+        assert_eq!(got.as_deref(), Some(iso.as_path()));
+    }
+
+    #[test]
+    fn resolve_iso_arg_rejects_path_shaped_non_file() {
+        // A path with a `/` is treated as a path attempt (not a slug),
+        // so unknown → None → caller emits "not a file". Prevents
+        // `add ./typo.iso` from accidentally being looked up as a slug.
+        let got = resolve_iso_arg(Path::new("./does-not-exist.iso")).unwrap();
+        assert_eq!(got, None);
+    }
+
+    #[test]
+    fn resolve_iso_arg_rejects_whitespace_bearing_arg() {
+        // A multi-word arg ("not a slug") is treated as a path attempt.
+        let got = resolve_iso_arg(Path::new("not a slug")).unwrap();
+        assert_eq!(got, None);
+    }
+
+    #[test]
+    fn resolve_iso_arg_rejects_unknown_slug() {
+        // Slug-shaped arg that doesn't match any catalog entry falls
+        // back to the "not a file" error path — preserves the old
+        // error for typos like `add ubntu-24.04`.
+        let got = resolve_iso_arg(Path::new("totally-not-in-catalog-zzz")).unwrap();
+        assert_eq!(got, None);
     }
 }
