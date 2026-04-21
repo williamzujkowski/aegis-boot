@@ -602,6 +602,16 @@ fn flash_direct_install(drive: &Drive, out_dir: &Path) -> Result<(), FlashError>
         stage_esp, EspStagingSources,
     };
 
+    // #352 UX-2: pre-flight deps gate. Runs BEFORE any destructive
+    // action so a missing-tool install still leaves the stick and
+    // operator state intact. Yields a single error naming all missing
+    // tools, not just the first one — one round-trip of package
+    // installation is better than N.
+    check_direct_install_deps().map_err(|detail| FlashError::DirectInstall {
+        stage: DirectInstallStage::Setup,
+        detail,
+    })?;
+
     let dev = &drive.dev;
     let part1 = partition_path(dev, 1);
     let part2 = partition_path(dev, 2);
@@ -697,6 +707,71 @@ impl Drop for WorkDirGuard {
 
 /// Paths to the signed-boot-chain source files for direct-install.
 /// Resolved from canonical Debian/Ubuntu apt locations + `out_dir`
+/// Commands `flash_direct_install` needs on PATH before it can touch
+/// a device. Ordered roughly by which package provides them so an
+/// operator looking at the missing-list in the error can skim and
+/// recognize the cluster of tools they need.
+///
+/// The signed-chain binaries (shimx64.efi.signed, grubx64.efi.signed,
+/// /boot/vmlinuz-*) are checked separately in
+/// [`resolve_signed_chain_sources`] because their paths are fixed
+/// rather than PATH-searched. Keeping the two checks separate means
+/// the error categories stay distinct: "you need to `apt install`
+/// some tools" vs "you need to `apt install` signed-boot packages."
+#[cfg(target_os = "linux")]
+const DIRECT_INSTALL_REQUIRED_COMMANDS: &[&str] = &[
+    "sgdisk",     // gdisk — partitioning
+    "partprobe",  // parted OR util-linux — re-read kernel partition table
+    "mkfs.fat",   // dosfstools — ESP filesystem
+    "mkfs.exfat", // exfatprogs — AEGIS_ISOS filesystem
+    "mmd",        // mtools — ESP directory creation
+    "mcopy",      // mtools — ESP file staging
+];
+
+/// UX-2 pre-flight gate (#352). Runs at the top of
+/// [`flash_direct_install`] before any destructive action. Returns
+/// `Ok(())` if every command in [`DIRECT_INSTALL_REQUIRED_COMMANDS`]
+/// resolves via [`crate::cmd_path::which`]; otherwise a single
+/// multi-line error that names every missing command, so the operator
+/// fixes them all in one round-trip.
+///
+/// The error intentionally does NOT emit a distro-specific `apt install`
+/// (or `dnf install`, or `pacman -S`) recipe: the contrarian flag in
+/// the #352 consensus vote called out that cross-distro package-manager
+/// translation is a maintenance treadmill. Tool names alone are
+/// unambiguous enough for the operator to map to their distro.
+#[cfg(target_os = "linux")]
+fn check_direct_install_deps() -> Result<(), String> {
+    check_direct_install_deps_using(crate::cmd_path::which)
+}
+
+/// Pure form for unit testing — takes the lookup fn as a parameter so
+/// a test can inject a stub without mutating the process's PATH.
+#[cfg(target_os = "linux")]
+fn check_direct_install_deps_using<F>(lookup: F) -> Result<(), String>
+where
+    F: Fn(&str) -> Option<PathBuf>,
+{
+    let missing: Vec<&&str> = DIRECT_INSTALL_REQUIRED_COMMANDS
+        .iter()
+        .filter(|cmd| lookup(cmd).is_none())
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let mut msg = String::from("missing required tool(s) on PATH:\n");
+    for cmd in &missing {
+        msg.push_str("  - ");
+        msg.push_str(cmd);
+        msg.push('\n');
+    }
+    msg.push_str(
+        "install the package(s) that provide these commands on your distro, then re-run. \
+         the stick is untouched.",
+    );
+    Err(msg)
+}
+
 /// for the aegis-boot-built initramfs. Mirrors `scripts/mkusb.sh`'s
 /// resolution so the two paths stay byte-parity-comparable.
 #[cfg(target_os = "linux")]
@@ -2190,6 +2265,68 @@ mod tests {
             !is_loop_device_override_for(Path::new("/dev/nvme0n1"), Some("1")),
             "nvme paths stay rejected even with env=1"
         );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn check_direct_install_deps_passes_when_all_present() {
+        use std::path::PathBuf;
+        // Stub lookup: every command resolves to a fake path. Tests the
+        // happy path without requiring sgdisk/mtools/etc to actually be
+        // installed on the test host.
+        let ok = check_direct_install_deps_using(|_| Some(PathBuf::from("/fake/bin/tool")));
+        assert!(ok.is_ok(), "all-present should be Ok, got: {ok:?}");
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn check_direct_install_deps_names_every_missing_tool() {
+        use std::path::PathBuf;
+        // Stub lookup: only `sgdisk` and `mcopy` are present; the other
+        // 4 are missing. Error must list all 4 missing names so the
+        // operator fixes them in one round-trip, and must NOT list the
+        // 2 present ones.
+        let err = check_direct_install_deps_using(|cmd| {
+            if matches!(cmd, "sgdisk" | "mcopy") {
+                Some(PathBuf::from("/fake/bin/tool"))
+            } else {
+                None
+            }
+        });
+        let msg = err.expect_err("should be Err");
+        for missing in ["partprobe", "mkfs.fat", "mkfs.exfat", "mmd"] {
+            assert!(
+                msg.contains(missing),
+                "expected missing tool `{missing}` in:\n{msg}"
+            );
+        }
+        assert!(
+            !msg.contains(" sgdisk\n") && !msg.contains(" mcopy\n"),
+            "must NOT list present tools:\n{msg}"
+        );
+        // Contrarian flag #3: no distro-specific package-manager recipes.
+        assert!(
+            !msg.contains("apt install")
+                && !msg.contains("dnf install")
+                && !msg.contains("pacman -S"),
+            "no distro-specific recipes per #352 contrarian flag:\n{msg}"
+        );
+        // Must reassure the operator that nothing has been touched yet.
+        assert!(
+            msg.contains("untouched"),
+            "preflight failure must reassure operator stick is untouched:\n{msg}"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn check_direct_install_deps_fails_when_all_missing() {
+        // Stub lookup: nothing found. Must list every required command.
+        let err = check_direct_install_deps_using(|_| None);
+        let msg = err.expect_err("should be Err when all missing");
+        for cmd in DIRECT_INSTALL_REQUIRED_COMMANDS {
+            assert!(msg.contains(cmd), "missing `{cmd}` in error:\n{msg}");
+        }
     }
 
     #[test]
