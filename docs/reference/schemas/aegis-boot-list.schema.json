@@ -105,6 +105,13 @@
             "null"
           ]
         },
+        "folder": {
+          "description": "Subfolder path relative to the data-partition mount, or `null` when the ISO sits at the root. `\"ubuntu-24.04\"` for a single level, `\"ubuntu/24.04\"` for nested (forward-slash separator regardless of host OS — the stick filesystem is exFAT, which normalizes to `/`). Added in v0.16.0 (#274 Phase 6a) as an additive optional field; v0.15.x consumers that ignore unknown keys see no behavior change, and the `name` field remains a basename for scripts that joined it directly.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "has_minisig": {
           "description": "Whether a matching `<iso>.minisig` sidecar file exists.",
           "type": "boolean"
@@ -114,7 +121,7 @@
           "type": "boolean"
         },
         "name": {
-          "description": "ISO filename on the data partition.",
+          "description": "ISO basename (no directory component). Consumers that join `mount_path + name` will get the root-of-stick path, which is only valid when `folder` is null. For sticks with subfolder layouts (#274 Phase 6), join `mount_path + folder + name`. Kept as basename — separate from `folder` — so downstream automation that shelled out to `basename(1)` on the old flat layout keeps working.",
           "type": "string"
         },
         "size_bytes": {

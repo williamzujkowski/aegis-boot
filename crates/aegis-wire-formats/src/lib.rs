@@ -448,8 +448,23 @@ pub struct ListAttestationSummary {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ListIsoSummary {
-    /// ISO filename on the data partition.
+    /// ISO basename (no directory component). Consumers that join
+    /// `mount_path + name` will get the root-of-stick path, which is
+    /// only valid when `folder` is null. For sticks with subfolder
+    /// layouts (#274 Phase 6), join `mount_path + folder + name`.
+    /// Kept as basename — separate from `folder` — so downstream
+    /// automation that shelled out to `basename(1)` on the old flat
+    /// layout keeps working.
     pub name: String,
+    /// Subfolder path relative to the data-partition mount, or `null`
+    /// when the ISO sits at the root. `"ubuntu-24.04"` for a single
+    /// level, `"ubuntu/24.04"` for nested (forward-slash separator
+    /// regardless of host OS — the stick filesystem is exFAT, which
+    /// normalizes to `/`). Added in v0.16.0 (#274 Phase 6a) as an
+    /// additive optional field; v0.15.x consumers that ignore
+    /// unknown keys see no behavior change, and the `name` field
+    /// remains a basename for scripts that joined it directly.
+    pub folder: Option<String>,
     /// ISO size in bytes.
     pub size_bytes: u64,
     /// Whether a matching `<iso>.sha256` sidecar file exists.
@@ -1290,6 +1305,7 @@ mod tests {
             isos: vec![
                 ListIsoSummary {
                     name: "ubuntu-24.04.iso".to_string(),
+                    folder: Some("ubuntu-24.04".to_string()),
                     size_bytes: 5_368_709_120,
                     has_sha256: true,
                     has_minisig: false,
@@ -1298,6 +1314,7 @@ mod tests {
                 },
                 ListIsoSummary {
                     name: "debian-12.iso".to_string(),
+                    folder: None,
                     size_bytes: 3_221_225_472,
                     has_sha256: false,
                     has_minisig: false,
