@@ -610,9 +610,13 @@ fn flash_direct_install(drive: &Drive, out_dir: &Path) -> Result<(), FlashError>
     // The pid-suffixed subdir + unique-per-invocation contents prevent
     // cross-user collision on multi-user hosts. Signed boot artifacts
     // (shim, grub.efi, kernel) are resolved from /usr paths, not temp.
+    // Split into two bindings so the temp_dir() call sits on its own
+    // line — semgrep's `nosemgrep:` comment only suppresses the
+    // immediately following line, and fmt collapses the .join chain
+    // into a continuation if we combine them.
     // nosemgrep: rust.lang.security.temp-dir.temp-dir
-    let work_dir =
-        std::env::temp_dir().join(format!("aegis-direct-install-{}", std::process::id()));
+    let tmp_root = std::env::temp_dir();
+    let work_dir = tmp_root.join(format!("aegis-direct-install-{}", std::process::id()));
     std::fs::create_dir_all(&work_dir).map_err(|e| FlashError::DirectInstall {
         stage: DirectInstallStage::Setup,
         detail: format!("create work dir {}: {e}", work_dir.display()),
