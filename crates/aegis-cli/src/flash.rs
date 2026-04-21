@@ -765,6 +765,11 @@ where
 /// Format a [`std::time::Duration`] as a human-readable string:
 /// sub-minute → `"12.3s"`, longer → `"2m 04s"`. Precision past 100ms
 /// is noise for stage timers on slow USB sticks.
+///
+/// `cfg_attr(not(target_os = "linux"), allow(dead_code))` because all
+/// call sites live inside Linux-gated stage helpers; tests on other
+/// platforms exercise the format directly.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn format_elapsed(d: std::time::Duration) -> String {
     let secs = d.as_secs_f64();
     if secs < 60.0 {
