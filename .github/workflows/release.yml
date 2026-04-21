@@ -271,6 +271,154 @@ jobs:
             out/SHA256SUMS.sig \
             out/SHA256SUMS.pem
 
+  # -----------------------------------------------------------------
+  # macOS arm64 (Apple Silicon) binary — Phase A1 of epic #365.
+  # -----------------------------------------------------------------
+  # Ships aarch64-apple-darwin alongside the Linux build so Homebrew
+  # and direct-download operators on M1+ Macs can install a native
+  # binary rather than cargo-build from source.
+  #
+  # Phase A1 deliberately does NOT notarize the binary. Notarization
+  # (Phase A2 of #365) is gated on the maintainer enrolling in the
+  # Apple Developer Program ($99/year) and provisioning a Developer ID
+  # Application certificate + notarytool credentials as repo secrets
+  # (APPLE_DEV_ID_CERT, APPLE_DEV_ID_CERT_PASSWORD, APPLE_ID,
+  # APPLE_TEAM_ID, APPLE_APP_SPECIFIC_PASSWORD). Until Phase A2 lands:
+  #
+  #   - The binary carries an *ad-hoc* code signature (`codesign -s -`).
+  #     This is enough for macOS to execute the binary from a terminal
+  #     but does NOT satisfy Gatekeeper's first-launch policy for
+  #     quarantined downloads.
+  #
+  #   - Operators installing via `brew install` (from the tap) will
+  #     NOT see a Gatekeeper warning — Homebrew fetches binaries over
+  #     HTTPS without setting the com.apple.quarantine extended
+  #     attribute, so the first-launch policy never fires.
+  #
+  #   - Operators who download the raw binary from the GitHub release
+  #     UI (or `curl`'d in a way that inherits quarantine) WILL see
+  #     "cannot be opened because the developer cannot be verified"
+  #     on first launch. Escape hatch: `xattr -d com.apple.quarantine
+  #     ./aegis-boot-aarch64-apple-darwin` or Right-Click → Open once.
+  #     This is called out in docs/INSTALL.md.
+  #
+  # Cosign keyless signing (same OIDC flow as the Linux artifact) is
+  # still produced. That's independent of Apple notarization and gives
+  # operators a verifiable provenance chain from this repo's
+  # release.yml identity regardless of the Apple track.
+  build-macos-arm64:
+    name: Build + sign macOS arm64 binary (aarch64-apple-darwin)
+    runs-on: macos-14
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write # cosign keyless signing
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            echo "name=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Rust toolchain (pinned)
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain 1.85.0 --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          # macos-14 runners are arm64-native, so aarch64-apple-darwin
+          # is installed by the rustup bootstrap above. No `rustup target
+          # add` needed — verify the host matches our release target.
+          "$HOME/.cargo/bin/rustc" -vV | grep '^host: aarch64-apple-darwin$'
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: "v2.4.1"
+
+      - name: Build aegis-boot CLI (release, aarch64-apple-darwin)
+        env:
+          SOURCE_DATE_EPOCH: "1700000000"
+        run: |
+          cargo build --release --locked \
+            --target aarch64-apple-darwin \
+            -p aegis-cli
+          mkdir -p out
+          cp target/aarch64-apple-darwin/release/aegis-boot \
+            out/aegis-boot-aarch64-apple-darwin
+          file out/aegis-boot-aarch64-apple-darwin
+          # macOS `strip` is fine with Mach-O binaries; preserves the
+          # load commands cosign needs to attest over.
+          strip out/aegis-boot-aarch64-apple-darwin
+          du -h out/aegis-boot-aarch64-apple-darwin
+
+      - name: Ad-hoc codesign the binary
+        # `-s -` is the ad-hoc (identityless) code signature. Enough to
+        # satisfy macOS's "must be signed" execution gate for binaries
+        # *not* quarantined (e.g. brew-installed); NOT enough for
+        # Gatekeeper first-launch on quarantined downloads. That needs
+        # a Developer ID identity + notarization, deferred to Phase A2.
+        run: |
+          codesign -s - --timestamp=none --force \
+            out/aegis-boot-aarch64-apple-darwin
+          codesign -vv out/aegis-boot-aarch64-apple-darwin
+
+      - name: SHA256 for the macOS binary
+        run: |
+          ( cd out && shasum -a 256 \
+              aegis-boot-aarch64-apple-darwin \
+              > aegis-boot-aarch64-apple-darwin.sha256 )
+          cat out/aegis-boot-aarch64-apple-darwin.sha256
+
+      - name: Cosign sign (keyless, same OIDC flow as Linux build)
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          cd out
+          cosign sign-blob --yes \
+            --output-signature  aegis-boot-aarch64-apple-darwin.sig \
+            --output-certificate aegis-boot-aarch64-apple-darwin.pem \
+            aegis-boot-aarch64-apple-darwin
+          ls -1 aegis-boot-aarch64-apple-darwin*
+
+      - name: Upload macOS assets to the release
+        # The Linux job (`build-and-release`) creates the release if it
+        # does not yet exist. macOS runs in parallel, so guard against
+        # the race by retrying `gh release view` briefly before upload.
+        # --clobber overwrites if a re-run uploads the same asset name.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.tag.outputs.name }}"
+          for i in 1 2 3 4 5 6; do
+            if gh release view "$tag" >/dev/null 2>&1; then
+              break
+            fi
+            echo "release $tag not yet visible (attempt $i) — sleeping"
+            sleep 10
+          done
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            # Create it ourselves — the Linux job may still be building
+            # the initramfs + mkusb image. Idempotent either way.
+            gh release create "$tag" \
+              --title "aegis-boot $tag" \
+              --notes "Release ${tag}"
+          fi
+          gh release upload "$tag" --clobber \
+            out/aegis-boot-aarch64-apple-darwin \
+            out/aegis-boot-aarch64-apple-darwin.sha256 \
+            out/aegis-boot-aarch64-apple-darwin.sig \
+            out/aegis-boot-aarch64-apple-darwin.pem
+
   # Bumps Formula/aegis-boot.rb on main when a new tag is pushed. Skipped
   # for workflow_dispatch (which is the manual-backfill path — bumping
   # would risk regressing the formula to an older release).

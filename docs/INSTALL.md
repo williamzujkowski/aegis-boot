@@ -2,7 +2,7 @@
 
 End-to-end: get aegis-boot onto a USB stick, drop ISOs onto it, boot a target machine, and pick an ISO to kexec into. Reading time: ~5 minutes. Hands-on time: ~10 minutes plus dd.
 
-This guide assumes Linux on the operator workstation (where you write the stick). macOS / Windows flashing is tracked in [#123](https://github.com/williamzujkowski/aegis-boot/issues/123).
+This guide assumes Linux on the operator workstation (where you write the stick). macOS / Windows flashing is tracked in [#123](https://github.com/williamzujkowski/aegis-boot/issues/123). A native macOS arm64 (Apple Silicon) CLI binary is shipped with each release as of Phase A1 of [#365](https://github.com/williamzujkowski/aegis-boot/issues/365) — see [§ macOS (Apple Silicon)](#macos-apple-silicon) below.
 
 ## Before you start
 
@@ -33,6 +33,33 @@ Both A and B install the same binary (Linux x86_64 today; cross-platform tracked
 Option A downloads the latest release's `aegis-boot-x86_64-linux` static binary, verifies its Sigstore cosign signature against this repo's `release.yml` workflow identity, and installs to `/usr/local/bin` (root) or `~/.local/bin` (non-root). The installer itself does NOT need root unless you're installing to `/usr/local/bin`. To inspect first: `curl -sSL ... -o install.sh && less install.sh && sh install.sh`.
 
 Option B (Homebrew) auto-installs the Brew-tracked runtime deps (`curl`, `gnupg`, `gptfdisk`, `coreutils`). Runs the same cosign-verifiable binary; verify the cosign signature manually if you want to confirm — see [Formula/README.md](../Formula/README.md).
+
+### macOS (Apple Silicon)
+
+A native `aegis-boot-aarch64-apple-darwin` binary ships with every release from v0.16.0 onward (Phase A1 of [#365](https://github.com/williamzujkowski/aegis-boot/issues/365)). Install via Homebrew (recommended) or direct download:
+
+```bash
+# Option A — Homebrew (no Gatekeeper interaction)
+brew tap williamzujkowski/aegis-boot https://github.com/williamzujkowski/aegis-boot
+brew install aegis-boot
+
+# Option B — direct download (see Gatekeeper note below)
+curl -sSfLO https://github.com/williamzujkowski/aegis-boot/releases/latest/download/aegis-boot-aarch64-apple-darwin
+chmod +x aegis-boot-aarch64-apple-darwin
+```
+
+**Gatekeeper note (direct-download path only).** The macOS binary is currently *ad-hoc codesigned* but **not notarized** — notarization is tracked as Phase A2 of [#365](https://github.com/williamzujkowski/aegis-boot/issues/365) and gated on the project enrolling in the Apple Developer Program. In practice:
+
+- `brew install` operators see no warning — Homebrew fetches over HTTPS without setting the `com.apple.quarantine` extended attribute, so Gatekeeper's first-launch policy never fires.
+- Direct-download operators (browser download, or a `curl` invocation that inherits quarantine) may see "cannot be opened because the developer cannot be verified" on first launch. Clear quarantine explicitly:
+  ```bash
+  xattr -d com.apple.quarantine ./aegis-boot-aarch64-apple-darwin
+  ```
+  Or right-click → Open once in Finder. After first launch, Gatekeeper remembers the approval.
+
+What works on macOS today: `aegis-boot list`, `aegis-boot doctor`, drive detection, and `aegis-boot flash --image PATH` (against a pre-built `.img` fetched via `aegis-boot fetch-image`). Image *building* still requires Linux — see the Quickstart table in [README.md](../README.md).
+
+macOS x86_64 (Intel) and Windows native builds remain deferred — see [#365](https://github.com/williamzujkowski/aegis-boot/issues/365) for the full cross-platform roadmap.
 
 Sanity check:
 
