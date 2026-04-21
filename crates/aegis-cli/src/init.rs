@@ -169,7 +169,7 @@ pub fn run(args: &[String]) -> ExitCode {
     // to flash so the operator isn't asked to type 'flash' a second time
     // for the device they already typed the serial of.
     let flash_yes = parsed.yes || wizard_confirmed_device;
-    if let Err(code) = flash_step(device.as_deref(), flash_yes) {
+    if let Err(code) = flash_step(device.as_deref(), flash_yes, parsed.direct_install) {
         return ExitCode::from(code);
     }
 
@@ -208,7 +208,7 @@ fn doctor_preflight(device: Option<&str>, assume_yes: bool) -> Result<(), u8> {
     }
 }
 
-fn flash_step(device: Option<&str>, assume_yes: bool) -> Result<(), u8> {
+fn flash_step(device: Option<&str>, assume_yes: bool, direct_install: bool) -> Result<(), u8> {
     println!();
     println!("--- flash stick ---");
     let mut flash_args: Vec<String> = Vec::new();
@@ -217,6 +217,14 @@ fn flash_step(device: Option<&str>, assume_yes: bool) -> Result<(), u8> {
     }
     if assume_yes {
         flash_args.push("--yes".to_string());
+    }
+    // #352 UX-1 / #374: `quickstart` forwards `--direct-install` through
+    // `init` so the nested `flash` invocation uses the Rust-native
+    // partition+stage pipeline (#274) instead of the legacy dd path.
+    // Pre-#374, init silently dropped the flag and flash ran dd,
+    // negating the quickstart speedup.
+    if direct_install {
+        flash_args.push("--direct-install".to_string());
     }
     crate::flash::try_run(&flash_args).inspect_err(|_| {
         eprintln!();
@@ -294,6 +302,11 @@ struct Parsed {
     /// stick that's currently mounted (e.g. `AEGIS_ISOS` already in use
     /// by `aegis-boot list`); rare in practice.
     force: bool,
+    /// `--direct-install` passes through to the nested `flash` step so
+    /// operators using `init` (and transitively `quickstart`) get the
+    /// Rust-native partition+stage pipeline (#274) instead of legacy
+    /// dd. Default off — opt-in for now, mirrors flash's own default.
+    direct_install: bool,
 }
 
 fn parse_flags(args: &[String]) -> Result<Parsed, String> {
@@ -303,6 +316,7 @@ fn parse_flags(args: &[String]) -> Result<Parsed, String> {
     let mut skip_doctor = false;
     let mut skip_gpg = false;
     let mut force = false;
+    let mut direct_install = false;
     let mut iter = args.iter();
     while let Some(a) = iter.next() {
         match a.as_str() {
@@ -317,6 +331,10 @@ fn parse_flags(args: &[String]) -> Result<Parsed, String> {
             "--no-doctor" => skip_doctor = true,
             "--no-gpg" => skip_gpg = true,
             "--force" => force = true,
+            // #374: `quickstart` forwards --direct-install through
+            // `init`; without explicit recognition here, init rejected
+            // the flag and quickstart failed before any work started.
+            "--direct-install" => direct_install = true,
             "--profile" => {
                 let Some(v) = iter.next() else {
                     return Err("--profile requires a name argument".to_string());
@@ -347,6 +365,7 @@ fn parse_flags(args: &[String]) -> Result<Parsed, String> {
         skip_doctor,
         skip_gpg,
         force,
+        direct_install,
     })
 }
 
@@ -692,6 +711,31 @@ mod tests {
     fn parse_yes_flag_both_forms() {
         assert!(parse_flags(&["--yes".to_string()]).unwrap().yes);
         assert!(parse_flags(&["-y".to_string()]).unwrap().yes);
+    }
+
+    #[test]
+    fn parse_direct_install_flag_from_quickstart() {
+        // #374 regression: `quickstart` forwards --direct-install
+        // through to init; prior to this fix, init rejected it with
+        // 'unknown option'. Assert the flag parses cleanly + defaults
+        // to false when absent.
+        let p = parse_flags(&["--direct-install".to_string()]).unwrap();
+        assert!(p.direct_install);
+        let p = parse_flags(&[]).unwrap();
+        assert!(!p.direct_install, "default is false (legacy dd)");
+        // And mixed with the rest of quickstart's argv doesn't regress.
+        let args = [
+            "--profile".to_string(),
+            "minimal".to_string(),
+            "--yes".to_string(),
+            "--direct-install".to_string(),
+            "/dev/sda".to_string(),
+        ];
+        let p = parse_flags(&args).unwrap();
+        assert!(p.direct_install);
+        assert!(p.yes);
+        assert_eq!(p.profile_name, "minimal");
+        assert_eq!(p.device.as_deref(), Some("/dev/sda"));
     }
 
     #[test]
