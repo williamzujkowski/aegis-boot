@@ -287,6 +287,17 @@ if [[ -n "$KMOD_SRC" && -d "$KMOD_SRC" ]]; then
     try_module "kernel/fs/nls/nls_utf8" \
         "$MOD_DEST/kernel/fs/nls" \
         "nls_utf8" "CONFIG_NLS_UTF8"
+    # Also ship nls_cp437 + nls_iso8859-1 so the kernel's hot-plug
+    # automount path doesn't log "IO charset iso8859-1 not found"
+    # on real hardware. Our /init uses iocharset=utf8 explicitly,
+    # but udev hot-plug mounts that fire before /init gets to the
+    # vfat partition are the source of the dmesg noise.
+    try_module "kernel/fs/nls/nls_cp437" \
+        "$MOD_DEST/kernel/fs/nls" \
+        "nls_cp437" "CONFIG_NLS_CODEPAGE_437"
+    try_module "kernel/fs/nls/nls_iso8859-1" \
+        "$MOD_DEST/kernel/fs/nls" \
+        "nls_iso8859-1" "CONFIG_NLS_ISO8859_1"
     # Regenerate modules.dep so it references our decompressed .ko paths
     # (source kernel's modules.dep points at .ko.zst). depmod -b rebuilds
     # into the staged tree; no runtime kernel match needed.
@@ -409,13 +420,23 @@ INIT_LOG=/run/aegis-init.log
 # — modprobe logs a no-op and returns 0, or errors out if truly
 # absent which is fine). (#72)
 /bin/echo "init: loading storage modules"
+# filesystem modules: isofs for mounted ISOs, udf for DVD-style
+# isos, exfat for the AEGIS_ISOS data partition (default since
+# #243), nls_* for FAT character-set translation tables (the ESP is
+# vfat; without nls_iso8859-1 + nls_cp437 the kernel hot-plug
+# automount path logs "IO charset iso8859-1 not found").
+#
+# Real-hardware validation of #132 caught the exfat omission: the
+# module shipped in the initramfs but was never modprobed, so
+# `mount -t exfat /dev/sda2` returned "No such device" and
+# rescue-tui discovered 0 ISOs on a fresh direct-install stick.
 for m in scsi_mod sd_mod \
          libata libahci ahci \
          nvme-core nvme \
          usbcore usb-common xhci-hcd xhci-pci ehci-hcd ehci-pci \
          usb-storage uas \
-         nls_utf8 \
-         loop isofs udf; do
+         nls_utf8 nls_cp437 nls_iso8859-1 \
+         loop isofs udf exfat; do
     /bin/modprobe "$m" 2>/dev/null || true
 done
 
