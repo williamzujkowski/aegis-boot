@@ -465,28 +465,67 @@ jobs:
         run: |
           tag="${{ steps.tag.outputs.name }}"
           version="${tag#v}"
-          new_sha=$(grep '  aegis-boot-x86_64-linux$' /tmp/SHA256SUMS | awk '{print $1}')
-          if [ -z "$new_sha" ]; then
-            echo "no aegis-boot-x86_64-linux row in SHA256SUMS — aborting bump" >&2
+          # Extract both platform shas from the release's SHA256SUMS. If
+          # one is missing (e.g. the macOS build leg failed mid-release),
+          # we warn + skip that block only — don't fail the whole bump,
+          # because a partial bump is still useful for the other arch.
+          linux_sha=$(grep '  aegis-boot-x86_64-linux$' /tmp/SHA256SUMS | awk '{print $1}')
+          macos_sha=$(grep '  aegis-boot-aarch64-apple-darwin$' /tmp/SHA256SUMS | awk '{print $1}')
+          echo "new version:    $version"
+          echo "linux  sha256:  ${linux_sha:-<missing>}"
+          echo "macos  sha256:  ${macos_sha:-<missing>}"
+
+          if [ -z "$linux_sha" ] && [ -z "$macos_sha" ]; then
+            echo "neither aegis-boot-x86_64-linux nor aegis-boot-aarch64-apple-darwin in SHA256SUMS — aborting bump" >&2
             exit 1
           fi
-          echo "new version: $version"
-          echo "new sha256:  $new_sha"
 
           if [ ! -f Formula/aegis-boot.rb ]; then
             echo "Formula/aegis-boot.rb missing — nothing to bump" >&2
             exit 0
           fi
 
-          # Idempotent edits via sed. The formula's three pinned values:
-          #   version "X.Y.Z"
-          #   url "https://github.com/.../v X.Y.Z /aegis-boot-x86_64-linux"
-          #   sha256 "..."
-          sed -i \
-            -e "s|^  version \".*\"|  version \"${version}\"|" \
-            -e "s|/releases/download/v[^/]*/aegis-boot-x86_64-linux\"|/releases/download/v${version}/aegis-boot-x86_64-linux\"|" \
-            -e "s|^      sha256 \"[a-f0-9]*\"|      sha256 \"${new_sha}\"|" \
-            Formula/aegis-boot.rb
+          # Bump version (single line match — unambiguous).
+          sed -i "s|^  version \".*\"|  version \"${version}\"|" Formula/aegis-boot.rb
+
+          # Bump the Linux block — scope the edit to lines between
+          # `on_linux do` and its matching `end` so we don't clobber the
+          # macOS block. Use awk with a small state machine (ranges are
+          # trickier in sed for nested blocks + we want an inner-range).
+          if [ -n "$linux_sha" ]; then
+            awk -v ver="$version" -v sha="$linux_sha" '
+              /^  on_linux do$/ { in_block = 1 }
+              in_block && /^  end$/ { in_block = 0 }
+              in_block && /aegis-boot-x86_64-linux"$/ {
+                sub(/\/releases\/download\/v[^/]+\//, "/releases/download/v" ver "/")
+              }
+              in_block && /^      sha256 "/ {
+                sub(/sha256 "[^"]*"/, "sha256 \"" sha "\"")
+              }
+              { print }
+            ' Formula/aegis-boot.rb > Formula/aegis-boot.rb.tmp
+            mv Formula/aegis-boot.rb.tmp Formula/aegis-boot.rb
+          else
+            echo "::warning::macOS arm64 sha present but Linux x86_64 sha missing — Linux block left unchanged"
+          fi
+
+          # Bump the macOS block — same scoping trick, different block.
+          if [ -n "$macos_sha" ]; then
+            awk -v ver="$version" -v sha="$macos_sha" '
+              /^  on_macos do$/ { in_block = 1 }
+              in_block && /^  end$/ { in_block = 0 }
+              in_block && /aegis-boot-aarch64-apple-darwin"$/ {
+                sub(/\/releases\/download\/v[^/]+\//, "/releases/download/v" ver "/")
+              }
+              in_block && /^      sha256 "/ {
+                sub(/sha256 "[^"]*"/, "sha256 \"" sha "\"")
+              }
+              { print }
+            ' Formula/aegis-boot.rb > Formula/aegis-boot.rb.tmp
+            mv Formula/aegis-boot.rb.tmp Formula/aegis-boot.rb
+          else
+            echo "::warning::Linux x86_64 sha present but macOS arm64 sha missing — macOS block left unchanged"
+          fi
 
           # Show the diff for the run log.
           echo "--- formula diff ---"
