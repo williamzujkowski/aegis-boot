@@ -547,11 +547,11 @@ fn draw_empty_list(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         Style::default().add_modifier(Modifier::BOLD),
     )));
     lines.push(Line::from(
-        "  1. On the host, copy an ISO into the AEGIS_ISOS partition:",
+        "  1. On the host, add an ISO from the signed catalog in one step (#352):",
     ));
-    lines.push(Line::from("       aegis-boot add /path/to/distro.iso"));
+    lines.push(Line::from("       aegis-boot add ubuntu-24.04-live-server"));
     lines.push(Line::from(
-        "     (or drag-and-drop the .iso file onto the stick via your file manager).",
+        "     (run `aegis-boot recommend` for slugs — or `aegis-boot add /path/to.iso`)",
     ));
     lines.push(Line::from(
         "  2. If the AEGIS_ISOS partition is on this stick but wasn't auto-mounted,",
@@ -1229,6 +1229,30 @@ mod tests {
         assert!(
             s.contains("rescue shell"),
             "missing rescue-shell escape-hatch mention in: {s}",
+        );
+    }
+
+    #[test]
+    fn empty_list_points_at_catalog_slug_add_shortcut() {
+        // #352 UX-5: the new-user empty state should surface the
+        // one-step `aegis-boot add <catalog-slug>` path (from UX-4,
+        // PR #356) — NOT just the "supply a local ISO path" recipe.
+        // Operator sees the catalog shortcut first, local-path second.
+        let state = AppState::new(vec![]);
+        let s = render_to_string(&state);
+        assert!(
+            s.contains("aegis-boot add ubuntu-24.04-live-server"),
+            "empty state should show the catalog-slug add shortcut: {s}"
+        );
+        assert!(
+            s.contains("aegis-boot recommend"),
+            "empty state should mention `aegis-boot recommend` for catalog discovery: {s}"
+        );
+        // The local-path form must still render for operators with a
+        // pre-downloaded ISO — not a replacement, an ADDITION.
+        assert!(
+            s.contains("aegis-boot add /path/to.iso"),
+            "local-path form must still render alongside the catalog slug: {s}"
         );
     }
 
