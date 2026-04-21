@@ -597,9 +597,12 @@ fn confirm_destructive(drive: &Drive) -> bool {
 /// sub-issue.
 #[cfg(target_os = "linux")]
 fn flash_direct_install(drive: &Drive, out_dir: &Path) -> Result<(), FlashError> {
+    // combine_initrd moved inside `resolve_signed_chain_sources_timed`
+    // as part of the stage-5 grouping for #352 UX-3; the import stays
+    // scoped there.
     use crate::direct_install::{
-        combine_initrd, format_data_partition, format_esp, partition_stick, render_grub_cfg,
-        stage_esp, EspStagingSources,
+        format_data_partition, format_esp, partition_stick, render_grub_cfg, stage_esp,
+        EspStagingSources,
     };
 
     // #352 UX-2: pre-flight deps gate. Runs BEFORE any destructive
@@ -636,63 +639,156 @@ fn flash_direct_install(drive: &Drive, out_dir: &Path) -> Result<(), FlashError>
     let _work_guard = WorkDirGuard(work_dir.clone());
 
     println!("Direct-install: {} → {}", out_dir.display(), dev.display());
-    println!("  [1/6] Partition (sgdisk)");
-    partition_stick(dev).map_err(|e| FlashError::DirectInstall {
-        stage: DirectInstallStage::Partition,
-        detail: e,
-    })?;
-
-    println!("  [2/6] Format ESP (mkfs.fat)");
-    format_esp(&part1).map_err(|e| FlashError::DirectInstall {
-        stage: DirectInstallStage::FormatEsp,
-        detail: e,
-    })?;
-
-    println!("  [3/6] Format AEGIS_ISOS (mkfs.exfat)");
-    format_data_partition(&part2).map_err(|e| FlashError::DirectInstall {
-        stage: DirectInstallStage::FormatData,
-        detail: e,
-    })?;
-
-    println!("  [4/6] Render grub.cfg");
+    // #352 UX-3: wall-clock timer per stage + total at end. Operators
+    // on slow USB 2.0 sticks see mkfs.exfat and stage_esp dominate
+    // (~10-25 sec each); surfacing per-stage time tells them whether
+    // a stage is hanging vs. doing work. Total-elapsed answers "was
+    // direct-install actually faster than the dd path?"
+    let total_start = std::time::Instant::now();
     let grub_cfg = work_dir.join("grub.cfg");
-    render_grub_cfg(&grub_cfg).map_err(|e| FlashError::DirectInstall {
-        stage: DirectInstallStage::RenderGrubCfg,
-        detail: e,
-    })?;
-
-    println!("  [5/6] Combine distro + aegis initrd");
-    let sources = resolve_signed_chain_sources(out_dir).map_err(|e| FlashError::DirectInstall {
-        stage: DirectInstallStage::ResolveSources,
-        detail: e,
-    })?;
     let combined_initrd = work_dir.join("combined-initrd.img");
-    combine_initrd(
-        &sources.distro_initrd,
-        &sources.aegis_initrd,
-        &combined_initrd,
-    )
-    .map_err(|e| FlashError::DirectInstall {
-        stage: DirectInstallStage::CombineInitrd,
-        detail: e,
-    })?;
 
-    println!("  [6/6] Stage ESP (mmd + 6 mcopy writes)");
-    let staging = EspStagingSources {
-        shim: &sources.shim,
-        grub: &sources.grub,
-        kernel: &sources.kernel,
-        combined_initrd: &combined_initrd,
-        grub_cfg: &grub_cfg,
-    };
-    stage_esp(&part1, &staging).map_err(|e| FlashError::DirectInstall {
-        stage: DirectInstallStage::StageEsp,
-        detail: e,
+    run_timed_stage(1, "Partition (sgdisk)", || {
+        partition_stick(dev).map_err(|e| FlashError::DirectInstall {
+            stage: DirectInstallStage::Partition,
+            detail: e,
+        })
+    })?;
+    run_timed_stage(2, "Format ESP (mkfs.fat)", || {
+        format_esp(&part1).map_err(|e| FlashError::DirectInstall {
+            stage: DirectInstallStage::FormatEsp,
+            detail: e,
+        })
+    })?;
+    run_timed_stage(3, "Format AEGIS_ISOS (mkfs.exfat)", || {
+        format_data_partition(&part2).map_err(|e| FlashError::DirectInstall {
+            stage: DirectInstallStage::FormatData,
+            detail: e,
+        })
+    })?;
+    run_timed_stage(4, "Render grub.cfg", || {
+        render_grub_cfg(&grub_cfg).map_err(|e| FlashError::DirectInstall {
+            stage: DirectInstallStage::RenderGrubCfg,
+            detail: e,
+        })
+    })?;
+    // Stage 5 groups ResolveSources + CombineInitrd under a single
+    // operator-visible banner — they're tightly coupled (both read
+    // signed-chain inputs) and both fast, so one progress line is less
+    // noise than two.
+    let sources = resolve_signed_chain_sources_timed(5, out_dir, &combined_initrd)?;
+    run_timed_stage(6, "Stage ESP (mmd + 6 mcopy writes)", || {
+        let staging = EspStagingSources {
+            shim: &sources.shim,
+            grub: &sources.grub,
+            kernel: &sources.kernel,
+            combined_initrd: &combined_initrd,
+            grub_cfg: &grub_cfg,
+        };
+        stage_esp(&part1, &staging).map_err(|e| FlashError::DirectInstall {
+            stage: DirectInstallStage::StageEsp,
+            detail: e,
+        })
     })?;
 
     println!();
-    println!("Direct-install complete on {}.", dev.display());
+    println!(
+        "Direct-install complete on {} in {}.",
+        dev.display(),
+        format_elapsed(total_start.elapsed())
+    );
     Ok(())
+}
+
+/// Stage 5 wrapper that combines `ResolveSources` + `CombineInitrd`
+/// under a single `[5/6]` banner with one wall-clock timer. Split out
+/// so [`flash_direct_install`] stays inside the 50-line budget enforced
+/// elsewhere in this crate.
+#[cfg(target_os = "linux")]
+fn resolve_signed_chain_sources_timed(
+    index: u32,
+    out_dir: &Path,
+    combined_initrd: &Path,
+) -> Result<SignedChainSources, FlashError> {
+    use std::io::Write as _;
+    print!("  [{index}/6] Resolve + combine initrd  …  ");
+    std::io::stdout().flush().ok();
+    let start = std::time::Instant::now();
+    let result: Result<SignedChainSources, FlashError> = (|| {
+        let sources =
+            resolve_signed_chain_sources(out_dir).map_err(|e| FlashError::DirectInstall {
+                stage: DirectInstallStage::ResolveSources,
+                detail: e,
+            })?;
+        crate::direct_install::combine_initrd(
+            &sources.distro_initrd,
+            &sources.aegis_initrd,
+            combined_initrd,
+        )
+        .map_err(|e| FlashError::DirectInstall {
+            stage: DirectInstallStage::CombineInitrd,
+            detail: e,
+        })?;
+        Ok(sources)
+    })();
+    let elapsed = start.elapsed();
+    match result {
+        Ok(s) => {
+            println!("done ({})", format_elapsed(elapsed));
+            Ok(s)
+        }
+        Err(e) => {
+            println!("FAILED ({})", format_elapsed(elapsed));
+            Err(e)
+        }
+    }
+}
+
+/// Run a stage closure with wall-clock timing + an inline
+/// `[N/6] <label>  …  done (<elapsed>)` print. The stage index is
+/// passed explicitly rather than auto-incremented because stage 5
+/// groups two logical steps under one operator-visible banner;
+/// auto-counting would over-report to 7.
+#[cfg(target_os = "linux")]
+fn run_timed_stage<F>(index: u32, label: &str, work: F) -> Result<(), FlashError>
+where
+    F: FnOnce() -> Result<(), FlashError>,
+{
+    use std::io::Write as _;
+    print!("  [{index}/6] {label}  …  ");
+    std::io::stdout().flush().ok();
+    let start = std::time::Instant::now();
+    let result = work();
+    let elapsed = start.elapsed();
+    match result {
+        Ok(()) => {
+            println!("done ({})", format_elapsed(elapsed));
+            Ok(())
+        }
+        Err(e) => {
+            println!("FAILED ({})", format_elapsed(elapsed));
+            Err(e)
+        }
+    }
+}
+
+/// Format a [`std::time::Duration`] as a human-readable string:
+/// sub-minute → `"12.3s"`, longer → `"2m 04s"`. Precision past 100ms
+/// is noise for stage timers on slow USB sticks.
+///
+/// `cfg_attr(not(target_os = "linux"), allow(dead_code))` because all
+/// call sites live inside Linux-gated stage helpers; tests on other
+/// platforms exercise the format directly.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn format_elapsed(d: std::time::Duration) -> String {
+    let secs = d.as_secs_f64();
+    if secs < 60.0 {
+        format!("{secs:.1}s")
+    } else {
+        let mins = d.as_secs() / 60;
+        let remaining = d.as_secs() % 60;
+        format!("{mins}m {remaining:02}s")
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -2238,6 +2334,24 @@ mod tests {
             s.contains("untouched"),
             "setup stage should reassure operator stick is untouched"
         );
+    }
+
+    #[test]
+    fn format_elapsed_renders_sub_minute_in_decimal_seconds() {
+        use std::time::Duration;
+        assert_eq!(format_elapsed(Duration::from_millis(100)), "0.1s");
+        assert_eq!(format_elapsed(Duration::from_millis(800)), "0.8s");
+        assert_eq!(format_elapsed(Duration::from_millis(12_345)), "12.3s");
+        assert_eq!(format_elapsed(Duration::from_millis(59_900)), "59.9s");
+    }
+
+    #[test]
+    fn format_elapsed_renders_over_minute_in_m_and_padded_seconds() {
+        use std::time::Duration;
+        assert_eq!(format_elapsed(Duration::from_secs(60)), "1m 00s");
+        assert_eq!(format_elapsed(Duration::from_secs(64)), "1m 04s");
+        assert_eq!(format_elapsed(Duration::from_secs(124)), "2m 04s");
+        assert_eq!(format_elapsed(Duration::from_secs(3_605)), "60m 05s");
     }
 
     #[test]
