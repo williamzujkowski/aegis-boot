@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.6.0.schema.json
+#
+# Version manifest for aegis-boot (winget-pkgs schema 1.6.0).
+#
+# This is a TEMPLATE. Placeholders (`{{VERSION}}`) are substituted at
+# release time by the future publishing workflow (tracked in #365 Phase B2).
+# Do not submit this file as-is to microsoft/winget-pkgs.
+
+PackageIdentifier: AegisBootProject.aegis-boot
+PackageVersion: "{{VERSION}}"
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.6.0
