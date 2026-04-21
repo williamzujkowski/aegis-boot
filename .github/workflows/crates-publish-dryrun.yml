@@ -1,0 +1,54 @@
+name: Crates.io publish dry-run
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# #51 publish-readiness gate. Keeps the mechanical-prep claims in
+# docs/RELEASE_CRATES.md honest: any PR that breaks `cargo publish`
+# for iso-parser or kexec-loader fails this workflow before merge,
+# so the v1.0.0-rc1 publish day doesn't surprise us with a regression
+# that sat unnoticed in main for weeks.
+#
+# iso-probe is intentionally excluded — its dry-run needs iso-parser
+# to already be published to the registry (per RELEASE_CRATES.md). It
+# will be added to this gate once iso-parser is published.
+#
+# Publishable crates per #51:
+#   - iso-parser      (ISO9660 + boot-config extraction)
+#   - iso-probe       (runtime ISO discovery + verification) — deferred
+#   - kexec-loader    (kexec_file_load FFI wrapper)
+#
+# Non-publishable (intentional):
+#   - rescue-tui, aegis-fitness, aegis-cli, aegis-wire-formats
+#   — all repo-specific or binary crates.
+
+jobs:
+  publish-dryrun:
+    name: cargo publish --dry-run (iso-parser + kexec-loader)
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust (pinned to workspace MSRV)
+        run: |
+          rustup toolchain install 1.85.0 --profile minimal
+          rustup override set 1.85.0
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo publish --dry-run -p iso-parser
+        # Zero unpublished path deps → registry resolution succeeds
+        # without needing iso-parser on the real registry yet.
+        run: cargo publish --dry-run -p iso-parser --locked
+
+      - name: cargo publish --dry-run -p kexec-loader
+        # Same — no path deps on other workspace crates.
+        run: cargo publish --dry-run -p kexec-loader --locked
