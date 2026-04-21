@@ -395,6 +395,16 @@ fn select_drive(explicit: Option<&str>) -> Option<Drive> {
         if let Some(d) = drives.into_iter().find(|d| d.dev == path) {
             return Some(d);
         }
+        // Narrow CI/test escape hatch: accept a /dev/loopN target when
+        // AEGIS_ALLOW_LOOP_DEVICE=1 is set. Loop devices back to a
+        // regular file, so there's no physical-disk clobber risk — but
+        // we *only* relax the check for paths under /dev/loop to keep
+        // the guard intact for real drives. Used by the direct-install
+        // E2E workflow (#274 Phase 3) to exercise the CLI against a
+        // synthesized loop image without needing a real USB stick.
+        if is_loop_device_override(&path) {
+            return Some(synthetic_loop_drive(path));
+        }
         eprintln!("{dev} is not a removable drive (or not detected as one).");
         eprintln!("Available removable drives:");
         for d in detect::list_removable_drives() {
@@ -494,6 +504,48 @@ fn select_drive(explicit: Option<&str>) -> Option<Drive> {
     })
 }
 
+/// CI/test escape hatch: true when the operator set
+/// `AEGIS_ALLOW_LOOP_DEVICE=1` AND the target looks like `/dev/loopN`.
+/// Intentionally narrow — a real `/dev/sdX` never matches, so setting
+/// the env var on a laptop does not unlock "flash to my system disk."
+fn is_loop_device_override(path: &Path) -> bool {
+    is_loop_device_override_for(
+        path,
+        std::env::var("AEGIS_ALLOW_LOOP_DEVICE").ok().as_deref(),
+    )
+}
+
+/// Pure-function form used by the caller + unit tests. Splitting the
+/// env read from the predicate lets tests exercise the matcher without
+/// mutating process-global state (the crate is `forbid(unsafe_code)`,
+/// so `env::set_var` — unsafe in 2024 edition — is not available).
+fn is_loop_device_override_for(path: &Path, env_value: Option<&str>) -> bool {
+    if env_value != Some("1") {
+        return false;
+    }
+    path.to_str().is_some_and(|s| s.starts_with("/dev/loop"))
+}
+
+/// Build a synthetic [`Drive`] for a loop-device override. Size is
+/// probed via `blockdev --getsize64`; failure falls back to 0 so the
+/// capacity line in the confirm prompt is clearly unreliable rather
+/// than fake-plausible.
+fn synthetic_loop_drive(path: PathBuf) -> Drive {
+    let size_bytes = std::process::Command::new("blockdev")
+        .args(["--getsize64", path.to_string_lossy().as_ref()])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(0);
+    Drive {
+        dev: path,
+        model: "loop-device (CI override)".to_string(),
+        size_bytes,
+        partitions: 0,
+    }
+}
+
 fn confirm_destructive(drive: &Drive) -> bool {
     println!();
     println!(
@@ -553,6 +605,12 @@ fn flash_direct_install(drive: &Drive, out_dir: &Path) -> Result<(), FlashError>
     let dev = &drive.dev;
     let part1 = partition_path(dev, 1);
     let part2 = partition_path(dev, 2);
+    // nosemgrep: rust.lang.security.temp-dir.temp-dir
+    // temp_dir() here hosts only intermediates (combined initrd, rendered
+    // grub.cfg) that we stage onto the ESP and then delete via WorkDirGuard.
+    // The pid-suffixed subdir + unique-per-invocation contents prevent
+    // cross-user collision on multi-user hosts. Signed boot artifacts
+    // (shim, grub.efi, kernel) are resolved from /usr paths, not temp.
     let work_dir =
         std::env::temp_dir().join(format!("aegis-direct-install-{}", std::process::id()));
     std::fs::create_dir_all(&work_dir).map_err(|e| FlashError::DirectInstall {
@@ -1387,6 +1445,11 @@ pub(crate) enum FlashError {
     /// stage. The typed `stage` lets test assertions and operator
     /// diagnostics pinpoint which of the 7 sequential steps failed
     /// without parsing free-form error text.
+    ///
+    /// `cfg_attr(not(target_os = "linux"), allow(dead_code))` because
+    /// `flash_direct_install` is `#[cfg(target_os = "linux")]` — the
+    /// non-test macOS cross-compile build has no construction site.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     #[error("direct-install {stage:?} failed: {detail}")]
     DirectInstall {
         stage: DirectInstallStage,
@@ -1404,6 +1467,11 @@ pub(crate) enum FlashError {
 /// String form used in error messages = `Debug` form (e.g.
 /// `"DirectInstall Partition failed: ..."`); consumers that grep
 /// stderr can pin against these stable identifiers.
+///
+/// `cfg_attr(not(target_os = "linux"), allow(dead_code))` because
+/// construction sites live inside the Linux-gated `flash_direct_install`.
+/// Tests on other platforms only exercise `Setup` + `FormatEsp`.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DirectInstallStage {
     /// Pre-flight: temp work dir creation, dependency checks.
@@ -2090,6 +2158,33 @@ mod tests {
         assert!(
             s.contains("untouched"),
             "setup stage should reassure operator stick is untouched"
+        );
+    }
+
+    #[test]
+    fn loop_device_override_requires_env_and_path_match() {
+        use std::path::Path;
+        // Pure-function form (env passed as arg) — keeps the test
+        // thread-safe under `forbid(unsafe_code)` without env mutation.
+        assert!(
+            !is_loop_device_override_for(Path::new("/dev/loop0"), None),
+            "override disabled when env unset"
+        );
+        assert!(
+            !is_loop_device_override_for(Path::new("/dev/loop0"), Some("0")),
+            "override disabled when env not '1'"
+        );
+        assert!(
+            is_loop_device_override_for(Path::new("/dev/loop3"), Some("1")),
+            "override enables loop path when env=1"
+        );
+        assert!(
+            !is_loop_device_override_for(Path::new("/dev/sda"), Some("1")),
+            "override does NOT unlock real disks — narrow by design"
+        );
+        assert!(
+            !is_loop_device_override_for(Path::new("/dev/nvme0n1"), Some("1")),
+            "nvme paths stay rejected even with env=1"
         );
     }
 

@@ -78,6 +78,10 @@ jobs:
           # grub.cfg, matching mkusb.yml so the boot smoke can reuse the
           # same QEMU -nographic/-serial pattern.
           MKUSB_GRUB_DEFAULT: "1"
+          # Narrow override — accepts /dev/loopN targets only. Keeps the
+          # real-drive safety check intact (a real /dev/sdX would still
+          # be rejected even with this var set). CI-only use.
+          AEGIS_ALLOW_LOOP_DEVICE: "1"
         run: |
           LOOP=$(cat /tmp/direct-install.loop)
           # --yes skips the typed-confirmation prompt; --out-dir points at
