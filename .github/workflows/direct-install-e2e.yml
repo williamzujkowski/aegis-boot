@@ -86,7 +86,10 @@ jobs:
           LOOP=$(cat /tmp/direct-install.loop)
           # --yes skips the typed-confirmation prompt; --out-dir points at
           # the freshly-built initramfs from build-initramfs.sh.
-          sudo ./target/release/aegis-boot flash --direct-install --yes \
+          # `sudo -E` preserves AEGIS_ALLOW_LOOP_DEVICE across the uid
+          # boundary — otherwise sudo strips it and the CLI rejects the
+          # loop device as "not removable."
+          sudo -E ./target/release/aegis-boot flash --direct-install --yes \
             --out-dir ./out "$LOOP"
           # Re-read the partition table so subsequent mounts see partitions.
           sudo partprobe "$LOOP"

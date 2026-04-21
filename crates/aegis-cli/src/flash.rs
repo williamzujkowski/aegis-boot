@@ -605,12 +605,12 @@ fn flash_direct_install(drive: &Drive, out_dir: &Path) -> Result<(), FlashError>
     let dev = &drive.dev;
     let part1 = partition_path(dev, 1);
     let part2 = partition_path(dev, 2);
-    // nosemgrep: rust.lang.security.temp-dir.temp-dir
     // temp_dir() here hosts only intermediates (combined initrd, rendered
     // grub.cfg) that we stage onto the ESP and then delete via WorkDirGuard.
     // The pid-suffixed subdir + unique-per-invocation contents prevent
     // cross-user collision on multi-user hosts. Signed boot artifacts
     // (shim, grub.efi, kernel) are resolved from /usr paths, not temp.
+    // nosemgrep: rust.lang.security.temp-dir.temp-dir
     let work_dir =
         std::env::temp_dir().join(format!("aegis-direct-install-{}", std::process::id()));
     std::fs::create_dir_all(&work_dir).map_err(|e| FlashError::DirectInstall {
