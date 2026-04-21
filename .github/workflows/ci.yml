@@ -84,14 +84,16 @@ jobs:
         run: cargo run --release -p aegis-fitness -- --threshold 80
 
   cargo-deny:
-    name: cargo-deny (advisories + licenses + bans)
+    name: cargo-deny (advisories + licenses + bans + sources)
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
+      # Workspace-level policy enforced via deny.toml at the repo root.
+      # Gates every PR + push-to-main so a dep-bump that pulls in a GPL /
+      # AGPL / LGPL / unknown-license crate fails CI before merge.
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          manifest-path: crates/iso-parser/Cargo.toml
-          command: check
+          command: check advisories licenses bans sources
 
   sbom:
     name: Generate CycloneDX SBOM

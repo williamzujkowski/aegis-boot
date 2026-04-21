@@ -1,0 +1,108 @@
+# cargo-deny configuration for aegis-boot
+# Workspace license: MIT OR Apache-2.0
+#
+# Enforces that every transitive dependency publishes under a license
+# compatible with our dual MIT/Apache-2.0 outbound license. A silent
+# dep-bump that introduces a GPL/AGPL/LGPL (or unknown) crate will fail
+# the `cargo-deny` CI gate rather than quietly contaminate the tree.
+#
+# Reference: https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+# Evaluate the full dependency graph for all workspace targets, not just
+# the host tuple. This catches deps that only come in on non-linux
+# targets (e.g. Windows-only crates pulled in via `[target.'cfg(...)']`).
+all-features = false
+no-default-features = false
+
+[output]
+feature-depth = 1
+
+# ─── Security advisories ───────────────────────────────────────────────
+# Pull the latest advisory DB from rustsec and fail on any vulnerability
+# or unmaintained/yanked crate in the graph.
+[advisories]
+version = 2
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+# Unmaintained-dep ignores — transitive crates we can't unilaterally
+# remove. Each entry needs a rationale + the upstream that owns the
+# replacement. Review at every workspace dep bump.
+ignore = [
+    # number_prefix — unmaintained; pulled in by indicatif (our
+    # progress-bar UI for `flash` / `fetch`). Not a security vuln —
+    # just a maintenance signal. Resolved when indicatif drops it.
+    { id = "RUSTSEC-2025-0119", reason = "transitive via indicatif; benign unmaintained flag" },
+    # paste — no longer maintained; pulled in by ratatui (our TUI
+    # crate, core dep for rescue-tui). Resolved when ratatui drops it
+    # (ratatui 0.30 is tracked in #258 but blocked on MSRV bump).
+    { id = "RUSTSEC-2024-0436", reason = "transitive via ratatui 0.29; resolved with #258 ratatui bump" },
+]
+
+# ─── Licenses ─────────────────────────────────────────────────────────
+# Allowlist only. Anything not in `allow` fails the check — including
+# "unknown" / unlicensed crates, which default to the SPDX expression
+# being absent and will therefore trip the confidence threshold.
+#
+# Explicitly denied license families (GPL/AGPL/LGPL) are listed in a
+# comment below for auditor clarity — they are blocked automatically
+# by virtue of not being in `allow`, but calling them out makes the
+# policy easy to read.
+[licenses]
+version = 2
+confidence-threshold = 0.93
+# Allowed licenses — compatible with MIT OR Apache-2.0 outbound:
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+    "MPL-2.0",
+]
+# NOT allowed (blocked by omission from `allow`, listed here for audit):
+#   GPL-2.0, GPL-3.0, AGPL-1.0, AGPL-3.0, LGPL-2.0, LGPL-2.1, LGPL-3.0,
+#   SSPL-1.0, BUSL-1.1, proprietary / unknown / unlicensed.
+#
+# Per-crate exceptions go in this block with a rationale comment. None
+# are currently required.
+exceptions = []
+
+# ─── Bans ─────────────────────────────────────────────────────────────
+# Catch duplicate-version bloat and explicitly-forbidden crates.
+# `multiple-versions = "warn"` so a transitive diamond doesn't block
+# CI but is still surfaced for triage.
+[bans]
+multiple-versions = "warn"
+# Wildcards are warned (not denied) because workspace-internal
+# `{ path = "../foo" }` deps show as wildcard "*" versions. Several
+# workspace crates (aegis-cli, rescue-tui) consume other workspace
+# crates via path-only. `allow-wildcard-paths = true` only exempts
+# private crates, and these are publishable. Tightening to "deny"
+# requires adding explicit `version = "..."` to every internal
+# path-dep — tracked separately and out of scope for the
+# license-compatibility gate this config exists to enforce.
+wildcards = "warn"
+allow-wildcard-paths = true
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+allow = []
+deny = []
+skip = []
+skip-tree = []
+
+# ─── Sources ──────────────────────────────────────────────────────────
+# Only allow crates from crates.io. Any git dep or alternate registry
+# must be explicitly allow-listed here with a rationale.
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
