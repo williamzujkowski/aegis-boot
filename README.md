@@ -200,3 +200,5 @@ Dual-licensed under either of:
 - [MIT License](./LICENSE-MIT) (`LICENSE-MIT`)
 
 at your option. Contributions are accepted under the same dual license; see [CONTRIBUTING.md](./CONTRIBUTING.md#license).
+
+See [`NOTICE`](./NOTICE) for upstream attribution of the signed Secure Boot components (shim, grub, kernel) distributed as part of aegis-boot media.

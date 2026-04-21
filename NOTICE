@@ -1,0 +1,65 @@
+aegis-boot
+https://github.com/williamzujkowski/aegis-boot
+
+Copyright 2026 William Zujkowski
+
+Licensed under either of Apache License, Version 2.0 (LICENSE-APACHE) or
+MIT License (LICENSE-MIT), at your option.
+
+------------------------------------------------------------------------
+
+This project includes and distributes the following upstream signed
+binaries as part of the Secure Boot chain on the media it produces
+(see docs/ARCHITECTURE.md and scripts/mkusb.sh). These components are
+NOT covered by the aegis-boot dual license; each is distributed under
+its own upstream license terms. aegis-boot does not modify these
+binaries — they are copied unchanged from distro packages onto the
+produced USB image.
+
+  * shim-signed
+    First-stage UEFI loader, signed by the Microsoft UEFI CA.
+    Upstream: https://github.com/rhboot/shim
+    Distro package: shim-signed (Canonical / Debian / Red Hat maintained).
+    License: BSD-2-Clause-like shim license; signed binary redistribution
+    terms are set by the Microsoft UEFI Signing Service and the
+    distributing vendor (Canonical ships the Ubuntu-signed variant used
+    by default). See /usr/share/doc/shim-signed/copyright on an Ubuntu
+    system for the exact redistributable terms.
+
+  * grub-efi-amd64-signed
+    Second-stage bootloader (GRUB 2), signed by Canonical.
+    Upstream: https://www.gnu.org/software/grub/
+    Distro package: grub-efi-amd64-signed (Canonical).
+    License: GPL-3.0-or-later (upstream GRUB). The signed wrapper is
+    redistributed under Canonical's terms; source is available from
+    the matching source package.
+
+  * Linux kernel (linux-image-*-virtual / linux-image-*-generic)
+    Canonical-signed Ubuntu kernel used as the rescue kernel that loads
+    our initramfs and performs the kexec handoff.
+    Upstream: https://www.kernel.org/
+    Distro package: linux-image-generic / linux-image-virtual (Canonical).
+    License: GPL-2.0-only (with the syscall exception for userspace).
+    Source is available from the matching Ubuntu source package.
+
+------------------------------------------------------------------------
+
+This project incorporates significant Rust dependencies under their own
+licenses. Per-crate licenses are declared in each crate's Cargo.toml
+via the SPDX `license` field and are gated in CI by `cargo-deny`
+(see deny.toml). That gate is the authoritative per-crate license
+source; this NOTICE file does not enumerate them.
+
+For a comprehensive software bill of materials (SBOM), run
+`cargo tree` locally, or consult the CycloneDX SBOM artifact
+(`sbom-cyclonedx`) uploaded by the CI and release workflows
+(.github/workflows/ci.yml and .github/workflows/release.yml).
+
+------------------------------------------------------------------------
+
+If you redistribute aegis-boot, or a USB image produced by its
+`mkusb.sh` script, you are responsible for complying with the license
+terms of every component listed above in addition to the aegis-boot
+dual license. The GPL-licensed components (grub, kernel) require
+source availability; the Microsoft-signed shim binary is redistributed
+under the terms the signing vendor (typically Canonical) places on it.
