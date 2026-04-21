@@ -48,6 +48,23 @@ The implementation lives in [`crates/aegis-cli`](../crates/aegis-cli) (binary na
 
 ---
 
+## `aegis-boot quickstart`
+
+Shortest-path command from stick-in-hand to booted rescue-tui (#352 UX-1). A thin wrapper around `aegis-boot init --profile minimal --yes --direct-install` — preset so a net-new operator types one command and gets Alpine 3.20 Standard (~200 MiB) signed-boot-chain ready to use.
+
+### Usage
+
+```bash
+aegis-boot quickstart /dev/sdc          # device arg required — no auto-detect
+aegis-boot quickstart --help
+```
+
+The device argument is **required**. Auto-detection was explicitly rejected in the #352 consensus vote because single-candidate heuristics can misclassify a mounted USB and result in data loss.
+
+For a different distro or a larger kit, use `aegis-boot init --profile <name>` or `aegis-boot flash /dev/sdX && aegis-boot add <slug>` (the catalog-slug form from #352 UX-4).
+
+---
+
 ## `aegis-boot init`
 
 One-command rescue stick. Composes `doctor → flash → fetch + add` in sequence using a named **profile** — a constant bundle of catalog slugs. The simplest path from empty stick to rescue-ready, producing a single attestation manifest that spans the entire run.

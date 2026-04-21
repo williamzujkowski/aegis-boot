@@ -1,6 +1,7 @@
 //! `aegis-boot` — operator CLI for aegis-boot.
 //!
 //! Subcommands:
+//!   * `quickstart` — shortest-path: flash + Alpine (#352 UX-1)
 //!   * `init`      — one-command rescue stick (flash + fetch + add profile)
 //!   * `flash`     — write aegis-boot to a USB stick (3-step guided)
 //!   * `add`       — copy + validate an ISO onto the stick
@@ -42,6 +43,7 @@ mod inventory;
 mod man;
 mod mounts;
 mod plan;
+mod quickstart;
 mod readback;
 mod redact;
 mod tour;
@@ -61,6 +63,7 @@ fn main() -> ExitCode {
     let subcmd = args.first().map(std::string::String::as_str);
 
     match subcmd {
+        Some("quickstart") => quickstart::run(&args[1..]),
         Some("init") => init::run(&args[1..]),
         Some("flash") => flash::run(&args[1..]),
         Some("list") => inventory::run_list(&args[1..]),

@@ -316,6 +316,31 @@ After installing:
 See also: `aegis-boot completions bash` / `zsh` for shell completions.
 ```
 
+## `aegis-boot quickstart`
+
+```text
+aegis-boot quickstart — shortest path from stick to booted rescue
+
+USAGE: aegis-boot quickstart /dev/sdX
+
+Flashes the stick via --direct-install, fetches Alpine 3.20 Standard
+(~200 MiB) from the signed catalog, and stages it — one command from
+stick-in-hand to booted rescue-tui.
+
+Behavior:
+  * The device arg is REQUIRED. Explicit path — no auto-detect.
+  * Equivalent to:  aegis-boot init --profile minimal --yes \
+                                   --direct-install /dev/sdX
+  * --direct-install is ~8x faster than the legacy dd path on USB 2.0.
+
+For a different ISO, use:
+  * aegis-boot init --profile panic-room /dev/sdX   # 3 ISOs, 5 GiB
+  * aegis-boot init --profile server     /dev/sdX   # 3 server distros
+  * aegis-boot flash /dev/sdX && aegis-boot add <slug>  # fine-grained
+
+Related: #352 (sub-10-minute flash-to-boot epic).
+```
+
 ## `aegis-boot recommend`
 
 ```text

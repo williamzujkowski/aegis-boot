@@ -71,6 +71,7 @@ const SUBCOMMANDS: &[&str] = &[
     "init",
     "list",
     "man",
+    "quickstart",
     "recommend",
     "tour",
     "update",

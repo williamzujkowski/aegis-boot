@@ -32,6 +32,11 @@ for full per-command usage. Read-mostly subcommands accept
 .BR \-\-json
 for stable machine-readable output (schema_version=1).
 .TP
+.B quickstart \fIdevice\fR
+Shortest-path net-new-user flow (#352 UX-1). Thin wrapper over
+.B init \-\-profile minimal \-\-yes \-\-direct-install \fIdevice\fR.
+Device argument is required — no auto-detect (data-loss risk).
+.TP
 .B init \fR[\fIdevice\fR] [\-\-profile \fINAME\fR] [\-\-yes]
 One-command rescue stick. Composes
 .BR doctor ", " flash ", " fetch ", " add
