@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
 # QEMU smoke boot: assert that the built initramfs actually boots and that
 # rescue-tui reaches its first render.
 #

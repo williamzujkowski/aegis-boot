@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # draft-release-notes.sh — produce a first-cut CHANGELOG entry for
 # the next release using `git-cliff`. The output is a DRAFT; the

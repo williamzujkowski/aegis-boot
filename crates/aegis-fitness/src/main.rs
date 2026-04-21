@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `aegis-fitness` — repo, build, and artifact health audit for aegis-boot.
 //!
 //! Runs a fixed set of cheap checks against the working tree and reports a

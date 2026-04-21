@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
 # Build a reproducible initramfs.cpio.gz that wraps rescue-tui.
 #
 # The resulting archive is designed to be appended (or concatenated) to a

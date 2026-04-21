@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `aegis-boot verify [device|mount]` — re-verify every ISO on a stick.
 //!
 //! Closes the trust-narrative loop (flash → add → *verify*). For each

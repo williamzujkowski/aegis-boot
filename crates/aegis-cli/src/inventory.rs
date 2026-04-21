@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `aegis-boot list` + `add` subcommands — ISO inventory operations.
 //!
 //! `list` prints ISO files on the stick's `AEGIS_ISOS` partition with

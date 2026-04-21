@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! macOS removable-drive detection via `diskutil list -plist` piped
 //! through `plutil -convert json`.
 //!

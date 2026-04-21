@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
 # OVMF SecBoot foundation smoke test.
 #
 # Phase 1 of issue #16: prove the CI runner can boot QEMU under

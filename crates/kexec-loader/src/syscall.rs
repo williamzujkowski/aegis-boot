@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Raw Linux syscall FFI for `kexec_file_load(2)` + `reboot(LINUX_REBOOT_CMD_KEXEC)`.
 //!
 //! This is the only module in the crate that touches `unsafe`. Every call site

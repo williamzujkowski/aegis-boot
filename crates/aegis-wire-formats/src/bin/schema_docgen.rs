@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `aegis-wire-formats-schema-docgen` — emits JSON Schema documents for
 //! every public wire-format type in `aegis-wire-formats` into
 //! `docs/reference/schemas/` in the parent workspace.

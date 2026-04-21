@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Pure state machine for the rescue TUI — no rendering, no I/O.
 //!
 //! Split from rendering so unit tests can cover every transition without a

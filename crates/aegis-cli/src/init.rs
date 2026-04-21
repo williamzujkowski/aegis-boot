@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `aegis-boot init` — one-command rescue stick: flash + fetch + add.
 //!
 //! Composes the existing primitives (`doctor`, `flash`, `fetch`,

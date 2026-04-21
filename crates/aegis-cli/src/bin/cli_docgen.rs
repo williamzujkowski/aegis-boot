@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `cli-docgen` — drift-check between the `aegis-boot` subcommand
 //! dispatch table and its user-facing documentation, and
 //! auto-generator for the CLI synopsis doc.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Removable-drive detection. Platform-dispatched: Linux uses sysfs,
 //! macOS uses `diskutil list -plist | plutil -convert json`, other
 //! platforms currently return an empty list + a clear error from the

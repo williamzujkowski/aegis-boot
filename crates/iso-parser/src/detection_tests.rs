@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Detection tests for `Distribution::from_paths` against the new variants.
 //!
 //! Kept in a sibling file so the existing `#[cfg(test)] mod tests` block in

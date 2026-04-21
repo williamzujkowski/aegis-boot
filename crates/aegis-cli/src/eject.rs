@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `aegis-boot eject [device]` — safe-eject helper.
 //!
 //! Operators who pull a stick without first syncing risk FAT32 / ext4

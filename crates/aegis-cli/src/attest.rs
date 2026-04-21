@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `aegis-boot attest` — attestation receipts for flashed sticks.
 //!
 //! A flash operation produces a JSON manifest recording exactly what

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
 # Full local validation run. Replaces GHA CI during development when
 # billing is constrained or you want instant feedback.
 #

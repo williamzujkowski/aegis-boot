@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `aegis-boot init` wizard helpers — pure logic for the
 //! serial-confirmation safety gate (#245).
 //!

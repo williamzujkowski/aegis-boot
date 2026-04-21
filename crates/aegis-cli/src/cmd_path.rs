@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Shared command-on-PATH probe. Every aegis-boot surface that asks
 //! "is this command available?" goes through [`which`] so the answer
 //! is the same whether `doctor`, `fetch-image`, or a future caller

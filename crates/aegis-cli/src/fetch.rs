@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `aegis-boot fetch <slug>` — download + verify a catalog ISO.
 //!
 //! Resolves a slug from the catalog, downloads the ISO, the project's

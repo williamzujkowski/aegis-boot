@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `aegis-boot doctor` — health check for the host environment and any
 //! aegis-boot stick the operator wants to inspect.
 //!

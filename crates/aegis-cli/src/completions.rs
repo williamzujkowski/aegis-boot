@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `aegis-boot completions <shell>` — emit a shell completion script.
 //!
 //! Operators install with:

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Real `kexec_file_load(2)` integration test.
 //!
 //! Exercises [`kexec_loader::load_dry`] against the running kernel and

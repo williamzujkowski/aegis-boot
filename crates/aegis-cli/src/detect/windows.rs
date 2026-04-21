@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Windows removable-drive detection via `PowerShell` `Get-Disk`.
 //!
 //! `Get-Disk | ConvertTo-Json -Depth 2` emits a JSON array of physical

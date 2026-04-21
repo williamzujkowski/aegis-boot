@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
 # Build a bootable aegis-boot USB image.
 #
 # Output: a raw disk image the user can either:

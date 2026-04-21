@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Consistent-obfuscation redaction for bug-report bundles (#342).
 //!
 //! Pattern borrowed from [`sos clean`](https://manpages.ubuntu.com/manpages/jammy/man1/sos-clean.1.html):

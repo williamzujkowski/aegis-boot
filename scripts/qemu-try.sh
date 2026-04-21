@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
 # Boot a mkusb-produced image under QEMU+OVMF SecBoot for developer testing.
 #
 # Usage:

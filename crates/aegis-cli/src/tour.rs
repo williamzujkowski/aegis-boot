@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `aegis-boot tour` — 30-second in-terminal walkthrough.
 //!
 //! Operators who land on `aegis-boot --help` see 16 subcommands and no

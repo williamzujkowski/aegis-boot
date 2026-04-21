@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Operator-curated metadata that travels alongside an ISO.
 //!
 //! The rescue-TUI menu shows ISO filenames, which are dense and

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Color theming for the rescue TUI.
 //!
 //! Operators can override the default palette with `AEGIS_THEME=<name>`

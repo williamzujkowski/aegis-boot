@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `aegis-boot` — operator CLI for aegis-boot.
 //!
 //! Subcommands:

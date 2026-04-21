@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
 # Build a fresh aegis-boot stick image, copy real ISOs onto its
 # AEGIS_ISOS data partition, then boot the result under QEMU+OVMF
 # Secure Boot — the closest no-real-USB simulation of the operator

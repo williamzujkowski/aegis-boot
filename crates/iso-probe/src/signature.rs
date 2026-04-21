@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! ISO hash verification against sibling checksum files.
 //!
 //! Most distros publish their ISOs alongside a `SHA256SUMS` file (or per-ISO

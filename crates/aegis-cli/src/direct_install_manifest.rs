@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Signed attestation manifest for direct-install (#274 PR3, #277).
 //!
 //! Companion module to [`direct_install`]. Produces

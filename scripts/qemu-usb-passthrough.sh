@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
 # Boot a REAL USB stick (already dd'd with mkusb.sh output) under
 # QEMU+OVMF Secure Boot via USB host passthrough. Safer than
 # rebooting the host for first-hardware shakedown (#109).

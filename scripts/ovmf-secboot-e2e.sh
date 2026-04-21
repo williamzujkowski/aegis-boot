@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
 # OVMF SecBoot end-to-end test (Phase 2 of issue #16).
 #
 # Boots a real signed shim → signed grub → signed Canonical kernel chain

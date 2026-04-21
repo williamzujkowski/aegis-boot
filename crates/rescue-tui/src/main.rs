@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `rescue-tui` — ratatui application shown inside the aegis-boot signed Linux
 //! rescue environment. Discovers ISOs via `iso-probe`, lets the user pick one,
 //! and hands off to `kexec-loader`.

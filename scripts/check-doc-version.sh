@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # check-doc-version.sh — drift-guard for aegis-boot version literals in
 # user-facing docs.

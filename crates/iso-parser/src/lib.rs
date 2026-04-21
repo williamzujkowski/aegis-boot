@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // Phase 6 of #286 — README.md becomes the rustdoc landing page
 // alongside the Rust-specific module docs below. docs.rs + local
 // `cargo doc --open` visitors see the operator-level overview

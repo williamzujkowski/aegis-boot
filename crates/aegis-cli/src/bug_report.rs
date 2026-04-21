@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `aegis-boot bug-report` — workstation-side bug report bundler (#342 Phase 1).
 //!
 //! One command that captures everything a maintainer typically asks for

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `aegis-boot man` — emit the man page to stdout.
 //!
 //! The canonical `aegis-boot(1)` source lives at `man/aegis-boot.1` in

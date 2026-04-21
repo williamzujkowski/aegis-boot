@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # check-doc-version.test.sh — smoke-test that `check-doc-version.sh`
 # (a) passes on the current green tree, and (b) correctly FAILS when

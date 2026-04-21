@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // Phase 6 of #286 — README.md becomes the rustdoc landing page.
 // `clippy::doc_markdown = allow` — README prose; see iso-parser for
 // rationale.

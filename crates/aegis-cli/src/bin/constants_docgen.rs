@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `constants-docgen` — renders values from [`crate::constants`] into
 //! HTML-marker regions in the user-facing docs.
 //!

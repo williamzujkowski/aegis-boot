@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Rust-native flash provisioning — foundation for #274.
 //!
 //! This module replaces the `scripts/mkusb.sh` + `dd` pipeline with

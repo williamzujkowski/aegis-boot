@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Pure rendering — given an [`AppState`], produce a frame on any
 //! [`ratatui::backend::Backend`]. Tested with `TestBackend`.
 

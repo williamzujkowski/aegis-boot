@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `aegis-boot compat` — hardware compatibility lookup.
 //!
 //! Answers "will aegis-boot work on my laptop?" with concrete data

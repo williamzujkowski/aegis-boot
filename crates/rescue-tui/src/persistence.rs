@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Boot menu persistence — remember the user's last choice so they don't
 //! have to re-navigate after a failed kexec or between sessions.
 //!

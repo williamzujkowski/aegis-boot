@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `aegis-boot fetch-image` — download + verify a pre-built aegis-boot
 //! disk image.
 //!

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Linux removable-drive detection via sysfs.
 //!
 //! Enumerates `/sys/block/sd*` looking for removable USB mass storage

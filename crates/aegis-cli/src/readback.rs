@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Post-write readback verification — read back the first N bytes of
 //! a freshly-flashed device and verify the sha256 matches the source
 //! image's prefix. PR1 of #244 (the `flash` command's "step 4 of 4

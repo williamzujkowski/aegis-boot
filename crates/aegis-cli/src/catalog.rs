@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `aegis-boot recommend` — curated catalog of known-good ISOs.
 //!
 //! The catalog is an in-binary list of ISO entries with their canonical

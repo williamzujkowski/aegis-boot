@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: MIT OR Apache-2.0
 # aegis-boot installer.
 #
 # Downloads the latest (or a specific) release of the `aegis-boot`

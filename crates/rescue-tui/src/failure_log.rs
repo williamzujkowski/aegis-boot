@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! On-stick failure microreport writer (#342 Phase 2, Tier A).
 //!
 //! When rescue-tui or early initramfs hits a classifiable boot

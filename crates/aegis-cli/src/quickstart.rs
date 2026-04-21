@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `aegis-boot quickstart /dev/sdX` — shortest-path net-new-user flow.
 //!
 //! #352 UX-1: the single-command capstone of the sub-10-minute

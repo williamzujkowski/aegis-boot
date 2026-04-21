@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `UserFacing` — structured, operator-friendly errors.
 //!
 //! Replaces the today-pattern of free-text error strings with a typed

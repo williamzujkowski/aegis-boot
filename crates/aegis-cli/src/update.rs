@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `aegis-boot update [device]` — eligibility check for in-place
 //! signed-chain rotation.
 //!

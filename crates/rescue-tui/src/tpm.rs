@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! TPM PCR extension for kexec attestation.
 //!
 //! Before aegis-boot hands control to a user-selected ISO via kexec, we

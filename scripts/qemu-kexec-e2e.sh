@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
 # kexec end-to-end smoke test.
 #
 # What this proves (when it passes):

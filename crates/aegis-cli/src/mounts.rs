@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Shared helpers for reading `/proc/mounts` and deriving
 //! block-device paths. Consolidates three near-identical implementations
 //! that lived in `inventory.rs` and `attest.rs` (each doing their own

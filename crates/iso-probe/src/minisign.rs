@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Minisign detached signature verification.
 //!
 //! Looks for `<iso>.minisig` sibling files and verifies them against a trust

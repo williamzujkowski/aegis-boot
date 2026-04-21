@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // First production caller (`flash::build_flash_plan`) uses a subset of
 // `Operation` variants + `Plan::new`/`add`. Variants and accessors reserved
 // for the `update`/`add`/`init`/`expand` rollout per #247 are kept

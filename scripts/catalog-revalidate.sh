@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
 # Re-validate all URLs in the `aegis-boot recommend` catalog.
 #
 # Reads iso_url / sha256_url / sig_url fields from

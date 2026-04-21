@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Integration test for the full `iso-probe` discover → prepare flow.
 //!
 //! Builds a minimal ISO9660 fixture with `xorriso`, then exercises:
