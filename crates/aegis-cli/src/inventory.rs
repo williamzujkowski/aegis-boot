@@ -65,10 +65,18 @@ pub fn run_list(args: &[String]) -> ExitCode {
                 let sha_marker = if iso.has_sha256 { "\u{2713}" } else { " " };
                 let sig_marker = if iso.has_minisig { "\u{2713}" } else { " " };
                 let label = iso.display_name.as_deref().unwrap_or(&iso.name);
+                // Human text output shows "folder/name" when the ISO
+                // sits in a subdirectory so operators can see the
+                // layout at a glance (#274 Phase 6a). JSON stays on
+                // two fields (`name` + `folder`) for machine consumers.
+                let display_path = match &iso.folder {
+                    Some(f) => format!("{f}/{label}"),
+                    None => label.to_string(),
+                };
                 println!(
                     "  [{sha_marker} sha256] [{sig_marker} minisig]  {:>8}  {}",
                     humanize(iso.size),
-                    label
+                    display_path
                 );
                 // Two-line layout when the sidecar provides both a custom
                 // display name AND a description: row 1 shows the curated
@@ -76,7 +84,11 @@ pub fn run_list(args: &[String]) -> ExitCode {
                 // grouped with its parent ISO. Sidecar-less rows render
                 // exactly as before. (#246)
                 if iso.display_name.is_some() && iso.name != label {
-                    println!("                                          ({})", iso.name);
+                    let orig_path = match &iso.folder {
+                        Some(f) => format!("{f}/{}", iso.name),
+                        None => iso.name.clone(),
+                    };
+                    println!("                                          ({orig_path})");
                 }
                 if let Some(desc) = &iso.description {
                     println!("                                          {desc}");
@@ -123,6 +135,7 @@ fn print_list_json(mount_path: &Path, isos: &[IsoEntry]) {
             .iter()
             .map(|iso| aegis_wire_formats::ListIsoSummary {
                 name: iso.name.clone(),
+                folder: iso.folder.clone(),
                 size_bytes: iso.size,
                 has_sha256: iso.has_sha256,
                 has_minisig: iso.has_minisig,
@@ -413,7 +426,17 @@ fn tempdir() -> Option<PathBuf> {
 }
 
 struct IsoEntry {
+    /// ISO basename only — never includes a directory component.
+    /// Kept as a basename so shell scripts that treat the old flat
+    /// layout's `name` field as `basename(1)` output keep working;
+    /// the subfolder path lives in [`IsoEntry::folder`] alongside.
     name: String,
+    /// Relative path from the mount root to the folder containing
+    /// this ISO, or `None` when the ISO sits at the root (flat
+    /// layout — the pre-#274-Phase-6a behavior). Always
+    /// forward-slash separated regardless of host OS, matching the
+    /// exFAT stick filesystem's canonical form.
+    folder: Option<String>,
     size: u64,
     has_sha256: bool,
     has_minisig: bool,
@@ -617,15 +640,71 @@ fn write_sidecar_via_sudo(
     copy_with_sudo(staging.path(), &dest)
 }
 
-fn scan_isos(dir: &Path) -> Vec<IsoEntry> {
+/// Maximum subfolder depth `scan_isos` will descend into. Chosen to
+/// match the precedent in `iso-parser::find_iso_files` — deep enough
+/// for realistic per-distro layouts (`ubuntu-24.04/lts/<iso>`) but
+/// shallow enough that a malformed mount with runaway directory
+/// nesting can't stall the listing. Hit with a level-4 ISO in the
+/// `depth_cap_skips_level_4_iso` test.
+const ISO_SCAN_MAX_DEPTH: usize = 3;
+
+/// Recursively enumerate ISO files under `root` (#274 Phase 6a).
+/// Returns one [`IsoEntry`] per `.iso` file found within the depth
+/// cap. The `folder` field is set to the parent directory relative
+/// to `root` (forward-slash separated) or `None` when the ISO sits
+/// at the root. Flat layouts produce identical output to pre-Phase-6a
+/// behavior by construction.
+///
+/// Safety invariants enforced during the walk:
+/// - **Depth cap**: no descent beyond `ISO_SCAN_MAX_DEPTH` (contrarian
+///   flag: prevent runaway scans on malformed mounts).
+/// - **Symlink skip**: directories that are symlinks are never
+///   descended into (contrarian flag: no symlink-loop exploit, no
+///   walk-outside-mount traversal).
+/// - **Dot-prefix skip**: directories starting with `.` are ignored
+///   (matches `iso-parser::find_iso_files` at crates/iso-parser/src/lib.rs:688).
+/// - **Sidecar locality**: `<iso>.sha256` / `<iso>.minisig` lookup is
+///   per-folder — a sidecar in a different directory does NOT count.
+fn scan_isos(root: &Path) -> Vec<IsoEntry> {
     let mut out = Vec::new();
+    scan_isos_recursive(root, root, 0, &mut out);
+    out.sort_by(|a, b| {
+        let a_key = (a.folder.as_deref().unwrap_or(""), a.name.as_str());
+        let b_key = (b.folder.as_deref().unwrap_or(""), b.name.as_str());
+        a_key.cmp(&b_key)
+    });
+    out
+}
+
+fn scan_isos_recursive(root: &Path, dir: &Path, depth: usize, out: &mut Vec<IsoEntry>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return out;
+        return;
     };
     let mut filenames: Vec<(String, u64)> = Vec::new();
     let mut sidecar_names: Vec<String> = Vec::new();
+    let mut subdirs: Vec<PathBuf> = Vec::new();
     for e in entries.flatten() {
+        let entry_path = e.path();
+        // file_type() returns Ok(FileType) without resolving symlinks —
+        // so we can cheaply tell "symlink" from "real dir" without
+        // stat()ing the target. Skip symlinks entirely per the
+        // contrarian's loop-safety flag.
+        let Ok(file_type) = e.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() {
+            continue;
+        }
         let name = e.file_name().to_string_lossy().into_owned();
+        if file_type.is_dir() {
+            if !name.starts_with('.') && depth < ISO_SCAN_MAX_DEPTH {
+                subdirs.push(entry_path);
+            }
+            continue;
+        }
+        if !file_type.is_file() {
+            continue;
+        }
         let size = e.metadata().map(|m| m.len()).unwrap_or(0);
         let is_iso = Path::new(&name)
             .extension()
@@ -637,7 +716,7 @@ fn scan_isos(dir: &Path) -> Vec<IsoEntry> {
             sidecar_names.push(name);
         }
     }
-    filenames.sort_by(|a, b| a.0.cmp(&b.0));
+    let folder = relative_folder(root, dir);
     for (name, size) in filenames {
         let has_sha256 = sidecar_names.iter().any(|s| {
             s.eq_ignore_ascii_case(&format!("{name}.sha256"))
@@ -654,6 +733,7 @@ fn scan_isos(dir: &Path) -> Vec<IsoEntry> {
         let description = sidecar.as_ref().and_then(|s| s.description.clone());
         out.push(IsoEntry {
             name,
+            folder: folder.clone(),
             size,
             has_sha256,
             has_minisig,
@@ -661,7 +741,30 @@ fn scan_isos(dir: &Path) -> Vec<IsoEntry> {
             description,
         });
     }
-    out
+    for sub in subdirs {
+        scan_isos_recursive(root, &sub, depth + 1, out);
+    }
+}
+
+/// Convert `dir`'s path relative to `root` into a forward-slash path,
+/// returning `None` for `dir == root`. Forward-slash regardless of
+/// host OS because the stick filesystem (exFAT) canonicalizes to `/`
+/// and consumers parsing the JSON envelope should not care what the
+/// scanning host looked like.
+fn relative_folder(root: &Path, dir: &Path) -> Option<String> {
+    let rel = dir.strip_prefix(root).ok()?;
+    if rel.as_os_str().is_empty() {
+        return None;
+    }
+    let parts: Vec<String> = rel
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("/"))
+    }
 }
 
 fn copy_with_sudo(src: &Path, dest: &Path) -> Result<(), String> {
@@ -1100,5 +1203,163 @@ mod tests {
         assert_eq!(entries[0].name, "ubuntu.iso");
         assert!(entries[0].display_name.is_none());
         assert!(entries[0].description.is_none());
+    }
+
+    // ---- #274 Phase 6a: recursive subfolder scan --------------------------
+
+    #[test]
+    fn scan_isos_flat_layout_preserves_folder_none() {
+        // Regression gate: existing flat-layout sticks must behave
+        // exactly as before — `folder` is None and `name` is the
+        // basename. A broken output here would silently break any
+        // shell script that joined `mount_path + name`.
+        use std::fs;
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("alpha.iso"), b"a").unwrap();
+        fs::write(dir.path().join("beta.iso"), b"b").unwrap();
+        let entries = scan_isos(dir.path());
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().all(|e| e.folder.is_none()));
+        assert_eq!(entries[0].name, "alpha.iso");
+        assert_eq!(entries[1].name, "beta.iso");
+    }
+
+    #[test]
+    fn scan_isos_recurses_into_subfolders_with_folder_set() {
+        use std::fs;
+        let root = tempfile::tempdir().unwrap();
+        let sub = root.path().join("ubuntu-24.04");
+        fs::create_dir(&sub).unwrap();
+        fs::write(sub.join("ubuntu-24.04.2-live-server.iso"), b"x").unwrap();
+        let entries = scan_isos(root.path());
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "ubuntu-24.04.2-live-server.iso");
+        assert_eq!(entries[0].folder.as_deref(), Some("ubuntu-24.04"));
+    }
+
+    #[test]
+    fn scan_isos_sidecars_are_per_folder() {
+        // Security-adjacent invariant: a sha256 in a DIFFERENT folder
+        // must NOT count toward a subfolder ISO's trust state, and
+        // vice-versa. Prevents operators being misled into thinking
+        // an ISO is hash-attested when the sibling sha256 actually
+        // belongs to an unrelated file.
+        use std::fs;
+        let root = tempfile::tempdir().unwrap();
+        let sub_a = root.path().join("a");
+        let sub_b = root.path().join("b");
+        fs::create_dir(&sub_a).unwrap();
+        fs::create_dir(&sub_b).unwrap();
+        fs::write(sub_a.join("a.iso"), b"x").unwrap();
+        fs::write(sub_b.join("b.iso"), b"y").unwrap();
+        // sidecar intentionally in WRONG folder
+        fs::write(sub_b.join("a.iso.sha256"), b"0000").unwrap();
+        let entries = scan_isos(root.path());
+        assert_eq!(entries.len(), 2);
+        let a = entries.iter().find(|e| e.name == "a.iso").unwrap();
+        let b = entries.iter().find(|e| e.name == "b.iso").unwrap();
+        assert!(
+            !a.has_sha256,
+            "cross-folder sha256 must not satisfy the trust claim for a.iso"
+        );
+        assert!(
+            !b.has_sha256,
+            "misfiled sha256 does not attest b.iso either"
+        );
+        // Put the sha256 in the CORRECT folder and confirm it counts.
+        fs::write(sub_a.join("a.iso.sha256"), b"0000").unwrap();
+        let entries = scan_isos(root.path());
+        let a = entries.iter().find(|e| e.name == "a.iso").unwrap();
+        assert!(a.has_sha256, "same-folder sha256 counts");
+    }
+
+    #[test]
+    fn scan_isos_skips_dot_prefixed_dirs() {
+        // Parity with iso-parser::find_iso_files (lib.rs:688) — dot
+        // directories are OS-housekeeping (.Trashes, .Spotlight) and
+        // must never be descended into.
+        use std::fs;
+        let root = tempfile::tempdir().unwrap();
+        let hidden = root.path().join(".Trashes");
+        fs::create_dir(&hidden).unwrap();
+        fs::write(hidden.join("ghost.iso"), b"x").unwrap();
+        let entries = scan_isos(root.path());
+        assert_eq!(entries.len(), 0, "dot dirs must be skipped");
+    }
+
+    #[test]
+    fn scan_isos_respects_depth_cap() {
+        // Architect's requested test: ISO at depth 4 must NOT be
+        // returned. The cap prevents runaway walks on malformed mounts
+        // with pathological nesting. If the cap is ever changed, update
+        // ISO_SCAN_MAX_DEPTH + this test together.
+        use std::fs;
+        let root = tempfile::tempdir().unwrap();
+        let l1 = root.path().join("l1");
+        let l2 = l1.join("l2");
+        let l3 = l2.join("l3");
+        let l4 = l3.join("l4");
+        fs::create_dir_all(&l4).unwrap();
+        // depth 1, 2, 3 should be included; depth 4 should not.
+        fs::write(l1.join("lvl1.iso"), b"a").unwrap();
+        fs::write(l2.join("lvl2.iso"), b"b").unwrap();
+        fs::write(l3.join("lvl3.iso"), b"c").unwrap();
+        fs::write(l4.join("lvl4.iso"), b"d").unwrap();
+        let entries = scan_isos(root.path());
+        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"lvl1.iso"));
+        assert!(names.contains(&"lvl2.iso"));
+        assert!(names.contains(&"lvl3.iso"));
+        assert!(
+            !names.contains(&"lvl4.iso"),
+            "depth-4 ISO must be skipped per the cap"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn scan_isos_does_not_follow_symlink_dirs() {
+        // Contrarian's requested test: symlinked directories must NOT
+        // be descended into. Guards against symlink loops and against
+        // an attacker putting a symlink on the stick that points
+        // outside the mount (e.g. → /etc). No resolution, no descent.
+        use std::fs;
+        let root = tempfile::tempdir().unwrap();
+        let real = root.path().join("real");
+        fs::create_dir(&real).unwrap();
+        fs::write(real.join("inside.iso"), b"x").unwrap();
+        let linked = root.path().join("linked");
+        std::os::unix::fs::symlink(&real, &linked).unwrap();
+        let entries = scan_isos(root.path());
+        // Only the direct "real" subfolder yields the ISO. The
+        // symlinked "linked" must not double-count.
+        assert_eq!(
+            entries.len(),
+            1,
+            "symlinked dir must not be descended (would double-count)"
+        );
+        assert_eq!(entries[0].folder.as_deref(), Some("real"));
+    }
+
+    #[test]
+    fn scan_isos_sorts_folder_then_name() {
+        use std::fs;
+        let root = tempfile::tempdir().unwrap();
+        // Deliberately out of lexicographic order across folders.
+        let zeta = root.path().join("zeta");
+        let alpha = root.path().join("alpha");
+        fs::create_dir(&zeta).unwrap();
+        fs::create_dir(&alpha).unwrap();
+        fs::write(root.path().join("root.iso"), b"r").unwrap();
+        fs::write(zeta.join("z1.iso"), b"z").unwrap();
+        fs::write(alpha.join("a1.iso"), b"a").unwrap();
+        let entries = scan_isos(root.path());
+        assert_eq!(entries.len(), 3);
+        // Root-level ISOs sort first (empty folder string < any real
+        // folder), then alpha, then zeta.
+        assert_eq!(entries[0].name, "root.iso");
+        assert_eq!(entries[0].folder, None);
+        assert_eq!(entries[1].folder.as_deref(), Some("alpha"));
+        assert_eq!(entries[2].folder.as_deref(), Some("zeta"));
     }
 }
