@@ -1,0 +1,88 @@
+name: sign-identity-transition
+
+# One-shot workflow. Triggered manually via workflow_dispatch on the
+# PRE-transfer williamzujkowski/aegis-boot repo. Signs
+# .github/identity-transition.json with cosign keyless, committing
+# the .sig + .pem alongside the JSON. The cosign subject at sign
+# time will be:
+#
+#   https://github.com/williamzujkowski/aegis-boot/.github/workflows/sign-identity-transition.yml@refs/heads/<branch>
+#
+# That subject is the legacy identity authorizing the successor
+# aegis-boot/aegis-boot identity (per the JSON body). Automated
+# verifiers that pin on the legacy identity can walk:
+#
+#   bake legacy identity regexp → read identity-transition.json +
+#   .sig + .pem → verify sig via cosign with legacy identity →
+#   trust the successor identity regexp → verify new releases under
+#   aegis-boot/aegis-boot identity.
+#
+# After this workflow lands the .sig + .pem on main, transfer the
+# repo. GitHub preserves the files through the transfer; the legacy
+# cosign cert remains valid (hash-bound, not location-bound).
+#
+# See docs/governance/ORG_MIGRATION_PLAN.md §6.3 for the full
+# rationale.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "SIGN" to confirm this is the pre-transfer identity bridge'
+        required: true
+        default: ''
+
+permissions:
+  contents: write
+  id-token: write  # required for cosign keyless (OIDC token)
+
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Guard
+        if: ${{ inputs.confirm != 'SIGN' }}
+        run: |
+          echo "Must type 'SIGN' in the workflow_dispatch input to proceed." >&2
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign identity-transition.json
+        run: |
+          cosign sign-blob --yes \
+            --output-signature .github/identity-transition.json.sig \
+            --output-certificate .github/identity-transition.json.pem \
+            .github/identity-transition.json
+
+      - name: Print cosign subject for audit log
+        run: |
+          openssl x509 -in .github/identity-transition.json.pem -noout -text \
+            | grep -A 1 "Subject Alternative Name" \
+            || true
+
+      - name: Commit .sig + .pem
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add .github/identity-transition.json.sig .github/identity-transition.json.pem
+          # If the sig files were already present + unchanged, no-op.
+          if git diff --cached --quiet; then
+            echo "Signature files unchanged; nothing to commit."
+            exit 0
+          fi
+          git commit -m "chore(identity): sign identity-transition.json with legacy cosign identity
+
+          Legacy-identity pre-transfer signature for the
+          williamzujkowski/aegis-boot → aegis-boot/aegis-boot repo
+          transfer. Enables automated verifiers to chain old→new
+          cosign identity across the org move without trusting an
+          unverified docs update.
+
+          See docs/governance/ORG_MIGRATION_PLAN.md §6.3."
+          git push
