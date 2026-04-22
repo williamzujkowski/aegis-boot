@@ -1,11 +1,12 @@
 # ADR 0002: Key Management for Signed Attestation + Bundle Trust Anchor
 
-**Status:** PROPOSED (revision 2)
+**Status:** PROPOSED (revision 3)
 **Date:** 2026-04-21
 **Tracking issue:** [#366](https://github.com/williamzujkowski/aegis-boot/issues/366)
 **Revision history:**
 - 2026-04-20 — initial proposal (rev 1)
 - 2026-04-21 — rev 2 adds Decision 7 (Key Epoch), §3.6 (historical anchors), and §5.1 (rotation rehearsal) after consensus vote surfaced revocation-circularity, temporal-deadlock, and rotation-atrophy objections (vote result: 60% approve, below supermajority threshold)
+- 2026-04-21 — rev 3 closes rev-2's residual TOFU window on fresh installs by adding `MIN_REQUIRED_EPOCH` binary-embedded floor to Decision 7; extends §5.1 rehearsal with a signing-handoff audit step to waive the signing-oracle split trigger (§6.2)
 **Consumers:** [#349](https://github.com/williamzujkowski/aegis-boot/issues/349) (signed attestation manifest), [#367](https://github.com/williamzujkowski/aegis-boot/issues/367) (cross-platform `--direct-install` trust anchor, Phase D of [#365](https://github.com/williamzujkowski/aegis-boot/issues/365))
 **Supersedes:** portion of `crates/aegis-cli/src/attest.rs` header comment (lines 22–28) that defers signing to "epic #139"; this ADR claims the design.
 
@@ -71,7 +72,7 @@ And one added in rev 2 to close the revocation-circularity gap surfaced by the f
 
 | # | Question | Decision |
 |---|----------|----------|
-| 7 | Post-compromise replay defense | **Monotonic Key Epoch counter** embedded in every signed manifest (attestation + bundle). Binaries refuse to accept any manifest whose epoch is lower than the highest epoch they have previously observed (persisted to `~/.local/share/aegis-boot/trust/seen-epoch`). A post-compromise attacker who signs `v9.9.9` with epoch N-1 cannot convince operators who have already seen epoch N that the rollback is legitimate. See §3.5 |
+| 7 | Post-compromise replay defense | **Two-layer rollback floor.** (a) Binary-embedded `MIN_REQUIRED_EPOCH` constant: every release hardcodes the epoch active at the time the binary was compiled. Any manifest with `key_epoch < MIN_REQUIRED_EPOCH` is rejected unconditionally (protects fresh installs and systems with wiped trust-state). (b) Monotonic `seen-epoch` counter persisted to `$XDG_STATE_HOME/aegis-boot/trust/seen-epoch`: tracks the highest epoch this installation has observed post-install, and rejects any manifest below that (protects ongoing operators from rollback after install). The two layers compose: `reject if manifest.epoch < max(MIN_REQUIRED_EPOCH, seen-epoch)`. See §3.5 |
 
 ---
 
@@ -158,18 +159,32 @@ A traditional CRL would need a pinned URL (new trust problem), a signature over 
 
 The first consensus vote surfaced a real gap rev 1 missed: **revocation circularity**. If the private key leaks, the attacker can sign a malicious `v9.9.9` binary that ships with replayed-old-pubkey logic, or that silently accepts rollback. Air-gapped operators pulling that build can't distinguish it from a legitimate rotation. A CRL doesn't actually fix this (see above), but *something* has to — "just ship a new binary" breaks down the moment the attacker can also ship a new binary.
 
-**Rev 2 addition: monotonic Key Epoch counter (Decision 7).**
+**Rev 2 addition (extended in rev 3): Key Epoch counter with a two-layer floor (Decision 7).**
 
-Every signed manifest (attestation manifest for #349, bundle manifest for #367) carries an integer `key_epoch` field. The canonical keypair has an associated epoch, bumped on every rotation. Binaries persist the highest-observed epoch to `~/.local/share/aegis-boot/trust/seen-epoch` (or the equivalent under `$XDG_STATE_HOME`). On verify, the binary:
+Every signed manifest (attestation manifest for #349, bundle manifest for #367) carries an integer `key_epoch` field. The canonical keypair has an associated epoch, bumped on every rotation. Rev 3 defines *two* rollback defenses that compose:
 
-1. Verifies the minisign signature against the embedded pubkey. FAIL → reject.
+**Layer 1 — binary-embedded floor (`MIN_REQUIRED_EPOCH`).** Every release hardcodes the epoch active at compile time. At binary build, `build.rs` reads `keys/canonical-epoch.json` and emits:
+
+```rust
+// crates/aegis-cli/src/trust_anchor.rs
+pub const MIN_REQUIRED_EPOCH: u32 = env!("AEGIS_MIN_REQUIRED_EPOCH").parse().unwrap();
+```
+
+Any manifest whose `key_epoch < MIN_REQUIRED_EPOCH` is rejected unconditionally. This closes the TOFU window on fresh installs and on systems whose `seen-epoch` state file has been lost/wiped — the binary itself refuses to accept epochs older than the state of the world when that binary was released.
+
+**Layer 2 — monotonic `seen-epoch`.** Binaries persist the highest observed epoch to `$XDG_STATE_HOME/aegis-boot/trust/seen-epoch`. This layer protects running installations from downgrade *after* install, in case the project rotates the key again post-install and the operator hasn't yet upgraded.
+
+**Composed rule:** `reject if manifest.epoch < max(MIN_REQUIRED_EPOCH, seen-epoch)`. Either layer catches an attacker-replayed old signature; together they close both the pre-install and post-install windows.
+
+**Verification flow.** On verify, the binary:
+1. Verifies the minisign signature against the appropriate historical anchor (§3.6). FAIL → reject.
 2. Reads the manifest's `key_epoch`.
-3. Compares against the locally stored seen-epoch. If manifest epoch is LOWER → reject with `KeyEpochRollback` error.
-4. If manifest epoch is HIGHER → write the new value to seen-epoch (trust-on-first-use for the forward direction).
+3. Computes `floor = max(MIN_REQUIRED_EPOCH, seen-epoch)`. If `manifest.epoch < floor` → reject with `KeyEpochRollback`.
+4. If `manifest.epoch > seen-epoch` → write the new value to `seen-epoch` (trust-on-first-use for the forward direction only; the floor is never mutable downward).
 
-This turns a key compromise into a recoverable event: the maintainer rotates the key, bumps the epoch, ships the new binary. Operators who have *ever* seen the post-rotation epoch are immune to a replay of the old key on a pre-rotation manifest. Old manifests (legitimately signed before rotation) still verify because their epoch equals the seen-epoch at the time they were made — the check is "not LOWER than highest seen," not "equal to current."
+A key compromise becomes a recoverable event: maintainer rotates, bumps epoch, ships a new binary whose `MIN_REQUIRED_EPOCH` equals the new epoch. Fresh installs from that release onward are immune to replayed old-key signatures out of the box. Existing installations get the same immunity as soon as their `seen-epoch` advances past the rotation (either from receiving a new-epoch manifest or from `aegis-boot doctor` surfacing the mismatch and prompting update).
 
-The epoch store is a small integer file; losing it only costs the rollback-protection (the signature still verifies), so it's non-catastrophic. `aegis-boot doctor` reports the current seen-epoch and the repo's published canonical epoch (fetched from a static JSON manifest if online) so the operator can notice "your seen-epoch is N-2, the project's current epoch is N."
+The `seen-epoch` file losing its value only costs Layer 2's ongoing-protection; Layer 1's embedded floor still fires. `aegis-boot doctor` reports both the local `seen-epoch` and the binary's `MIN_REQUIRED_EPOCH`, and if online, compares both against `https://github.com/aegis-boot/aegis-boot/raw/main/keys/canonical-epoch.json` so the operator can notice staleness in any layer.
 
 **Objection 1 (preserved from rev 1): "Without revocation, a compromised key signs forever."** Still true in the absolute sense — nothing invalidates old signatures cryptographically. But the Epoch counter prevents *useful* forgery: an attacker with the pre-rotation key can sign 2019 attestations or replay old bundles, but cannot forge a current-state artifact that any updated operator will accept. The threat we actually need to stop ("attacker signs new-looking artifacts to fool current operators") is addressed.
 
@@ -221,7 +236,7 @@ Historical-anchor entries are append-only. Rotations ADD to the list; the active
 
 - **Single trust anchor *list*** (rev 2). One format, one verification path, one active signing key. Historical keys are retained in-binary for year-N forensics (§3.6).
 - **Offline-verifiable.** Minisign detached signatures verify against static pubkeys with no network dependency. Field responders, air-gapped labs, and FOIA archivists can verify attestations in 2040 as long as they have *any* binary shipped after the manifest was signed.
-- **Rollback-resistant** (rev 2). The Key Epoch counter (§3.5) prevents a post-compromise attacker from replaying an old-key signature on a new-looking manifest. Operators who have observed the post-rotation epoch refuse lower epochs outright.
+- **Rollback-resistant on fresh AND ongoing installs** (rev 3). The Key Epoch counter (§3.5) defends via two layers: Layer 1 is a binary-embedded `MIN_REQUIRED_EPOCH` floor set at release-compile time, immune to local-state wipes; Layer 2 is the monotonic `seen-epoch` file for ongoing rollback protection after install. Rev 2 had only Layer 2, which left a TOFU window on fresh installs. Rev 3 closes it.
 - **Recovery-path exercised** (rev 2). Quarterly rotation rehearsals (§5.1) keep the runbook tested without burdening operators with actual rotations.
 - **Zero new dependencies.** `minisign-verify` is already in the build. `minisign` CLI is already on the maintainer's laptop for ISO signing.
 - **Consistent with existing pattern.** Reuses `.minisig` sidecar convention from `iso-probe/src/minisign.rs`. `aegis-boot flash` writes `<manifest>.minisig` next to `<manifest>.json`; `aegis-boot attest show` verifies inline.
@@ -253,7 +268,7 @@ Historical-anchor entries are append-only. Rotations ADD to the list; the active
 ## 5. Implementation Plan (summary — full tickets to file after approval)
 
 1. **Key generation (maintainer, one-time).** Generate keypair; commit `keys/aegis-boot-trust-anchor-ep1.pub`; store `~/.secrets/aegis-boot/trust-anchor.key` under GPG-encrypted backup. Record fingerprint + epoch=1 in `SECURITY.md`. Write initial `keys/canonical-epoch.json` (`{"epoch": 1}`) alongside the pubkey.
-2. **`trust_anchor.rs` module.** New file at `crates/aegis-cli/src/trust_anchor.rs`. Exports `AEGIS_BOOT_TRUST_ANCHORS: &[TrustAnchor]` (historical-anchors list, HEAD active) + `pub fn verify_manifest(bytes, sig) -> Result<VerifiedManifest, VerifyError>` (walks the list, enforces epoch monotonicity against on-disk `seen-epoch`).
+2. **`trust_anchor.rs` module + `build.rs` hookup.** New file at `crates/aegis-cli/src/trust_anchor.rs`. Exports `AEGIS_BOOT_TRUST_ANCHORS: &[TrustAnchor]` (historical-anchors list, HEAD active) + `MIN_REQUIRED_EPOCH: u32` (rev 3, sourced from `keys/canonical-epoch.json` via `build.rs` at build time) + `pub fn verify_manifest(bytes, sig) -> Result<VerifiedManifest, VerifyError>` (walks the list, enforces epoch floor via `max(MIN_REQUIRED_EPOCH, seen-epoch)` against on-disk `seen-epoch`). A unit test asserts the rollback path rejects correctly in both fresh-install (no seen-epoch) and ongoing (seen-epoch set) configurations.
 3. **Wire-format extension.** Add `key_epoch: u32` field to `aegis_wire_formats::Attestation` and the new `aegis_wire_formats::BundleManifest`. Bump `SCHEMA_VERSION` to 2 on each. Back-compat: binaries reading a `schema_version=1` manifest treat `key_epoch=0` as "pre-epoch manifest, accept if signature verifies under epoch=1 anchor."
 4. **#349 implementation.** `record_flash()` + `record_iso_added()` in `attest.rs` write `<manifest>.json.minisig` alongside the JSON, embedding the current `key_epoch` in the manifest body. Signing uses the private key at a path given by `AEGIS_BOOT_SIGNING_KEY` env var; in release builds this is expected to be unset and signing is a no-op with a warning (the maintainer signs release manifests; operator-written manifests are unsigned by default — see alternative §6.3).
 5. **#367 Phase D implementation.** Bundle mirror publishes `bundle-manifest.json` (with `key_epoch`) + `bundle-manifest.json.minisig`. `fetch-image --direct-install` on macOS/Windows downloads both, calls `trust_anchor::verify_manifest()`, then downloads the individual bundle files and verifies their SHA-256s match the manifest. Failure at any step aborts flash.
@@ -274,7 +289,8 @@ The first consensus vote surfaced **rotation atrophy** as a failure mode: untest
 3. Replace `keys/aegis-boot-trust-anchor-ep-current.pub` with the temp pubkey (HEAD of list); bump epoch.
 4. Run the full CI suite locally (`./scripts/dev-test.sh`) + the attestation/bundle sign+verify integration tests.
 5. Tag a test release (`v0.X.Y-rehearsal-YYYYQN`) — verify `release.yml` bakes the new pubkey, cosign signs the binary, and a test operator install can verify a new attestation.
-6. Revert the branch (`git reset --hard main`); delete temp keys; log the rehearsal with any drift observed.
+6. **Signing-handoff audit (rev 3).** Before each signing operation during the rehearsal, the maintainer verifies: (a) the sha256 of the artifact being fed to `minisign -Sm` matches the sha256 produced by an independent `cargo build --release` run on the same commit (i.e., the thing being signed is the thing that was built); (b) the signing command prompts for the private-key passphrase interactively (never sourced from a file or env var that could leak); (c) if a hardware token is in use, the token's touch-to-sign is actually required (no cached authorization). Each rehearsal log entry records the audit outcome. This step substitutes for the rev-1 two-key-separation proposal under §6.2's addendum: the rehearsal's audit verifies the signing surface's integrity quarterly, which is what the two-key split would have protected against via compartmentalization.
+7. Revert the branch (`git reset --hard main`); delete temp keys; log the rehearsal with any drift observed in `docs/architecture/rotation-rehearsal-log.md`.
 
 **Why quarterly, not monthly, not yearly.** Monthly rehearsal is too frequent to sustain for a solo maintainer and dilutes the "this is a real exercise" signal. Yearly is too infrequent to catch runbook rot — a new release channel added in January is untested until next January. Quarterly splits the difference and aligns with typical security-cycle cadences.
 
