@@ -3,7 +3,7 @@
 **Status:** APPROVED (consensus vote 2026-04-22, 80% supermajority). Maintainer-executed checklist; no bot automation.
 **Vote record:** rev 1 rejected at 60% (Gemini surfaced OIDC discontinuity + crates.io squatter race); rev 2 (PR #389) added §1 crates.io pre-registration + §6.3 OIDC identity bridge; rev 2 passed at 80%. Architect ✓88%, Security ✓95% (flipped from rev-1 REJECT), DevEx ✓87%, PM ✓88%, AI/ML abstained (95%), Contrarian ✗95% (operational nitpicks not security-blocking). Verification hashes in PR #389.
 **Scope:** Move `github.com/williamzujkowski/aegis-boot` and `github.com/williamzujkowski/aegis-hwsim` under a new GitHub Organization at `github.com/aegis-boot`.
-**Maintainer:** William Zujkowski (solo). Federal employee — uses **Individual** Apple Developer Program; does NOT register a business entity.
+**Maintainer:** William Zujkowski (solo). Personal/individual GitHub account; does NOT register a business entity. If Apple Developer Program enrollment becomes necessary (see #369), the **Individual** enrollment tier applies.
 **Org name verified available:** 2026-04-22 — re-verified (`github.com/aegis-boot` → HTTP 404).
 **Plan legend:** [UI] = browser click-through • [CLI] = terminal command • [LOCAL] = local repo edit.
 
@@ -83,7 +83,7 @@
 - [ ] **[UI]** Pick the **Free** plan (public repos are free unlimited Actions; private repos get 2000 minutes/month — irrelevant since both target repos stay public).
 - [ ] **[UI]** Org name: `aegis-boot` (exact, lowercase, hyphen).
 - [ ] **[UI]** Contact email: use your personal email (the one already on your GitHub account).
-- [ ] **[UI]** Ownership: **"My personal account"** (NOT "A business or institution") — this is the correct choice for a federal employee using an individual account; it avoids any "business entity" registration question.
+- [ ] **[UI]** Ownership: **"My personal account"** (NOT "A business or institution") — this is the correct choice for a solo maintainer on an individual account; it avoids any "business entity" registration question and keeps billing/tax handling simple (no D-U-N-S required).
 - [ ] **[UI]** Skip the "Invite members" step (solo maintainer).
 - [ ] **[UI]** Complete the "How will you use this org?" survey (answers don't matter for plan or cost).
 - [ ] **[UI]** Confirm landing page shows `https://github.com/aegis-boot` with you as the sole Owner.

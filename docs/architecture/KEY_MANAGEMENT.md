@@ -41,7 +41,7 @@ Both consumers need: (a) a signing tool that runs offline, (b) an operator-verif
 
 ### 1.4 Constraints (ambient; bounds the solution space)
 
-- **Federal-employee maintainer.** No D-U-N-S number, no authenticode certificate, no Apple Developer Program enrollment. Rules out any solution that requires corporate PKI.
+- **Individual-account maintainer.** No D-U-N-S number, no Authenticode certificate, no Apple Developer Program enrollment. Rules out any solution that requires corporate PKI or a business-entity identity.
 - **Solo maintainer.** No ceremony-heavy key-custody protocol ("two-person offline signing with HSMs") is realistic. One person, one laptop, GitHub as ambient identity.
 - **Repo mobility.** Project currently lives at `github.com/williamzujkowski/aegis-boot`; per #365 it migrates to an `aegis-boot` org. Any solution coupled to the owner slug must rotate on that move.
 - **Existing minisign use.** `crates/iso-probe/src/minisign.rs` already verifies minisign detached sigs against `AEGIS_TRUSTED_KEYS` for per-ISO sidecars. Operators who have used `aegis-boot add` have already pointed that env var at a keyring. Pattern + mental model already exists.
@@ -83,7 +83,7 @@ And one added in rev 2 to close the revocation-circularity gap surfaced by the f
 
 Three properties matter for the operator-facing trust anchor: **no PKI infrastructure**, **small trusted compute base**, **operators already know it**.
 
-- **No PKI.** Minisign is Ed25519 with a single pubkey file. No CA, no chain, no OCSP, no Authenticode, no Apple notarization. A federal-employee solo maintainer with no D-U-N-S cannot obtain those credentials; minisign is one of the few signature formats that works without them.
+- **No PKI.** Minisign is Ed25519 with a single pubkey file. No CA, no chain, no OCSP, no Authenticode, no Apple notarization. A solo maintainer on an individual account with no D-U-N-S cannot obtain those credentials; minisign is one of the few signature formats that works without them.
 - **Small TCB.** We already depend on `minisign-verify` in `crates/iso-probe/` (`minisign.rs:27`). Verification adds zero new crates. Compare cosign: pulls Sigstore trust-root fetch + Fulcio cert verification + Rekor transparency log lookups — a large online-only TCB that defeats both consumers' offline-verify requirement.
 - **Operator mindshare.** `AEGIS_TRUSTED_KEYS` env var + `.minisig` sidecar pattern already exist for per-ISO verification (`iso-probe/src/minisign.rs:17-22`). An operator who used `aegis-boot add` on a Fedora ISO has already touched this. Introducing a second format (minisign for ISOs, cosign for attestation) would double the mental model for no operator win.
 
