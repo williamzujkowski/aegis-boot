@@ -821,6 +821,13 @@ fn run_auto_kexec(state: &AppState, needle: &str) -> Result<(), Box<dyn std::err
 /// the matching ISO in the List and seed its cmdline override if one was
 /// saved. Missing / corrupt / stale state is ignored.
 fn apply_persisted_choice(state: &mut AppState) {
+    // Opportunistic one-shot migration: if a previous tick wrote
+    // last-choice to tmpfs because AEGIS_ISOS wasn't mounted yet,
+    // drain it onto the data partition now that we're past the
+    // initramfs mount stage. Best-effort — any failure leaves
+    // state on tmpfs where load() will still find it.
+    let _ = persistence::migrate_tmpfs_to_aegis_isos();
+
     let dir = persistence::default_state_dir();
     let Some(choice) = persistence::load(&dir) else {
         return;
@@ -855,9 +862,20 @@ fn save_last_choice(state: &AppState, idx: usize) {
         iso_path: iso.iso_path.clone(),
         cmdline_override: state.cmdline_overrides.get(&idx).cloned(),
     };
+
+    // Two writes per ADR 0003 §2:
+    //   1. tmpfs (session-local, full fidelity incl. cmdline_override)
+    //      — used by failed-kexec retry within the same boot.
+    //   2. AEGIS_ISOS (cross-reboot, cmdline_override stripped) — used
+    //      by the next boot to pre-position the cursor.
+    //
+    // Both are best-effort; either failure logs at debug and moves on.
     let dir = persistence::default_state_dir();
     if let Err(e) = persistence::save(&dir, &choice) {
-        tracing::debug!(error = %e, "rescue-tui: last-choice save failed (best-effort)");
+        tracing::debug!(error = %e, "rescue-tui: last-choice tmpfs save failed (best-effort)");
+    }
+    if let Err(e) = persistence::save_durable(&choice) {
+        tracing::debug!(error = %e, "rescue-tui: last-choice AEGIS_ISOS save failed (best-effort)");
     }
 }
 

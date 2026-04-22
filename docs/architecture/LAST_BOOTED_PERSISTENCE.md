@@ -1,7 +1,8 @@
 # ADR 0003: Cross-reboot last-booted persistence
 
-**Status:** PROPOSED
-**Date:** 2026-04-20
+**Status:** ACCEPTED
+**Date:** 2026-04-20 (proposed), 2026-04-22 (accepted)
+**Vote record:** higher-order consensus, supermajority threshold, 2026-04-22. Architect ✓88%, Security ✓90%, DevEx ✓87%, AI/ML ✓92%, PM ✓88%, Contrarian ✗95% — 83.3% approve, supermajority cleared. Contrarian's objections were operational nitpicks already addressed in §3 (threat model) and §4 (consequences) of this ADR; supermajority overrides.
 **Tracking issue:** [#375](https://github.com/aegis-boot/aegis-boot/issues/375)
 **Supersedes scope-wise:** nothing yet; extends the tmpfs-only design in `crates/rescue-tui/src/persistence.rs` (lines 3–11)
 **Related:** [#123](https://github.com/aegis-boot/aegis-boot/issues/123) (misleading "SHIPPED" claim), [#132](https://github.com/aegis-boot/aegis-boot/issues/132) (acceptance-criteria mismatch caught in real-hardware validation 2026-04-21), [#342](https://github.com/aegis-boot/aegis-boot/issues/342) (two-stage tmpfs→disk pattern reused here), [#277](https://github.com/aegis-boot/aegis-boot/issues/277) / attestation manifests in `crates/aegis-cli/src/attest.rs`, [#366](https://github.com/aegis-boot/aegis-boot/issues/366) (ADR 0002, key management — companion ADR landed same day)
