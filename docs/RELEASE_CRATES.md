@@ -86,27 +86,54 @@ Expected output: 6 tests pass, 1 ignored (needs root + would kexec the host). No
 
 Per the #51 epic body, v1.0.0-rc1 holds until at least one Framework, one Dell, and one ThinkPad successfully boot a direct-install stick under Secure Boot enforcing. This is the largest remaining gate. See `docs/validation/REAL_HARDWARE_REPORT_132.md` for the validation-report template + the first completed run (2026-04-21, SanDisk Cruzer under QEMU USB passthrough).
 
-## Actual publish flow
+## Actual publish flow — Trusted Publishing (no long-lived token)
 
-From a clean checkout of a tagged release commit (`v1.0.0-rc1` or later):
+Crates.io's Trusted Publishing lets a specific GitHub Actions workflow mint a short-lived (~30 min) upload token via OIDC. No `CARGO_REGISTRY_TOKEN` secret is needed on the GitHub side; no long-lived token sits in `pass` or elsewhere. This is the modern supply-chain best practice (2024+) and it's what this repo ships with.
+
+### One-time UI setup per crate (maintainer, on crates.io)
+
+For EACH publishable crate, browse to `https://crates.io/crates/<NAME>/settings` → **Trusted Publishing** → **Add GitHub publisher**:
+
+| Field | Value |
+|---|---|
+| Repository owner | `aegis-boot` |
+| Repository name | `aegis-boot` |
+| Workflow filename | `crates-publish.yml` |
+| Environment (recommended) | `release` |
+
+Repeat for: `aegis-wire-formats`, `iso-parser`, `iso-probe`, `kexec-loader`, `aegis-fitness`, `aegis-bootctl`. (8 workspace crates total — the v0.0.0 `aegis-boot` umbrella placeholder stays unmanaged because the root is a virtual workspace; `aegis-hwsim` publishes from its sibling repo.)
+
+Crates.io docs: https://crates.io/docs/trusted-publishing.
+
+### Per-release flow (after trusted publishers configured)
 
 ```bash
-# 1. Confirm crates.io account has 2FA enabled
-cargo login                     # if not already done
-cargo owner --list iso-parser   # prove we're authenticated
+# 1. Bump workspace version in Cargo.toml + amend CHANGELOG.
+# 2. Tag the release:
+git tag -s v1.0.0-rc1 -m "v1.0.0-rc1 release candidate"
+git push origin v1.0.0-rc1
+```
 
-# 2. Publish in dependency order; each publish blocks until the
-#    registry index updates so the next step can resolve it.
-cargo publish -p iso-parser
-cargo publish -p iso-probe
-cargo publish -p kexec-loader
+The `v*.*.*` tag push triggers `.github/workflows/crates-publish.yml`, which:
 
-# 3. Verify docs.rs built each one (may take 5-15 min)
-for c in iso-parser iso-probe kexec-loader; do
+1. Enters the `release` environment (required-reviewer gate fires — you approve in the GitHub UI).
+2. Mints a short-lived crates.io token via `rust-lang/crates-io-auth-action@v1`.
+3. Runs `cargo publish -p <crate> --locked` for each publishable crate in dependency order.
+
+### Manual backfill (outage recovery)
+
+If a crates.io outage blocks the middle of the tag-triggered run, use the workflow_dispatch at https://github.com/aegis-boot/aegis-boot/actions/workflows/crates-publish.yml → **Run workflow** → select the specific `crate` input and the tag `ref`. Same OIDC minting, same reviewer gate.
+
+### docs.rs verification
+
+```bash
+for c in aegis-wire-formats iso-parser iso-probe kexec-loader aegis-fitness aegis-bootctl; do
   echo "checking https://docs.rs/$c"
-  curl -sfSLo /dev/null "https://docs.rs/$c" && echo "  OK"
+  curl -sfSLo /dev/null "https://docs.rs/$c" && echo "  OK" || echo "  BUILD PENDING"
 done
 ```
+
+docs.rs typically builds within 5–15 minutes of publish.
 
 ## Post-publish
 
