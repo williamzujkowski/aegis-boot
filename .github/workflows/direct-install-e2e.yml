@@ -191,7 +191,7 @@ jobs:
           m = json.load(open('/tmp/manifest.json'))
           assert m['schema_version'] == 1, m
           assert len(m['esp_files']) == 6, m['esp_files']
-          print(f"manifest OK: schema_version={m['schema_version']}, esp_files={len(m['esp_files'])}, sequence={m['sequence']}")
+          print(f"manifest OK: schema_version={m['schema_version']}, esp_files={len(m['esp_files'])}, manifest_sequence={m['manifest_sequence']}")
           PY
           sudo umount /tmp/esp-direct-verify
 

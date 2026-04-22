@@ -51,6 +51,7 @@ mod readback;
 mod redact;
 mod tour;
 mod update;
+mod update_apply;
 mod userfacing;
 mod verify;
 

@@ -63,6 +63,8 @@ pub fn run(args: &[String]) -> ExitCode {
 pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
     let mut explicit_dev: Option<&str> = None;
     let mut json_mode = false;
+    let mut apply_mode = false;
+    let mut experimental_apply = false;
     for a in args {
         match a.as_str() {
             "--help" | "-h" => {
@@ -70,6 +72,13 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
                 return Ok(());
             }
             "--json" => json_mode = true,
+            // #181 Phase 2a — double-flag to opt into the rotation
+            // planner surface. `--apply` alone prints guidance and
+            // refuses; `--experimental-apply` must also be present.
+            // Phase 2a's apply path is planner-only (no writes); the
+            // executor ships in Phase 2b once OVMF E2E validates.
+            "--apply" => apply_mode = true,
+            "--experimental-apply" => experimental_apply = true,
             arg if arg.starts_with("--") => {
                 eprintln!("aegis-boot update: unknown option '{arg}'");
                 eprintln!("(in-place update is under active development — only the");
@@ -84,6 +93,16 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
                 explicit_dev = Some(other);
             }
         }
+    }
+
+    if apply_mode && !experimental_apply {
+        eprintln!("aegis-boot update --apply: requires --experimental-apply");
+        eprintln!();
+        eprintln!("  `--apply` is gated behind `--experimental-apply` until the");
+        eprintln!("  executor ships in Phase 2b (#181). Phase 2a (this build)");
+        eprintln!("  ships the planner only — no writes occur. Add");
+        eprintln!("  `--experimental-apply` to see the rotation plan.");
+        return Err(2);
     }
 
     let Some(d) = explicit_dev else {
@@ -108,48 +127,76 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
         Eligibility::Eligible {
             attestation_path,
             disk_guid,
-        } => {
-            let chain = resolve_host_chain();
-            // Phase 1 of #181 acceptance criterion: per-file diff
-            // between the stick's current ESP and what a fresh
-            // flash would install. Read failures here do NOT
-            // downgrade eligibility — per-file errors surface in
-            // the diff rows so the operator sees exactly what was
-            // inconclusive.
-            let esp_part = partition_path(&dev, 1);
-            let diff = build_esp_diff(&esp_part, &chain);
-            if json_mode {
-                print_update_json_eligible(&dev, &disk_guid, &attestation_path, &chain, &diff);
-            } else {
-                println!("Status: ELIGIBLE for in-place update.");
-                println!();
-                println!("  disk GUID:        {disk_guid}");
-                println!("  attestation:      {}", attestation_path.display());
-                println!("  AEGIS_ISOS:       will be preserved byte-for-byte");
-                println!();
-                print_host_chain(&chain);
-                println!();
-                print_esp_diff(&diff);
-                println!();
-                println!("NOTE: this is a read-only eligibility check (phase 1 of #181).");
-                println!("The actual in-place update lands in a follow-up PR. No writes");
-                println!("were made to {} during this command.", dev.display());
-            }
-            Ok(())
-        }
-        Eligibility::Ineligible(reason) => {
-            if json_mode {
-                print_update_json_ineligible(&dev, &reason);
-            } else {
-                let err = UpdateError::Ineligible {
-                    reason,
-                    device: dev.clone(),
-                };
-                eprint!("{}", crate::userfacing::render_string(&err));
-            }
-            Err(1)
-        }
+        } => handle_eligible(
+            &dev,
+            &attestation_path,
+            &disk_guid,
+            json_mode,
+            apply_mode && experimental_apply,
+        ),
+        Eligibility::Ineligible(reason) => handle_ineligible(&dev, reason, json_mode),
     }
+}
+
+/// Eligible-branch renderer split out so [`try_run`] stays under the
+/// 100-line soft cap. Computes the Phase-1 ESP diff, renders the
+/// eligibility block (JSON or human), and — when Phase 2a's
+/// double-flag is set — follows with the rotation plan preview.
+/// Return type mirrors [`handle_ineligible`] so both branches slot
+/// into [`try_run`]'s `match` uniformly; this path is always `Ok`.
+#[allow(clippy::unnecessary_wraps)]
+fn handle_eligible(
+    dev: &Path,
+    attestation_path: &Path,
+    disk_guid: &str,
+    json_mode: bool,
+    apply_plan: bool,
+) -> Result<(), u8> {
+    let chain = resolve_host_chain();
+    let esp_part = partition_path(dev, 1);
+    let diff = build_esp_diff(&esp_part, &chain);
+    if json_mode {
+        print_update_json_eligible(dev, disk_guid, attestation_path, &chain, &diff);
+        return Ok(());
+    }
+    println!("Status: ELIGIBLE for in-place update.");
+    println!();
+    println!("  disk GUID:        {disk_guid}");
+    println!("  attestation:      {}", attestation_path.display());
+    println!("  AEGIS_ISOS:       will be preserved byte-for-byte");
+    println!();
+    print_host_chain(&chain);
+    println!();
+    print_esp_diff(&diff);
+    println!();
+    if apply_plan {
+        print_rotation_plan(&diff);
+        println!();
+        println!(
+            "NOTE: #181 Phase 2a — planner only. No writes made to {}.",
+            dev.display()
+        );
+        println!("The destructive executor ships in Phase 2b after OVMF E2E.");
+    } else {
+        println!("NOTE: this is a read-only eligibility check (phase 1 of #181).");
+        println!("The actual in-place update lands in a follow-up PR. No writes");
+        println!("were made to {} during this command.", dev.display());
+    }
+    Ok(())
+}
+
+/// Ineligible-branch renderer split out alongside [`handle_eligible`].
+fn handle_ineligible(dev: &Path, reason: String, json_mode: bool) -> Result<(), u8> {
+    if json_mode {
+        print_update_json_ineligible(dev, &reason);
+    } else {
+        let err = UpdateError::Ineligible {
+            reason,
+            device: dev.to_path_buf(),
+        };
+        eprint!("{}", crate::userfacing::render_string(&err));
+    }
+    Err(1)
 }
 
 /// Emit the eligible-case JSON envelope via the typed
@@ -607,6 +654,43 @@ pub(crate) fn print_esp_diff(diff: &[EspFileDiff]) {
     );
 }
 
+/// #181 Phase 2a — human-readable rotation plan render.
+/// Runs ONLY on `--apply --experimental-apply`; plain `update` stays
+/// planner-free. Output lists each rotation step's role, destination
+/// path, and pre/post sha256 prefixes so the operator can see what
+/// the executor WOULD do before Phase 2b ships.
+pub(crate) fn print_rotation_plan(diff: &[EspFileDiff]) {
+    let plan = crate::update_apply::plan_rotation(diff);
+    if plan.is_empty() {
+        println!("Rotation plan: no-op — every canonical ESP slot is already current.");
+        return;
+    }
+    println!("Rotation plan ({} step(s), in order):", plan.len());
+    for (idx, step) in plan.iter().enumerate() {
+        let cur = &step.current_sha256;
+        let new = &step.fresh_sha256;
+        println!(
+            "  [{n}] {role:<16}  {path}",
+            n = idx + 1,
+            role = step.role,
+            path = step.esp_path,
+        );
+        println!(
+            "      current: sha256:{}…   →   new: sha256:{}…",
+            &cur[..cur.len().min(16)],
+            &new[..new.len().min(16)],
+        );
+    }
+    println!();
+    println!("Each step (executor, Phase 2b):");
+    println!("  1. backup current to <esp_path>.bak");
+    println!("  2. stage new bytes as <esp_path>.new");
+    println!("  3. verify <esp_path>.new sha256 matches the planner's fresh_sha256");
+    println!("  4. mdel + mren <esp_path>.new over <esp_path>");
+    println!("  5. re-verify sha256 post-rename");
+    println!("  6. leave .bak in place for future `update --rollback`");
+}
+
 /// `/dev/sda` + N → `/dev/sdaN` (SCSI/SATA), `/dev/nvme0n1` + N →
 /// `/dev/nvme0n1pN` (NVMe), etc. Duplicated from
 /// `flash::partition_path` to avoid cross-module pub-surface churn
@@ -629,6 +713,9 @@ fn print_help() {
     println!();
     println!("USAGE:");
     println!("  aegis-boot update <device>");
+    println!(
+        "  aegis-boot update <device> --apply --experimental-apply  (#181 Phase 2a, planner only)"
+    );
     println!("  aegis-boot update --help");
     println!();
     println!("BEHAVIOR (phase 1 of #181):");
@@ -636,8 +723,14 @@ fn print_help() {
     println!("  that its attestation manifest matches the disk GUID. Reports");
     println!("  ELIGIBLE / NOT ELIGIBLE with a specific reason. Does NOT write.");
     println!();
-    println!("  The actual atomic in-place update lands in follow-up PRs — see");
-    println!("  issue #181 for the phased plan.");
+    println!("BEHAVIOR (phase 2a of #181, --apply + --experimental-apply):");
+    println!("  Runs the Phase-1 eligibility check + ESP diff, then prints the");
+    println!("  ordered rotation plan the Phase-2b executor WOULD follow. No");
+    println!("  writes are made. Both flags are required — the double-flag");
+    println!("  prevents accidental invocation of a destructive-looking mode.");
+    println!();
+    println!("  The actual atomic in-place update (the executor) lands in Phase");
+    println!("  2b after OVMF E2E validation — see issue #181.");
     println!();
     println!("WHY YOU'D USE THIS (once full update ships):");
     println!("  - Apply shim/GRUB/kernel CVE fixes without wiping AEGIS_ISOS");

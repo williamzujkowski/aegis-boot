@@ -386,6 +386,7 @@ aegis-boot update — in-place signed-chain update (read-only check for now)
 
 USAGE:
   aegis-boot update <device>
+  aegis-boot update <device> --apply --experimental-apply  (#181 Phase 2a, planner only)
   aegis-boot update --help
 
 BEHAVIOR (phase 1 of #181):
@@ -393,8 +394,14 @@ BEHAVIOR (phase 1 of #181):
   that its attestation manifest matches the disk GUID. Reports
   ELIGIBLE / NOT ELIGIBLE with a specific reason. Does NOT write.
 
-  The actual atomic in-place update lands in follow-up PRs — see
-  issue #181 for the phased plan.
+BEHAVIOR (phase 2a of #181, --apply + --experimental-apply):
+  Runs the Phase-1 eligibility check + ESP diff, then prints the
+  ordered rotation plan the Phase-2b executor WOULD follow. No
+  writes are made. Both flags are required — the double-flag
+  prevents accidental invocation of a destructive-looking mode.
+
+  The actual atomic in-place update (the executor) lands in Phase
+  2b after OVMF E2E validation — see issue #181.
 
 WHY YOU'D USE THIS (once full update ships):
   - Apply shim/GRUB/kernel CVE fixes without wiping AEGIS_ISOS
