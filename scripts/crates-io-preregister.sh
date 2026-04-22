@@ -38,11 +38,19 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# The 8 crate names from the aegis-boot workspace, plus aegis-hwsim.
+# The 8 crate names we ship, plus aegis-hwsim.
 # Order doesn't matter — each placeholder is self-contained.
+#
+# Note on `aegis-bootctl` vs the repo's `crates/aegis-cli/`: the
+# operator CLI in `crates/aegis-cli/` ships with package name
+# `aegis-cli` on disk today, but `aegis-cli` on crates.io is taken
+# by an unrelated "Aegis Authenticator" TOTP tool (v1.3.95). The
+# in-workspace package name will be renamed to `aegis-bootctl` in a
+# follow-up PR; this placeholder reserves the new name now. The
+# binary itself is `aegis-boot` regardless of the package name.
 CRATES=(
     aegis-boot
-    aegis-cli
+    aegis-bootctl
     aegis-wire-formats
     aegis-fitness
     aegis-hwsim
