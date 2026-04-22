@@ -55,8 +55,12 @@ jobs:
   publish:
     name: cargo publish (trusted)
     runs-on: ubuntu-latest
-    # Environment gate: the `release` environment requires maintainer
-    # approval + is tag-scoped to `v*`. See
+    # Environment gate: the `release` environment is tag-scoped to
+    # `v*` (only signed v* tag pushes can enter — branches cannot
+    # publish). Required-reviewer rule was removed 2026-04-22 to
+    # enable autonomous bug-fix releases; the tag-only deployment
+    # policy + branch protection on main + cosign-keyless artifact
+    # signing are the remaining safety net. See
     # github.com/aegis-boot/aegis-boot/settings/environments/release.
     environment: release
     # OIDC token required for rust-lang/crates-io-auth-action.
@@ -92,34 +96,34 @@ jobs:
         if: ${{ github.event_name == 'push' || inputs.crate == 'all' || inputs.crate == 'aegis-wire-formats' }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.cio_auth.outputs.token }}
-        run: cargo publish -p aegis-wire-formats --locked
+        run: ./scripts/publish-if-new.sh aegis-wire-formats
 
       - name: publish iso-parser
         if: ${{ github.event_name == 'push' || inputs.crate == 'all' || inputs.crate == 'iso-parser' }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.cio_auth.outputs.token }}
-        run: cargo publish -p iso-parser --locked
+        run: ./scripts/publish-if-new.sh iso-parser
 
       - name: publish iso-probe
         if: ${{ github.event_name == 'push' || inputs.crate == 'all' || inputs.crate == 'iso-probe' }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.cio_auth.outputs.token }}
-        run: cargo publish -p iso-probe --locked
+        run: ./scripts/publish-if-new.sh iso-probe
 
       - name: publish kexec-loader
         if: ${{ github.event_name == 'push' || inputs.crate == 'all' || inputs.crate == 'kexec-loader' }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.cio_auth.outputs.token }}
-        run: cargo publish -p kexec-loader --locked
+        run: ./scripts/publish-if-new.sh kexec-loader
 
       - name: publish aegis-fitness
         if: ${{ github.event_name == 'push' || inputs.crate == 'all' || inputs.crate == 'aegis-fitness' }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.cio_auth.outputs.token }}
-        run: cargo publish -p aegis-fitness --locked
+        run: ./scripts/publish-if-new.sh aegis-fitness
 
       - name: publish aegis-bootctl
         if: ${{ github.event_name == 'push' || inputs.crate == 'all' || inputs.crate == 'aegis-bootctl' }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.cio_auth.outputs.token }}
-        run: cargo publish -p aegis-bootctl --locked
+        run: ./scripts/publish-if-new.sh aegis-bootctl
