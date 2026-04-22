@@ -1343,11 +1343,11 @@ mod tests {
                 return;
             }
         }
-        // nosemgrep: rust.lang.security.temp-dir.temp-dir
         // test-only: tempdir for synthesizing a FAT32 image + running
         // mtype against it. pid-suffixed, test-scope, test cleans up
         // at the end of its own body. Not a security boundary — same
         // pattern as flash.rs:617 for direct-install's work dir.
+        // nosemgrep: rust.lang.security.temp-dir.temp-dir
         let tmp_root = std::env::temp_dir();
         let tmp = tmp_root.join(format!("aegis-update-phase1-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).expect("mkdir tmp");
