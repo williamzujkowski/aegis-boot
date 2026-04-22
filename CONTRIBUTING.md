@@ -7,9 +7,11 @@ Thanks for your interest. This is a small project with a sharp focus — a signe
 ```bash
 git clone git@github.com:williamzujkowski/aegis-boot.git
 cd aegis-boot
-cargo test --workspace               # 140 tests as of v0.12.0
+cargo test --workspace               # run every unit + integration test
 ./scripts/dev-test.sh                # full 8-stage local CI
 ```
+
+The exact test count drifts every release — `cargo test --workspace 2>&1 | grep 'test result:'` prints the current totals. CI ([.github/workflows/ci.yml](./.github/workflows/ci.yml)) is the authoritative merge gate; see [§CI gates](#ci-gates-your-pr-must-pass) below for the full list.
 
 Prereqs are listed at the top of [`scripts/dev-test.sh`](./scripts/dev-test.sh) and in [`docs/LOCAL_TESTING.md`](./docs/LOCAL_TESTING.md).
 
@@ -64,6 +66,47 @@ At release-cut time, run the git-cliff drafting assist to produce a first-cut ch
 The output is advisory, not authoritative — promote it into `CHANGELOG.md` by (1) re-wording bullets into aegis-boot's prose style (commit subjects say "what"; the CHANGELOG needs the "why" + user-visible impact), (2) dropping scaffolding PRs, and (3) promoting critical bug fixes out of their section into the lead. See the existing versioned entries in `CHANGELOG.md` for the target tone.
 
 The draft script needs `git-cliff` locally (`cargo install --locked git-cliff@2.6.1`). It is intentionally not wired into CI — editorial control stays with the maintainer. Phase 7 of [#286](https://github.com/williamzujkowski/aegis-boot/issues/286).
+
+## CI gates your PR must pass
+
+Every PR runs the following — each is also runnable locally. Running them before push saves a CI round-trip.
+
+| Gate | Local command | Source of truth |
+| --- | --- | --- |
+| Workspace tests (stable + pinned MSRV) | `cargo test --workspace --locked` | `.github/workflows/ci.yml` |
+| Clippy `-D warnings` | `cargo clippy --workspace --all-targets -- -D warnings` | same |
+| `cargo fmt --check` | `cargo fmt --check` | same |
+| macOS + Windows cross-compile check | `cargo check -p aegis-cli --target x86_64-apple-darwin --all-targets` | same |
+| cargo-deny: advisories + licenses + bans + sources | `cargo deny check` | [`deny.toml`](./deny.toml) |
+| `cargo publish --dry-run` on publishable crates | `cargo publish --dry-run -p iso-parser -p kexec-loader --locked` | `.github/workflows/crates-publish-dryrun.yml` |
+| Constants drift | `cargo run -p aegis-cli --bin constants-docgen --features docgen -- --check` | [`crates/aegis-cli/src/constants.rs`](./crates/aegis-cli/src/constants.rs) |
+| CLI drift (subcommand + synopsis) | `cargo run -p aegis-cli --bin cli-docgen --features docgen -- --check` | `crates/aegis-cli/src/bin/cli_docgen.rs` |
+| JSON schema drift | `cargo run -p aegis-wire-formats --bin aegis-wire-formats-schema-docgen --features schema -- --check` | `docs/reference/schemas/*.schema.json` |
+| Workspace version drift | CI job, no local gate | `.github/workflows/ci.yml` |
+| Semgrep Rust SAST | GitHub-only | `.github/workflows/ci.yml` (job `sast`) |
+| gitleaks secret scan | GitHub-only | `.gitleaks.toml` |
+| Miri UB detection (kexec-loader) | `cargo +nightly miri test -p kexec-loader` | `.github/workflows/miri-kexec-loader.yml` |
+| Real-hardware / OVMF boot smoke | GitHub-only | `.github/workflows/direct-install-e2e.yml`, `ovmf-secboot.yml` |
+
+`./scripts/dev-test.sh` bundles most of these into a single "run-before-push" command.
+
+**First PR?** `gh issue list --label "good first issue"` surfaces issues curated for newcomers. Or propose your own fix via a new issue first (step 1 above).
+
+## Extending the CLI
+
+Adding a new subcommand touches **four** places; the CI `cli-drift` gate will reject partial wiring:
+
+1. `crates/aegis-cli/src/<subcommand>.rs` — implementation
+2. `crates/aegis-cli/src/main.rs` — dispatch table + `print_help()` entry
+3. `crates/aegis-cli/src/bin/cli_docgen.rs` — `SUBCOMMANDS` registry
+4. `docs/CLI.md` + `man/aegis-boot.1.in` — prose companion + man section
+
+After editing, regenerate the synopsis (picked up by the CI drift-check):
+
+```bash
+cargo build --release -p aegis-cli --bin aegis-boot
+cargo run -q -p aegis-cli --bin cli-docgen --features docgen -- --write
+```
 
 ## Security issues
 

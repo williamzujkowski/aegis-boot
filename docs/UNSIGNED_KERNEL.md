@@ -14,7 +14,7 @@ Under aegis-boot, **the operator chooses per-ISO** whether to trust an unsigned 
 
 The simplest path. These distros ship kernels signed by a UEFI CA that shim's built-in keyring trusts:
 
-| Distro | Verified under aegis-boot v0.12.0 |
+| Distro | Verified under aegis-boot |
 |---|---|
 | Ubuntu 24.04+ | ✅ `kexec_core: Starting new kernel` (Canonical CA, real-hardware shakedown #109) |
 | Fedora 39+ | likely (Fedora CA, unverified) |

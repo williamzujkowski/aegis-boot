@@ -51,11 +51,13 @@ The trust root (Microsoft 3rd-party CA) is the same one your laptop already trus
 Two partitions:
 
 ```
-/dev/sdX1   AEGIS_BOOT   ESP (FAT32, ~200 MB)   ← signed shim/grub/kernel chain
+/dev/sdX1   AEGIS_ESP    ESP (FAT32, <!-- constants:BEGIN:ESP_SIZE_MB -->400<!-- constants:END:ESP_SIZE_MB --> MB)   ← signed shim/grub/kernel chain
 /dev/sdX2   AEGIS_ISOS   data (exFAT, rest)     ← your .iso files (#243; opt-in fat32/ext4 also supported)
 ```
 
-`AEGIS_BOOT` is what the firmware boots from. It's tiny, signed, and **never changes** after `aegis-boot flash` writes it. `AEGIS_ISOS` is yours — drop ISOs in, copy them out, edit metadata sidecars (#246). Tampering with `AEGIS_ISOS` cannot break the boot chain because the boot chain doesn't live there.
+See [docs/USB_LAYOUT.md](USB_LAYOUT.md) for the full partition + filesystem contract (volume-label identifiers, alignment, file-count caps). The numbers above derive from `crates/aegis-cli/src/constants.rs` via the `constants:` marker pipeline (see [ARCHITECTURE.md §constants-drift](ARCHITECTURE.md) for how this doc stays in sync with code).
+
+`AEGIS_ESP` is what the firmware boots from. It's tiny, signed, and **never changes** after `aegis-boot flash` writes it. `AEGIS_ISOS` is yours — drop ISOs in, copy them out, edit metadata sidecars (#246). Tampering with `AEGIS_ISOS` cannot break the boot chain because the boot chain doesn't live there.
 
 When the rescue-tui menu lists your ISOs, it computes their sha256 on the spot and compares against optional `<iso>.sha256` sidecars you write yourself. The verdict (verified ✓ / mismatch ✗ / no sidecar) is shown before you boot — but the **boot decision** itself stays with you. There is no auto-update, no phone-home, no auto-trust.
 

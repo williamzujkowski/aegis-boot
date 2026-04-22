@@ -731,7 +731,9 @@ aegis-boot compat --help
 
 ## `aegis-boot fetch-image`
 
-Download a released `aegis-boot.img` (or `aegis-boot-hybrid.iso`) from GitHub Releases, verify its minisign signature against the pinned release public key, and place it in the operator's chosen output directory. Intended for the "I just want to flash without building from source" path — paired with `aegis-boot flash <device> --image <path>` it closes the build-from-source loop for unprivileged operators.
+Download a released `aegis-boot.img` (or `aegis-boot-hybrid.iso`) from GitHub Releases, verify its **[Sigstore cosign](https://docs.sigstore.dev/) keyless signature** against this repo's release workflow identity, and place it in the operator's chosen output directory. Intended for the "I just want to flash without building from source" path — paired with `aegis-boot flash <device> --image <path>` it closes the build-from-source loop for unprivileged operators.
+
+Verification uses the same cosign-keyless chain as every other aegis-boot release artifact: `cosign verify-blob --certificate-identity-regexp '^https://github\.com/williamzujkowski/aegis-boot/.+@refs/tags/v.+$' --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'`. If `cosign` isn't on `PATH` the command fails closed with a clear diagnostic — see [crates/aegis-cli/src/fetch_image.rs](../crates/aegis-cli/src/fetch_image.rs) for the canonical invocation. Operators preferring manual verification run the equivalent recipe from [docs/RELEASE_NOTES_FOOTER.md](RELEASE_NOTES_FOOTER.md) against the downloaded file.
 
 ### Usage
 

@@ -74,7 +74,7 @@ Alternatively, open a PR adding a row to the table directly. We'll accept PRs fr
 
 ## Future: automated reports
 
-A planned feature ([epic #137](https://github.com/williamzujkowski/aegis-boot/issues/137)) is `aegis-boot doctor --report` — opt-in anonymous telemetry that posts the host's firmware vendor / model / SB state / outcome. The data shape will be public and operators will see exactly what's submitted before consenting per-run. No data is collected today.
+A planned feature is `aegis-boot doctor --report` — opt-in anonymous telemetry that posts the host's firmware vendor / model / SB state / outcome. The data shape will be public and operators will see exactly what's submitted before consenting per-run. No data is collected today.
 
 ## See also
 

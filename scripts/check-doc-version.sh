@@ -69,8 +69,12 @@ echo "check-doc-version: canonical version = $CANONICAL_VERSION"
 # Add with intent: each row should be a reference that MUST match, not
 # MAY match. Don't allowlist speculative patterns.
 PATTERNS=(
-    # README status header: **Status:** v<version> — description...
-    'README.md|\*\*Status:\*\* v@VERSION@|README status header'
+    # NOTE: README.md's "Status" banner intentionally does NOT carry a
+    # version number anymore — it's an evergreen pointer to CHANGELOG.md
+    # (#384 docs-evergreen sweep). The per-release version reference
+    # lives in the CHANGELOG; drift there is caught by humans reading
+    # the release-notes PR. Don't re-add a README pattern here without
+    # re-opening that conversation.
 
     # INSTALL.md --version example output
     'docs/INSTALL.md|aegis-boot --version[^\n]*aegis-boot v@VERSION@|INSTALL.md --version example'

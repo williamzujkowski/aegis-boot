@@ -25,7 +25,7 @@ A signed UEFI Secure Boot rescue environment that lets operators pick any ISO fr
 
 </div>
 
-**Status:** v0.15.0 — doc-automation milestone release (closes epic [#286](https://github.com/williamzujkowski/aegis-boot/issues/286) — 7 phases of auto-gen + drift-checks for every user-facing doc; closes umbrella [#310](https://github.com/williamzujkowski/aegis-boot/issues/310) operator-UX sweep). 12 committed JSON Schemas for every `aegis-boot --json` surface. First community hardware-compat submission surfaced four bugs, all fixed. New local cross-distro test harness (openSUSE / Ubuntu / Alpine / Fedora / Arch). CI grew from 17 → 22 drift-checks. Real-hardware shakedown under Secure Boot enforcing validated Ubuntu (successful kexec) + Alpine (unsigned-kernel rejection surfaces the MOK-enrollment hint as designed) ([#109](https://github.com/williamzujkowski/aegis-boot/issues/109)). Multi-vendor real-hardware sweep (Framework / ThinkPad / Dell) gates v1.0.0 ([#51](https://github.com/williamzujkowski/aegis-boot/issues/51)).
+**Status:** pre-1.0. [CHANGELOG.md](./CHANGELOG.md) has the per-release detail; v1.0.0 is gated on the multi-vendor real-hardware sweep ([#51](https://github.com/williamzujkowski/aegis-boot/issues/51)).
 
 ## What it does
 
@@ -78,7 +78,7 @@ Each release ships a static-musl `aegis-boot-x86_64-linux` binary plus its Sigst
 
 Then the operator flow — pick one:
 
-### Fastest path — `aegis-boot quickstart` (new in v0.16)
+### Fastest path — `aegis-boot quickstart`
 
 ```bash
 # Empty stick → booted rescue with Alpine 3.20 in under 10 min (#352)
@@ -185,7 +185,7 @@ Full developer loop: [docs/LOCAL_TESTING.md](./docs/LOCAL_TESTING.md).
 | `AEGIS_LOG_JSON` | unset | `1` switches `tracing` output to JSON for `journalctl --output=json` |
 | `AEGIS_STATE_DIR` | `/var/lib/aegis-boot` | Where last-booted state is persisted |
 
-`scripts/mkusb.sh` reads: `OUT_DIR`, `IMG`, `DISK_SIZE_MB` (default 2048), `ESP_SIZE_MB` (400), `DATA_LABEL` (`AEGIS_ISOS`), `DATA_FS` (`fat32` or `ext4`), `SHIM_SRC`, `GRUB_SRC`, `KERNEL_SRC`, `INITRD_SRC`.
+`scripts/mkusb.sh` reads: `OUT_DIR`, `IMG`, `DISK_SIZE_MB` (default 2048), `ESP_SIZE_MB` (400), `DATA_LABEL` (`AEGIS_ISOS`), `DATA_FS` (`exfat` default, also `fat32` or `ext4`; #243), `SHIM_SRC`, `GRUB_SRC`, `KERNEL_SRC`, `INITRD_SRC`.
 
 ## Build environment
 

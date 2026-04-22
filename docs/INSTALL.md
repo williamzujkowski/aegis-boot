@@ -36,7 +36,7 @@ Option B (Homebrew) auto-installs the Brew-tracked runtime deps (`curl`, `gnupg`
 
 ### macOS (Apple Silicon)
 
-A native `aegis-boot-aarch64-apple-darwin` binary ships with every release from v0.16.0 onward (Phase A1 of [#365](https://github.com/williamzujkowski/aegis-boot/issues/365)). Install via Homebrew (recommended) or direct download:
+A native `aegis-boot-aarch64-apple-darwin` binary ships with every release (Phase A1 of [#365](https://github.com/williamzujkowski/aegis-boot/issues/365)). Install via Homebrew (recommended) or direct download:
 
 ```bash
 # Option A — Homebrew (no Gatekeeper interaction)

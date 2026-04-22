@@ -187,7 +187,7 @@ main() {
     arch="$(detect_arch)"
     if [ "$os" = "unsupported" ] || [ "$arch" = "unsupported" ]; then
         err "unsupported platform: $(uname -s)/$(uname -m)"
-        err "supported today: linux/x86_64 (linux/aarch64, darwin/*, windows tracked in #137 and #123)"
+        err "supported today: linux/x86_64, darwin/arm64 (linux/aarch64, darwin/x86_64, windows tracked in #365)"
         return 1
     fi
     if [ "$os" != "linux" ] || [ "$arch" != "x86_64" ]; then
@@ -320,7 +320,7 @@ main() {
     # --version was requested, pull completions from the same tag for
     # consistency; otherwise pull from main.
     install_completions "$version"
-    install_manpage "$version"
+    install_manpage "$target"
 
     # Post-install dependency preflight (#313). `aegis-boot doctor`
     # already checks the mkusb.sh dep stack (mcopy, mkfs.vfat,
@@ -424,13 +424,16 @@ install_completions() {
 # completions — never fail the installer. Root gets /usr/local/share/man,
 # non-root gets the XDG-style fallback. If mandb is present, refresh
 # the cache so `man aegis-boot` works immediately.
+#
+# The man page is generated from man/aegis-boot.1.in at build time and
+# embedded into the binary (build.rs expands @VERSION@/@DATE@). We ask
+# the installed binary to emit it via `aegis-boot man` rather than
+# fetching from the repo — the raw `.1` file doesn't exist (only `.in`).
 install_manpage() {
-    version_or_main="$1"
-    ref="${version_or_main:-main}"
-    if [ "$ref" = "latest" ] || [ -z "$ref" ]; then
-        ref=main
+    bin="$1"
+    if [ ! -x "$bin" ]; then
+        return 0
     fi
-    man_url="https://raw.githubusercontent.com/$REPO/$ref/man/aegis-boot.1"
 
     if [ "$(id -u)" -eq 0 ]; then
         man_dest=/usr/local/share/man/man1/aegis-boot.1
@@ -439,13 +442,13 @@ install_manpage() {
     fi
     man_dir="$(dirname "$man_dest")"
     if mkdir -p "$man_dir" 2>/dev/null \
-        && curl -fsSL --proto '=https' --tlsv1.2 -o "$man_dest" "$man_url" 2>/dev/null; then
+        && "$bin" man > "$man_dest" 2>/dev/null; then
         note "man page:        $man_dest"
         if command -v mandb >/dev/null 2>&1; then
             mandb -q >/dev/null 2>&1 || true
         fi
     else
-        note "(man page not installed — download from $man_url)"
+        note "(man page not installed — run \`$bin man | sudo tee /usr/local/share/man/man1/aegis-boot.1 > /dev/null\`)"
     fi
 }
 

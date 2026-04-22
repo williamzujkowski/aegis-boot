@@ -11,7 +11,15 @@ For the *why* behind each step, see [HOW_IT_WORKS.md](HOW_IT_WORKS.md).
 - `sudo` on a Linux workstation
 - (optional) A target machine with UEFI Secure Boot **enforcing** to test on
 
-## The 4-command path
+## The shortest path: `quickstart`
+
+```
+$ sudo aegis-boot quickstart /dev/sdX   # flash + Alpine 3.20 in one command
+```
+
+One command — flash the signed chain, fetch + verify Alpine 3.20 Standard (~200 MiB), add it. Ready to boot in under 10 minutes. See [`aegis-boot quickstart`](./CLI.md#aegis-boot-quickstart).
+
+## The 4-command path (custom ISO set)
 
 ```
 $ aegis-boot doctor          # check the host can build a stick
@@ -46,7 +54,7 @@ sdb  931G  Samsung NVMe    ABC...XYZ    nvme
 
 You want the **removable USB** one (column `TRAN=usb`). On a fresh install with one stick attached, that's `/dev/sda` here.
 
-If you're nervous about picking the wrong one, run with no device argument and let `aegis-boot` enumerate + pick interactively (#245 in progress):
+If you're nervous about picking the wrong one, run with no device argument and let `aegis-boot` enumerate + pick interactively ([#245](https://github.com/williamzujkowski/aegis-boot/issues/245)):
 
 ```
 $ aegis-boot init
@@ -119,7 +127,7 @@ $ aegis-boot eject /dev/sda
 
 Plug the stick into a target. Power on. Hit the firmware boot-menu key (`F12`/`F9`/`Esc` depending on vendor). Pick the USB. The rescue-tui appears. Pick an ISO. Press Enter. The chosen ISO's kernel takes over via `kexec` — no second reboot.
 
-If you hit `SignatureRejected` for an ISO, it means the kernel inside that ISO isn't signed by a CA your firmware (or the operator's MOK keyring) trusts. Use `aegis-boot doctor --remedy` for the `mokutil` enrollment recipe.
+If you hit `SignatureRejected` for an ISO, it means the kernel inside that ISO isn't signed by a CA your firmware (or the operator's MOK keyring) trusts. The rescue-tui surfaces the `mokutil --import` recipe for the specific signing key; see [UNSIGNED_KERNEL.md](./UNSIGNED_KERNEL.md) for the full walkthrough.
 
 ## What's next
 
