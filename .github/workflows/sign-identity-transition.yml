@@ -1,12 +1,12 @@
 name: sign-identity-transition
 
 # One-shot workflow. Triggered manually via workflow_dispatch on the
-# PRE-transfer williamzujkowski/aegis-boot repo. Signs
+# PRE-transfer aegis-boot/aegis-boot repo. Signs
 # .github/identity-transition.json with cosign keyless, committing
 # the .sig + .pem alongside the JSON. The cosign subject at sign
 # time will be:
 #
-#   https://github.com/williamzujkowski/aegis-boot/.github/workflows/sign-identity-transition.yml@refs/heads/<branch>
+#   https://github.com/aegis-boot/aegis-boot/.github/workflows/sign-identity-transition.yml@refs/heads/<branch>
 #
 # That subject is the legacy identity authorizing the successor
 # aegis-boot/aegis-boot identity (per the JSON body). Automated
@@ -79,7 +79,7 @@ jobs:
           git commit -m "chore(identity): sign identity-transition.json with legacy cosign identity
 
           Legacy-identity pre-transfer signature for the
-          williamzujkowski/aegis-boot → aegis-boot/aegis-boot repo
+          aegis-boot/aegis-boot → aegis-boot/aegis-boot repo
           transfer. Enables automated verifiers to chain old→new
           cosign identity across the org move without trusting an
           unverified docs update.

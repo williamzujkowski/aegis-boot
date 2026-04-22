@@ -5,7 +5,7 @@ This directory makes the aegis-boot repo a [Homebrew tap](https://docs.brew.sh/T
 ## Install
 
 ```bash
-brew tap williamzujkowski/aegis-boot https://github.com/williamzujkowski/aegis-boot
+brew tap aegis-boot/aegis-boot https://github.com/aegis-boot/aegis-boot
 brew install aegis-boot
 ```
 
@@ -19,7 +19,7 @@ After that, `brew upgrade aegis-boot` picks up new formula versions when they're
 ## Platforms
 
 - **Linux x86_64** + **macOS arm64 (Apple Silicon)**: supported today via the cosign-signed release binaries.
-- **Linux aarch64, macOS x86_64, Windows**: not yet supported — the formula errors with a pointer to [#365](https://github.com/williamzujkowski/aegis-boot/issues/365) (cross-platform flash epic). For now, build from source: `cargo install --path crates/aegis-cli`.
+- **Linux aarch64, macOS x86_64, Windows**: not yet supported — the formula errors with a pointer to [#365](https://github.com/aegis-boot/aegis-boot/issues/365) (cross-platform flash epic). For now, build from source: `cargo install --path crates/aegis-cli`.
 
 ## Verifying the binary cosign signature
 
@@ -34,4 +34,4 @@ When a new release is tagged, this file needs:
 3. Update `sha256 "..."` to the new binary's hash (from the release's `SHA256SUMS` asset)
 4. Possibly extend the `test do` block as new subcommands ship
 
-A future PR (tracked under [epic #365](https://github.com/williamzujkowski/aegis-boot/issues/365)) will add a release-time CI step that bumps the formula automatically alongside the GitHub release.
+A future PR (tracked under [epic #365](https://github.com/aegis-boot/aegis-boot/issues/365)) will add a release-time CI step that bumps the formula automatically alongside the GitHub release.

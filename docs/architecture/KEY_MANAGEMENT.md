@@ -2,13 +2,13 @@
 
 **Status:** ACCEPTED (revision 3)
 **Date:** 2026-04-21
-**Tracking issue:** [#366](https://github.com/williamzujkowski/aegis-boot/issues/366)
+**Tracking issue:** [#366](https://github.com/aegis-boot/aegis-boot/issues/366)
 **Revision history:**
 - 2026-04-20 — initial proposal (rev 1)
 - 2026-04-21 — rev 2 adds Decision 7 (Key Epoch), §3.6 (historical anchors), and §5.1 (rotation rehearsal) after consensus vote surfaced revocation-circularity, temporal-deadlock, and rotation-atrophy objections (vote result: 60% approve, below supermajority threshold)
 - 2026-04-21 — rev 3 closes rev-2's residual TOFU window on fresh installs by adding `MIN_REQUIRED_EPOCH` binary-embedded floor to Decision 7; extends §5.1 rehearsal with a signing-handoff audit step to waive the signing-oracle split trigger (§6.2)
 - 2026-04-21 — **ACCEPTED** on rev 3 via higher-order consensus vote (architect ✓88%, security ✓90%, devex ✓87%, ai_ml ✓90%, pm ✓88%, contrarian ✗95% → 83.3% approve, supermajority cleared). Unblocks #349 (Phase 3b attestation signing) and #367 (Phase D bundle trust anchor). Vote verification hashes preserved in PR #385.
-**Consumers:** [#349](https://github.com/williamzujkowski/aegis-boot/issues/349) (signed attestation manifest), [#367](https://github.com/williamzujkowski/aegis-boot/issues/367) (cross-platform `--direct-install` trust anchor, Phase D of [#365](https://github.com/williamzujkowski/aegis-boot/issues/365))
+**Consumers:** [#349](https://github.com/aegis-boot/aegis-boot/issues/349) (signed attestation manifest), [#367](https://github.com/aegis-boot/aegis-boot/issues/367) (cross-platform `--direct-install` trust anchor, Phase D of [#365](https://github.com/aegis-boot/aegis-boot/issues/365))
 **Supersedes:** portion of `crates/aegis-cli/src/attest.rs` header comment (lines 22–28) that defers signing to "epic #139"; this ADR claims the design.
 
 > **Status note.** This ADR is ACCEPTED as of rev 3 (2026-04-21, higher-order supermajority vote on #366). Future substantive changes should be tracked as a follow-up ADR that supersedes this one rather than in-place revision — the decision log stays linear. The `Alternatives considered` section names the three strongest contrarian paths; revisit triggers in §7 name the conditions under which each becomes worth re-opening.
@@ -43,9 +43,9 @@ Both consumers need: (a) a signing tool that runs offline, (b) an operator-verif
 
 - **Individual-account maintainer.** No D-U-N-S number, no Authenticode certificate, no Apple Developer Program enrollment. Rules out any solution that requires corporate PKI or a business-entity identity.
 - **Solo maintainer.** No ceremony-heavy key-custody protocol ("two-person offline signing with HSMs") is realistic. One person, one laptop, GitHub as ambient identity.
-- **Repo mobility.** Project currently lives at `github.com/williamzujkowski/aegis-boot`; per #365 it migrates to an `aegis-boot` org. Any solution coupled to the owner slug must rotate on that move.
+- **Repo mobility.** Project currently lives at `github.com/aegis-boot/aegis-boot`; per #365 it migrates to an `aegis-boot` org. Any solution coupled to the owner slug must rotate on that move.
 - **Existing minisign use.** `crates/iso-probe/src/minisign.rs` already verifies minisign detached sigs against `AEGIS_TRUSTED_KEYS` for per-ISO sidecars. Operators who have used `aegis-boot add` have already pointed that env var at a keyring. Pattern + mental model already exists.
-- **Existing cosign use.** `release.yml:75-205` already signs every release asset (binary, initramfs, SBOM, `aegis-boot.img`, `SHA256SUMS`) via cosign keyless with the workflow-bound identity `https://github.com/williamzujkowski/aegis-boot/`. Operators running `fetch-image` already verify via cosign (`crates/aegis-cli/src/fetch_image.rs:173-303`).
+- **Existing cosign use.** `release.yml:75-205` already signs every release asset (binary, initramfs, SBOM, `aegis-boot.img`, `SHA256SUMS`) via cosign keyless with the workflow-bound identity `https://github.com/aegis-boot/aegis-boot/`. Operators running `fetch-image` already verify via cosign (`crates/aegis-cli/src/fetch_image.rs:173-303`).
 
 ---
 
@@ -356,9 +356,9 @@ This ADR should be re-opened if any of the following occur:
 
 ## 8. References
 
-- Tracking issue: [#366](https://github.com/williamzujkowski/aegis-boot/issues/366)
-- Consumer A: [#349](https://github.com/williamzujkowski/aegis-boot/issues/349) — signed attestation manifest write
-- Consumer B: [#367](https://github.com/williamzujkowski/aegis-boot/issues/367) — cross-platform `--direct-install` trust anchor (Phase D of [#365](https://github.com/williamzujkowski/aegis-boot/issues/365))
+- Tracking issue: [#366](https://github.com/aegis-boot/aegis-boot/issues/366)
+- Consumer A: [#349](https://github.com/aegis-boot/aegis-boot/issues/349) — signed attestation manifest write
+- Consumer B: [#367](https://github.com/aegis-boot/aegis-boot/issues/367) — cross-platform `--direct-install` trust anchor (Phase D of [#365](https://github.com/aegis-boot/aegis-boot/issues/365))
 - Existing minisign use: `crates/iso-probe/src/minisign.rs`
 - Existing cosign use: `.github/workflows/release.yml:75-205`, `crates/aegis-cli/src/fetch_image.rs:173-303`
 - Attestation schema: `crates/aegis-wire-formats` (`Attestation`, `SCHEMA_VERSION: 1`)

@@ -261,13 +261,13 @@ fn try_download_signature(url: &str, out: &Path, suffix_label: &str) -> bool {
 /// Matches `release.yml` at any tag ref (`refs/tags/...`) on the
 /// upstream repository. Forks that publish their own releases with
 /// their own OIDC identity need a different CLI tool — this one is
-/// bound to `williamzujkowski/aegis-boot` by design.
+/// bound to `aegis-boot/aegis-boot` by design.
 ///
 /// If we're wrong about this regex shape, the worst that happens is
 /// a FAILED verification on otherwise-correct artifacts — operators
 /// see the failure, can manually re-verify with an adjusted regex,
 /// and we fix the regex in a point release.
-const COSIGN_IDENTITY_REGEX: &str = r"^https://github\.com/williamzujkowski/aegis-boot/\.github/workflows/release\.yml@refs/tags/.+$";
+const COSIGN_IDENTITY_REGEX: &str = r"^https://github\.com/aegis-boot/aegis-boot/\.github/workflows/release\.yml@refs/tags/.+$";
 
 /// The Sigstore OIDC issuer for GitHub Actions' ambient OIDC tokens.
 /// This is a stable public endpoint; hardcoding is intentional.
@@ -360,7 +360,7 @@ struct ParsedArgs {
 /// release workflow, so the URL redirect from `latest` to the actual
 /// tag doesn't affect verification.
 const DEFAULT_RELEASE_URL: &str =
-    "https://github.com/williamzujkowski/aegis-boot/releases/latest/download/aegis-boot.img";
+    "https://github.com/aegis-boot/aegis-boot/releases/latest/download/aegis-boot.img";
 
 /// Expand a release tag (e.g. `v0.14.0`) into the tag-pinned download
 /// URL on aegis-boot's GitHub releases. Defensive against shell-meta
@@ -376,7 +376,7 @@ fn release_download_url_for_tag(tag: &str) -> Result<String, u8> {
         return Err(2);
     }
     Ok(format!(
-        "https://github.com/williamzujkowski/aegis-boot/releases/download/{tag}/aegis-boot.img"
+        "https://github.com/aegis-boot/aegis-boot/releases/download/{tag}/aegis-boot.img"
     ))
 }
 
@@ -617,7 +617,7 @@ mod tests {
     fn is_safe_https_url_accepts_plain_https() {
         assert!(is_safe_https_url("https://example.com/aegis-boot.img"));
         assert!(is_safe_https_url(
-            "https://github.com/williamzujkowski/aegis-boot/releases/download/v0.13.0/aegis-boot.img"
+            "https://github.com/aegis-boot/aegis-boot/releases/download/v0.13.0/aegis-boot.img"
         ));
     }
 
@@ -784,7 +784,7 @@ mod tests {
         // anchor) would let a non-release workflow sign artifacts that
         // this CLI would accept. Spot-check the anchor + path shape.
         assert!(
-            COSIGN_IDENTITY_REGEX.starts_with("^https://github\\.com/williamzujkowski/aegis-boot/")
+            COSIGN_IDENTITY_REGEX.starts_with("^https://github\\.com/aegis-boot/aegis-boot/")
         );
         assert!(COSIGN_IDENTITY_REGEX.contains(".github/workflows/release\\.yml"));
         assert!(COSIGN_IDENTITY_REGEX.contains("refs/tags/"));
@@ -807,7 +807,7 @@ mod tests {
         // resolves to. GitHub's `latest` alias redirects to the most
         // recent release — cosign verification still works because
         // the hardcoded identity regex accepts any tag ref.
-        assert!(DEFAULT_RELEASE_URL.starts_with("https://github.com/williamzujkowski/aegis-boot/"));
+        assert!(DEFAULT_RELEASE_URL.starts_with("https://github.com/aegis-boot/aegis-boot/"));
         assert!(DEFAULT_RELEASE_URL.contains("/releases/latest/download/"));
         assert!(DEFAULT_RELEASE_URL.ends_with("/aegis-boot.img"));
         // Safety gate must pass on the default URL or the whole
@@ -820,7 +820,7 @@ mod tests {
         let url = release_download_url_for_tag("v0.14.0").unwrap();
         assert_eq!(
             url,
-            "https://github.com/williamzujkowski/aegis-boot/releases/download/v0.14.0/aegis-boot.img"
+            "https://github.com/aegis-boot/aegis-boot/releases/download/v0.14.0/aegis-boot.img"
         );
         assert!(is_safe_https_url(&url));
     }

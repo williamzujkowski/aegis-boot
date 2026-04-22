@@ -107,7 +107,7 @@ source dir, and boots under OVMF SecBoot. Image size auto-scales to
 | `sata` | AHCI module path (`ahci.ko`) | matches most desktops + older laptops |
 | `usb` | `qemu-xhci` + `usb-storage` | closest to a real USB stick plugged into a host |
 
-All three modes were verified end-to-end starting in v0.7.0 with Alpine 3.20 (4 ISO entries discovered); v0.12.0 added real-hardware shakedown via USB-passthrough on a SanDisk Cruzer 32 GB stick (Alpine refusal + Ubuntu boot, [#109](https://github.com/williamzujkowski/aegis-boot/issues/109)).
+All three modes were verified end-to-end starting in v0.7.0 with Alpine 3.20 (4 ISO entries discovered); v0.12.0 added real-hardware shakedown via USB-passthrough on a SanDisk Cruzer 32 GB stick (Alpine refusal + Ubuntu boot, [#109](https://github.com/aegis-boot/aegis-boot/issues/109)).
 
 ### Manual, if you want to inspect the partition
 
@@ -134,4 +134,4 @@ Then boot via `qemu-try.sh` — the TUI should list your ISOs.
 
 The scripts are deliberately identical to what CI invokes. If `dev-test.sh` passes locally, CI should too. If they diverge (different kernel, different OVMF version, different runner arch), file an issue — we want local to match the reference CI environment.
 
-CI status is the merge gate; local testing is the pre-push sanity check. CI runs are visible at the [Actions tab](https://github.com/williamzujkowski/aegis-boot/actions).
+CI status is the merge gate; local testing is the pre-push sanity check. CI runs are visible at the [Actions tab](https://github.com/aegis-boot/aegis-boot/actions).

@@ -2,9 +2,9 @@
 
 **Status:** PROPOSED
 **Date:** 2026-04-20
-**Tracking issue:** [#375](https://github.com/williamzujkowski/aegis-boot/issues/375)
+**Tracking issue:** [#375](https://github.com/aegis-boot/aegis-boot/issues/375)
 **Supersedes scope-wise:** nothing yet; extends the tmpfs-only design in `crates/rescue-tui/src/persistence.rs` (lines 3–11)
-**Related:** [#123](https://github.com/williamzujkowski/aegis-boot/issues/123) (misleading "SHIPPED" claim), [#132](https://github.com/williamzujkowski/aegis-boot/issues/132) (acceptance-criteria mismatch caught in real-hardware validation 2026-04-21), [#342](https://github.com/williamzujkowski/aegis-boot/issues/342) (two-stage tmpfs→disk pattern reused here), [#277](https://github.com/williamzujkowski/aegis-boot/issues/277) / attestation manifests in `crates/aegis-cli/src/attest.rs`, [#366](https://github.com/williamzujkowski/aegis-boot/issues/366) (ADR 0002, key management — companion ADR landed same day)
+**Related:** [#123](https://github.com/aegis-boot/aegis-boot/issues/123) (misleading "SHIPPED" claim), [#132](https://github.com/aegis-boot/aegis-boot/issues/132) (acceptance-criteria mismatch caught in real-hardware validation 2026-04-21), [#342](https://github.com/aegis-boot/aegis-boot/issues/342) (two-stage tmpfs→disk pattern reused here), [#277](https://github.com/aegis-boot/aegis-boot/issues/277) / attestation manifests in `crates/aegis-cli/src/attest.rs`, [#366](https://github.com/aegis-boot/aegis-boot/issues/366) (ADR 0002, key management — companion ADR landed same day)
 
 > Numbering: ADR 0002 is claimed by the #366 key-management ADR that merged first on `docs/366-key-management-adr`. This ADR takes 0003 per the coordination rule in §11.
 

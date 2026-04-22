@@ -2,7 +2,7 @@
 
 Safe wrapper around [`kexec_file_load(2)`](https://man7.org/linux/man-pages/man2/kexec_file_load.2.html) for boot handoff on Linux. Loads a kernel + initrd + cmdline into the running kernel's reserved kexec memory region and invokes `reboot(LINUX_REBOOT_CMD_KEXEC)` to jump into it — all without going through BIOS/UEFI or the bootloader a second time.
 
-Part of the [aegis-boot](https://github.com/williamzujkowski/aegis-boot) rescue environment — a signed-chain UEFI Secure Boot stick that boots any ISO.
+Part of the [aegis-boot](https://github.com/aegis-boot/aegis-boot) rescue environment — a signed-chain UEFI Secure Boot stick that boots any ISO.
 
 ## Scope
 
@@ -11,7 +11,7 @@ Only [`kexec_file_load(2)`](https://man7.org/linux/man-pages/man2/kexec_file_loa
 - It is blocked under `lockdown=integrity` (which aegis-boot requires for its SB-enforced handoff).
 - It has no upstream signature-verification story — `KEXEC_SIG` only applies to `kexec_file_load`.
 
-See [ADR 0001](https://github.com/williamzujkowski/aegis-boot/blob/main/docs/adr/0001-runtime-architecture.md) in the parent project for the Secure Boot rationale.
+See [ADR 0001](https://github.com/aegis-boot/aegis-boot/blob/main/docs/adr/0001-runtime-architecture.md) in the parent project for the Secure Boot rationale.
 
 ## Platform support
 
@@ -47,7 +47,7 @@ See the [API docs](https://docs.rs/kexec-loader) for the full surface.
 
 ## Status
 
-**Pre-1.0.** API is settling through real-hardware validation on the parent project's test fleet. Publishing to crates.io at 1.0. Until then, consume via the [aegis-boot workspace](https://github.com/williamzujkowski/aegis-boot).
+**Pre-1.0.** API is settling through real-hardware validation on the parent project's test fleet. Publishing to crates.io at 1.0. Until then, consume via the [aegis-boot workspace](https://github.com/aegis-boot/aegis-boot).
 
 ## License
 

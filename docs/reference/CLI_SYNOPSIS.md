@@ -4,7 +4,7 @@
 
 This file is auto-generated from the live output of `aegis-boot <SUBCOMMAND> --help` — it is the authoritative usage + flags reference. For prose guides, examples, and exit-code narratives, see [`docs/CLI.md`](../CLI.md).
 
-Phase 3b of [#286](https://github.com/williamzujkowski/aegis-boot/issues/286). Regenerate with:
+Phase 3b of [#286](https://github.com/aegis-boot/aegis-boot/issues/286). Regenerate with:
 
 ```bash
 cargo build -p aegis-cli --release
@@ -115,7 +115,7 @@ EXAMPLES:
 NOTES:
   Rows are verified outcomes only — no speculation. If your machine is missing,
   please submit a report:
-  https://github.com/williamzujkowski/aegis-boot/issues/new?template=hardware-report.yml
+  https://github.com/aegis-boot/aegis-boot/issues/new?template=hardware-report.yml
 ```
 
 ## `aegis-boot completions`

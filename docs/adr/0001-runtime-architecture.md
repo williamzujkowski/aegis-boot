@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2026-04-14
-**Deciders:** 5-agent consensus vote (higher_order, supermajority) on [issue #4](https://github.com/williamzujkowski/aegis-boot/issues/4)
+**Deciders:** 5-agent consensus vote (higher_order, supermajority) on [issue #4](https://github.com/aegis-boot/aegis-boot/issues/4)
 **Result:** Option B, 4–1 (80%)
 
 ## Context
@@ -95,6 +95,6 @@ This dissent shapes Option B's implementation:
 
 ## References
 
-- Issue [#4](https://github.com/williamzujkowski/aegis-boot/issues/4) — architecture decision
-- Issue [#2](https://github.com/williamzujkowski/aegis-boot/issues/2) — reproducible build (must cover rescue kernel + initramfs + signing)
+- Issue [#4](https://github.com/aegis-boot/aegis-boot/issues/4) — architecture decision
+- Issue [#2](https://github.com/aegis-boot/aegis-boot/issues/2) — reproducible build (must cover rescue kernel + initramfs + signing)
 - `THREAT_MODEL.md` — pending update to reflect the chosen chain

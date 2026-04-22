@@ -47,7 +47,7 @@
 //! - TOCTOU + path-validation hardening (Phase 3)
 //! - Attestation manifest `update_history` field (Phase 4)
 //!
-//! Tracking: epic [#181](https://github.com/williamzujkowski/aegis-boot/issues/181).
+//! Tracking: epic [#181](https://github.com/aegis-boot/aegis-boot/issues/181).
 
 // Phase 2a ships `plan_rotation()` + `print_rotation_plan` as live
 // code, but the executor-side types (`StepProgress`, `RollbackAction`,

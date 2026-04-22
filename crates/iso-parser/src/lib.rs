@@ -20,7 +20,7 @@
 //! # Safety
 //!
 //! `forbid(unsafe_code)` at the crate level — `iso-parser` ships to crates.io
-//! per [#51](https://github.com/williamzujkowski/aegis-boot/issues/51) and a
+//! per [#51](https://github.com/aegis-boot/aegis-boot/issues/51) and a
 //! library that parses untrusted ISO content has no business calling raw
 //! syscalls. The kexec syscall lives in `kexec-loader`, the only crate in the
 //! workspace that's exempt from this constraint.

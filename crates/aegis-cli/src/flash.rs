@@ -1978,7 +1978,7 @@ impl crate::userfacing::UserFacing for FlashError {
                     format!(
                         "Fetch the latest signed release image (available from v0.14.0+), then flash it:\n       aegis-boot fetch-image\n       sudo aegis-boot flash --image <downloaded-path> {dev}"
                     ),
-                    "Build from source (the repo must be on disk because mkusb.sh lives there):\n       git clone https://github.com/williamzujkowski/aegis-boot\n       cd aegis-boot\n       cargo install --path crates/aegis-cli\n       sudo aegis-boot flash".to_string(),
+                    "Build from source (the repo must be on disk because mkusb.sh lives there):\n       git clone https://github.com/aegis-boot/aegis-boot\n       cd aegis-boot\n       cargo install --path crates/aegis-cli\n       sudo aegis-boot flash".to_string(),
                 ]
             }
             _ => Vec::new(),
@@ -1987,13 +1987,13 @@ impl crate::userfacing::UserFacing for FlashError {
     fn docs_url(&self) -> Option<&str> {
         Some(match self {
             Self::ImageBuild(_) => {
-                "https://github.com/williamzujkowski/aegis-boot/blob/main/docs/TROUBLESHOOTING.md#mkusbsh-exited-with-n"
+                "https://github.com/aegis-boot/aegis-boot/blob/main/docs/TROUBLESHOOTING.md#mkusbsh-exited-with-n"
             }
             Self::DdFailed(_) | Self::ReadbackMismatch(_) | Self::ShortReadback(_) => {
-                "https://github.com/williamzujkowski/aegis-boot/blob/main/docs/TROUBLESHOOTING.md#dd-exited-with-a-non-zero-status-partway-through"
+                "https://github.com/aegis-boot/aegis-boot/blob/main/docs/TROUBLESHOOTING.md#dd-exited-with-a-non-zero-status-partway-through"
             }
             Self::NoImageSource(_) | Self::Other(_) | Self::DirectInstall { .. } => {
-                "https://github.com/williamzujkowski/aegis-boot/blob/main/docs/TROUBLESHOOTING.md"
+                "https://github.com/aegis-boot/aegis-boot/blob/main/docs/TROUBLESHOOTING.md"
             }
         })
     }

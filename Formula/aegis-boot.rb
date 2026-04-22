@@ -1,7 +1,7 @@
 # Homebrew formula for aegis-boot.
 #
 # Install:
-#   brew tap williamzujkowski/aegis-boot https://github.com/williamzujkowski/aegis-boot
+#   brew tap aegis-boot/aegis-boot https://github.com/aegis-boot/aegis-boot
 #   brew install aegis-boot
 #
 # Cross-platform support: Linux x86_64 + macOS Apple Silicon (arm64)
@@ -9,7 +9,7 @@
 # and Linux aarch64 remain open under #365 / #367.
 class AegisBoot < Formula
   desc "Signed UEFI Secure Boot rescue environment for booting any ISO from USB"
-  homepage "https://github.com/williamzujkowski/aegis-boot"
+  homepage "https://github.com/aegis-boot/aegis-boot"
   version "0.15.0"
   license any_of: ["Apache-2.0", "MIT"]
 
@@ -30,7 +30,7 @@ class AegisBoot < Formula
       # risk. The sha256 value is 64 zeros so it passes `brew audit` as
       # syntactically valid hex; bump-brew-formula replaces it with the
       # real sha when v0.16.0 is tagged.
-      url "https://github.com/williamzujkowski/aegis-boot/releases/download/v0.16.0/aegis-boot-aarch64-apple-darwin"
+      url "https://github.com/aegis-boot/aegis-boot/releases/download/v0.16.0/aegis-boot-aarch64-apple-darwin"
       sha256 "0000000000000000000000000000000000000000000000000000000000000000"
     end
   end
@@ -38,7 +38,7 @@ class AegisBoot < Formula
   on_linux do
     on_intel do
       # v0.15.0 Linux binary — real URL + sha, `brew install` works today.
-      url "https://github.com/williamzujkowski/aegis-boot/releases/download/v0.15.0/aegis-boot-x86_64-linux"
+      url "https://github.com/aegis-boot/aegis-boot/releases/download/v0.15.0/aegis-boot-x86_64-linux"
       sha256 "cae7fae1b70e8d7576be83f86036eac91c53cfc7397f7f98a92332bbb17467d6"
     end
   end
@@ -55,11 +55,11 @@ class AegisBoot < Formula
           - macOS Apple Silicon (arm64)
 
         Support for macOS Intel, Windows, and Linux aarch64 is tracked in:
-          https://github.com/williamzujkowski/aegis-boot/issues/365
-          https://github.com/williamzujkowski/aegis-boot/issues/367
+          https://github.com/aegis-boot/aegis-boot/issues/365
+          https://github.com/aegis-boot/aegis-boot/issues/367
 
         If you're on one of the unsupported arches, build from source:
-          git clone https://github.com/williamzujkowski/aegis-boot
+          git clone https://github.com/aegis-boot/aegis-boot
           cd aegis-boot
           cargo install --path crates/aegis-cli
       EOS
@@ -108,12 +108,12 @@ class AegisBoot < Formula
         sudo aegis-boot flash          # write a stick (auto-detect)
         aegis-boot add ubuntu-24.04.2-live-server-amd64.iso
 
-      Docs: https://github.com/williamzujkowski/aegis-boot/blob/main/docs/INSTALL.md
+      Docs: https://github.com/aegis-boot/aegis-boot/blob/main/docs/INSTALL.md
 
       All release artifacts are Sigstore-cosign-signed. To verify the
       binary you just installed:
         cosign verify-blob \\
-          --certificate-identity-regexp '^https://github\\.com/williamzujkowski/aegis-boot/.+@refs/tags/v.+$' \\
+          --certificate-identity-regexp '^https://github\\.com/aegis-boot/aegis-boot/.+@refs/tags/v.+$' \\
           --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \\
           --signature #{binary_name}.sig \\
           --certificate #{binary_name}.pem \\

@@ -43,7 +43,7 @@ You're trying to add an ISO larger than what's free on `AEGIS_ISOS`. Either:
 
 ### ISO too large for FAT32
 
-This only fires on **legacy `DATA_FS=fat32` sticks** — the default since [#243](https://github.com/williamzujkowski/aegis-boot/issues/243) is exFAT, which has no per-file size limit. If you hit this on a current-default stick, you've reflashed with `DATA_FS=fat32` somewhere along the way.
+This only fires on **legacy `DATA_FS=fat32` sticks** — the default since [#243](https://github.com/aegis-boot/aegis-boot/issues/243) is exFAT, which has no per-file size limit. If you hit this on a current-default stick, you've reflashed with `DATA_FS=fat32` somewhere along the way.
 
 You'll see an error like:
 
@@ -93,7 +93,7 @@ To install Windows on a target machine, write the Windows ISO directly to a sepa
 shim's vendor cert isn't in your firmware's `db`. This is rare on consumer hardware (Microsoft's CA is essentially universal) but happens on locked-down corporate fleets. Options:
 
 - Enroll Microsoft's UEFI CA in your firmware's `db` (vendor-specific UI).
-- Re-sign shim with your own KEK (advanced; requires custom signing chain — see [#24](https://github.com/williamzujkowski/aegis-boot/issues/24) tracking).
+- Re-sign shim with your own KEK (advanced; requires custom signing chain — see [#24](https://github.com/aegis-boot/aegis-boot/issues/24) tracking).
 
 ---
 
@@ -158,7 +158,7 @@ The new kernel loaded but its early init didn't survive the hand-off. Most commo
 
 ### Screen goes blank after the handoff banner — is it hung?
 
-Probably not. The handoff banner ([#127](https://github.com/williamzujkowski/aegis-boot/issues/127)) prints a "screen may go blank briefly while the new kernel loads" notice exactly because the framebuffer can drop signal during kexec. Wait 10-30 seconds. If still nothing:
+Probably not. The handoff banner ([#127](https://github.com/aegis-boot/aegis-boot/issues/127)) prints a "screen may go blank briefly while the new kernel loads" notice exactly because the framebuffer can drop signal during kexec. Wait 10-30 seconds. If still nothing:
 
 - Some kernels need an explicit framebuffer cmdline (`fbcon=map:0` or `console=tty0 console=ttyS0,115200n8`). The ISO's own bootloader sets these; aegis-boot tries to preserve the ISO's `cmdline` but parsing failures fall back to a minimal cmdline.
 - If you have serial access (real hardware with a serial header, or QEMU serial console), check there.

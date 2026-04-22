@@ -34,7 +34,7 @@ use std::process::Command;
 /// registry. See [`crate::constants::ESP_SIZE_MB`] for the rationale
 /// and [#286] for the single-source-of-truth pattern this implements.
 ///
-/// [#286]: https://github.com/williamzujkowski/aegis-boot/issues/286
+/// [#286]: https://github.com/aegis-boot/aegis-boot/issues/286
 pub(crate) use crate::constants::ESP_SIZE_MB;
 
 /// Label for the data partition. Keyed on by rescue-tui's ISO

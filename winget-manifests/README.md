@@ -129,7 +129,7 @@ no drift between published manifests and the upstream repo.
   [1.6.0 defaultLocale schema].
 - [wingetcreate] — Microsoft's manifest-authoring helper tool.
 
-[#365]: https://github.com/williamzujkowski/aegis-boot/issues/365
+[#365]: https://github.com/aegis-boot/aegis-boot/issues/365
 [microsoft/winget-pkgs]: https://github.com/microsoft/winget-pkgs
 [winget-pkgs authoring guide]: https://github.com/microsoft/winget-pkgs/blob/master/doc/README.md#authoring-a-manifest
 [1.6.0 version]: https://github.com/microsoft/winget-cli/blob/master/schemas/JSON/manifests/v1.6.0/manifest.version.1.6.0.json

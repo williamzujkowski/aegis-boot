@@ -1,6 +1,6 @@
 # Publishing library crates to crates.io
 
-Tracking issue: [#51](https://github.com/williamzujkowski/aegis-boot/issues/51). Gate: **v1.0.0-rc1**. Do not run this procedure against any pre-1.0 tag — the API is still moving, and `cargo yank` cannot retract lockfiles downstream users have already pinned.
+Tracking issue: [#51](https://github.com/aegis-boot/aegis-boot/issues/51). Gate: **v1.0.0-rc1**. Do not run this procedure against any pre-1.0 tag — the API is still moving, and `cargo yank` cannot retract lockfiles downstream users have already pinned.
 
 ## What gets published
 
@@ -21,11 +21,11 @@ Three library crates, in dependency order:
 Every library crate should already have, via its `[package]` table:
 
 - [x] `license = "MIT OR Apache-2.0"` (workspace-inherited for most)
-- [x] `repository = "https://github.com/williamzujkowski/aegis-boot"`
+- [x] `repository = "https://github.com/aegis-boot/aegis-boot"`
 - [x] `description` — one-sentence, ≤160 chars
 - [x] `readme = "README.md"` — a per-crate README exists
 - [x] `documentation = "https://docs.rs/<crate-name>"`
-- [x] `homepage = "https://github.com/williamzujkowski/aegis-boot"`
+- [x] `homepage = "https://github.com/aegis-boot/aegis-boot"`
 - [x] `keywords` — up to 5, ≤20 chars each, ASCII-lowercase/digit/hyphen
 - [x] `categories` — from the canonical [crates.io category list](https://crates.io/category_slugs)
 

@@ -8,7 +8,7 @@ Treat all findings as potentially high-impact until triaged.
 **Do not open public GitHub issues for security findings.**
 
 Use GitHub's private vulnerability reporting:
-https://github.com/williamzujkowski/aegis-boot/security/advisories/new
+https://github.com/aegis-boot/aegis-boot/security/advisories/new
 
 Include:
 - Affected component (crate / script / Dockerfile / workflow)

@@ -60,7 +60,7 @@
 //! it across N crates. A future crate rename (`aegis-wire-formats`
 //! or similar) may follow once the full CLI envelope set lands.
 //!
-//! [#286]: https://github.com/williamzujkowski/aegis-boot/issues/286
+//! [#286]: https://github.com/aegis-boot/aegis-boot/issues/286
 
 use serde::{Deserialize, Serialize};
 
@@ -156,7 +156,7 @@ pub const FAILURE_MICROREPORT_SCHEMA_VERSION: u32 = 1;
 /// struct name); the JSON wire field stays `manifest_sequence` per
 /// the [#277] schema lock via `#[serde(rename)]`.
 ///
-/// [#277]: https://github.com/williamzujkowski/aegis-boot/issues/277
+/// [#277]: https://github.com/aegis-boot/aegis-boot/issues/277
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Manifest {
@@ -179,7 +179,7 @@ pub struct Manifest {
     /// if any ESP file is not listed here or is missing / has a
     /// different sha256 than recorded. Six entries today, one per
     /// line in the signed-chain layout established by Phase 2b of
-    /// [#274](https://github.com/williamzujkowski/aegis-boot/issues/274).
+    /// [#274](https://github.com/aegis-boot/aegis-boot/issues/274).
     pub esp_files: Vec<EspFileEntry>,
     /// When `true`, the verifier treats [`Self::esp_files`] as
     /// exhaustive — the presence of any additional file on the ESP
@@ -297,7 +297,7 @@ pub struct PcrEntry {
 /// v0 ships unsigned — the trust anchor is "the operator ran this
 /// command on this host, the timestamps + hashes are the evidence."
 /// TPM PCR attestation + signing lands under epic
-/// [#139](https://github.com/williamzujkowski/aegis-boot/issues/139)
+/// [#139](https://github.com/aegis-boot/aegis-boot/issues/139)
 /// as additive fields; the current schema is forward-compatible
 /// (consumers ignore unknown fields).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
