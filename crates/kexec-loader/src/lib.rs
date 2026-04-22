@@ -21,7 +21,7 @@
 //! - It has no upstream signature-verification story — `KEXEC_SIG` only
 //!   applies to `kexec_file_load`.
 //!
-//! See [ADR 0001](https://github.com/williamzujkowski/aegis-boot/blob/main/docs/adr/0001-runtime-architecture.md)
+//! See [ADR 0001](https://github.com/aegis-boot/aegis-boot/blob/main/docs/adr/0001-runtime-architecture.md)
 //! for the Secure Boot rationale.
 //!
 //! # Safety

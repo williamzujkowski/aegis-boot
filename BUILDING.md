@@ -69,7 +69,7 @@ diff p1.sha256 p2.sha256 && echo reproducible || echo NOT reproducible
 - **NASM / iasl / uuid-dev** — no firmware-level assembly or ACPI tooling needed.
 - **Python** — removed; the build does not require any Python glue.
 
-Removing these dependencies shrinks the image, eliminates the historical unreachable-submodule hazard ([#2](https://github.com/williamzujkowski/aegis-boot/issues/2), closed), and tightens the supply-chain surface to just what the runtime needs.
+Removing these dependencies shrinks the image, eliminates the historical unreachable-submodule hazard ([#2](https://github.com/aegis-boot/aegis-boot/issues/2), closed), and tightens the supply-chain surface to just what the runtime needs.
 
 ## Assembling the initramfs
 

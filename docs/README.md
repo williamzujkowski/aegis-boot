@@ -35,6 +35,6 @@
 
 ## Status pages
 
-- **Releases:** https://github.com/williamzujkowski/aegis-boot/releases
+- **Releases:** https://github.com/aegis-boot/aegis-boot/releases
 - **Roadmap:** [`../ROADMAP.md`](../ROADMAP.md)
-- **Open epics / issues:** https://github.com/williamzujkowski/aegis-boot/issues
+- **Open epics / issues:** https://github.com/aegis-boot/aegis-boot/issues

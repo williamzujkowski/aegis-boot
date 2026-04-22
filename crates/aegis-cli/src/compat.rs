@@ -145,7 +145,7 @@ pub const COMPAT_DB: &[CompatEntry] = &[
 /// CLI and docs point at the same landing page. `pub(crate)` so other
 /// subcommands (e.g., `doctor`) can cite the same URL in their prompts.
 pub(crate) const REPORT_URL: &str =
-    "https://github.com/williamzujkowski/aegis-boot/issues/new?template=hardware-report.yml";
+    "https://github.com/aegis-boot/aegis-boot/issues/new?template=hardware-report.yml";
 
 pub fn run(args: &[String]) -> ExitCode {
     match try_run(args) {
@@ -349,7 +349,7 @@ pub(crate) fn build_hardware_report_url(
     tool_version: &str,
 ) -> String {
     let mut url = String::from(
-        "https://github.com/williamzujkowski/aegis-boot/issues/new?template=hardware-report.yml",
+        "https://github.com/aegis-boot/aegis-boot/issues/new?template=hardware-report.yml",
     );
     if let Some(v) = vendor {
         url.push_str("&vendor=");

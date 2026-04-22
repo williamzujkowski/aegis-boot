@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Runtime ISO discovery for rescue environments (loopback mount + GPT/ISO9660 + sha256/minisign sidecar verification)"
 readme = "README.md"
 documentation = "https://docs.rs/iso-probe"
-homepage = "https://github.com/williamzujkowski/aegis-boot"
+homepage = "https://github.com/aegis-boot/aegis-boot"
 keywords = ["iso", "loopback", "rescue", "kexec", "verification"]
 categories = ["filesystem", "embedded"]
 

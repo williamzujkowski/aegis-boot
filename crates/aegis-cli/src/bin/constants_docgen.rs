@@ -37,7 +37,7 @@
 //! contract test in `constants::tests` pins one known value at
 //! compile time to guard against that.
 //!
-//! [#286]: https://github.com/williamzujkowski/aegis-boot/issues/286
+//! [#286]: https://github.com/aegis-boot/aegis-boot/issues/286
 
 #![forbid(unsafe_code)]
 

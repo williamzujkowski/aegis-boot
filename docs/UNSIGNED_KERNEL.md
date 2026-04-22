@@ -65,7 +65,7 @@ Initially scoped (#126) as a `aegis.relaxed=1` cmdline opt-in that would fall ba
 
 ## Validation
 
-As of v0.12.0 (real-hardware shakedown, [#109](https://github.com/williamzujkowski/aegis-boot/issues/109)):
+As of v0.12.0 (real-hardware shakedown, [#109](https://github.com/aegis-boot/aegis-boot/issues/109)):
 
 - Alpine 3.20.3 (unsigned kernel) → `errno 61 (ENODATA)` with the guidance above. ✅ expected, correct.
 - Ubuntu 24.04.2 (Canonical-signed) → `kexec_core: Starting new kernel`. ✅ boots through.

@@ -53,7 +53,7 @@ jobs:
       # <local-path>` also exercises what operators will type
       # (modulo the local path being a URL in production).
       - name: Tap this repo
-        run: brew tap williamzujkowski/aegis-boot "$(pwd)"
+        run: brew tap aegis-boot/aegis-boot "$(pwd)"
 
       # Style check on the formula file (still accepts a path). Catches
       # ruby/formula convention issues before install.

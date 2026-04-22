@@ -5,7 +5,7 @@ Thanks for your interest. This is a small project with a sharp focus — a signe
 ## Quickstart
 
 ```bash
-git clone git@github.com:williamzujkowski/aegis-boot.git
+git clone git@github.com:aegis-boot/aegis-boot.git
 cd aegis-boot
 cargo test --workspace               # run every unit + integration test
 ./scripts/dev-test.sh                # full 8-stage local CI
@@ -47,9 +47,9 @@ We follow semver pre-1.0 loosely:
 
 - **patch (`0.x.y`)** — bug fixes, doc fixes, dependency bumps without API change
 - **minor (`0.x.0`)** — new features, additive API changes, anything that warrants a release-notes section
-- **major (`x.0.0`)** — breaking API changes; v1.0.0 is gated on real-hardware validation ([#51](https://github.com/williamzujkowski/aegis-boot/issues/51))
+- **major (`x.0.0`)** — breaking API changes; v1.0.0 is gated on real-hardware validation ([#51](https://github.com/aegis-boot/aegis-boot/issues/51))
 
-Each release gets a CHANGELOG section, a tag, and a GitHub release. Build artifacts are uploaded by hand for now (CI release workflow paused; tracked in [#51](https://github.com/williamzujkowski/aegis-boot/issues/51)).
+Each release gets a CHANGELOG section, a tag, and a GitHub release. Build artifacts are uploaded by hand for now (CI release workflow paused; tracked in [#51](https://github.com/aegis-boot/aegis-boot/issues/51)).
 
 ### Drafting release notes
 
@@ -65,7 +65,7 @@ At release-cut time, run the git-cliff drafting assist to produce a first-cut ch
 
 The output is advisory, not authoritative — promote it into `CHANGELOG.md` by (1) re-wording bullets into aegis-boot's prose style (commit subjects say "what"; the CHANGELOG needs the "why" + user-visible impact), (2) dropping scaffolding PRs, and (3) promoting critical bug fixes out of their section into the lead. See the existing versioned entries in `CHANGELOG.md` for the target tone.
 
-The draft script needs `git-cliff` locally (`cargo install --locked git-cliff@2.6.1`). It is intentionally not wired into CI — editorial control stays with the maintainer. Phase 7 of [#286](https://github.com/williamzujkowski/aegis-boot/issues/286).
+The draft script needs `git-cliff` locally (`cargo install --locked git-cliff@2.6.1`). It is intentionally not wired into CI — editorial control stays with the maintainer. Phase 7 of [#286](https://github.com/aegis-boot/aegis-boot/issues/286).
 
 ## CI gates your PR must pass
 

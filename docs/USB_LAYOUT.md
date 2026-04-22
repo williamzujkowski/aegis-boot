@@ -36,7 +36,7 @@ Splitting them means:
 
 ## Filesystem choice for AEGIS_ISOS
 
-The data partition defaults to **exFAT** as of [#243](https://github.com/williamzujkowski/aegis-boot/issues/243) (was FAT32 prior). exFAT is natively read/write on Linux 5.7+, macOS, and Windows, and has **no per-file size limit** — Win11 / Rocky DVD / Ubuntu Desktop drop straight onto the stick.
+The data partition defaults to **exFAT** as of [#243](https://github.com/aegis-boot/aegis-boot/issues/243) (was FAT32 prior). exFAT is natively read/write on Linux 5.7+, macOS, and Windows, and has **no per-file size limit** — Win11 / Rocky DVD / Ubuntu Desktop drop straight onto the stick.
 
 The `DATA_FS` environment variable selects the filesystem at mkusb time:
 
@@ -125,7 +125,7 @@ sudo umount /mnt/aegis-isos
 
 ## Storage modules shipped in the initramfs
 
-For rescue-tui to see the AEGIS_ISOS partition (or any internal disk the operator might want to scan), the initramfs has to include the kernel modules for the storage controller. Most modern Ubuntu generic kernels (6.8+) compile these as modules, not built-in. Since [#72](https://github.com/williamzujkowski/aegis-boot/issues/72), `build-initramfs.sh` ships:
+For rescue-tui to see the AEGIS_ISOS partition (or any internal disk the operator might want to scan), the initramfs has to include the kernel modules for the storage controller. Most modern Ubuntu generic kernels (6.8+) compile these as modules, not built-in. Since [#72](https://github.com/aegis-boot/aegis-boot/issues/72), `build-initramfs.sh` ships:
 
 - `libahci`, `ahci` — SATA AHCI controllers (most desktops + older laptops)
 - `nvme-core`, `nvme` — NVMe SSDs (most modern laptops)
@@ -134,7 +134,7 @@ For rescue-tui to see the AEGIS_ISOS partition (or any internal disk the operato
 
 `scsi_mod`, `sd_mod`, `usbcore`, `xhci-hcd/pci`, `ehci-hcd/pci`, and `loop`/`isofs`/`udf` are typically built-in on Ubuntu kernels and skipped at build time with an INFO log. `/init` modprobes the full set early; built-in modules return successfully without doing anything.
 
-Real-hardware shakedown ([#109](https://github.com/williamzujkowski/aegis-boot/issues/109)) ran on a SanDisk Cruzer 32 GB stick via QEMU USB-passthrough: Alpine 3.20.3 returned the expected `errno 61` refusal under enforcing Secure Boot, and Ubuntu 24.04.2 successfully kexec'd through (`kexec_core: Starting new kernel`). Multi-vendor real-hardware sweep (Framework / ThinkPad / Dell direct boot) is tracked in [#51](https://github.com/williamzujkowski/aegis-boot/issues/51) for v1.0.0.
+Real-hardware shakedown ([#109](https://github.com/aegis-boot/aegis-boot/issues/109)) ran on a SanDisk Cruzer 32 GB stick via QEMU USB-passthrough: Alpine 3.20.3 returned the expected `errno 61` refusal under enforcing Secure Boot, and Ubuntu 24.04.2 successfully kexec'd through (`kexec_core: Starting new kernel`). Multi-vendor real-hardware sweep (Framework / ThinkPad / Dell direct boot) is tracked in [#51](https://github.com/aegis-boot/aegis-boot/issues/51) for v1.0.0.
 
 ## Chain of trust recap
 

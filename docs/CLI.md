@@ -2,7 +2,7 @@
 
 The `aegis-boot` binary is the operator-facing front end. It wraps the build/flash/inventory operations that previously required running shell scripts and `dd` by hand.
 
-> **Looking for the authoritative flag list?** See [`reference/CLI_SYNOPSIS.md`](./reference/CLI_SYNOPSIS.md) — an auto-generated file that captures the exact `--help` output of every subcommand. It's drift-checked against the binary in CI (Phase 3b of [#286](https://github.com/williamzujkowski/aegis-boot/issues/286)). This document is the prose companion: examples, exit-code meanings, and "why this flag exists" context that the `--help` output doesn't cover.
+> **Looking for the authoritative flag list?** See [`reference/CLI_SYNOPSIS.md`](./reference/CLI_SYNOPSIS.md) — an auto-generated file that captures the exact `--help` output of every subcommand. It's drift-checked against the binary in CI (Phase 3b of [#286](https://github.com/aegis-boot/aegis-boot/issues/286)). This document is the prose companion: examples, exit-code meanings, and "why this flag exists" context that the `--help` output doesn't cover.
 
 ```
 aegis-boot — Signed boot. Any ISO. Your keys.
@@ -313,7 +313,7 @@ aegis-boot doctor --help
 ### What it reports
 
 **Host checks:**
-- `operating system` — Linux today (macOS/Windows tracked in [#123](https://github.com/williamzujkowski/aegis-boot/issues/123))
+- `operating system` — Linux today (macOS/Windows tracked in [#123](https://github.com/aegis-boot/aegis-boot/issues/123))
 - `machine identity` — vendor + model + firmware read from `/sys/class/dmi/id/*` (Linux only). Informational — gives operators filing a `hardware-report` the exact strings to paste.
 - `compat DB coverage` — cross-checks the DMI identity against the in-binary `COMPAT_DB`. Pass = documented, Warn = not yet in the DB with a link to the hardware-report template.
 - `command: dd` / `sudo` / `sgdisk` / `lsblk` — the prerequisites for `flash` and stick inspection
@@ -508,7 +508,7 @@ Forward-compatibility: unknown fields are tolerated by the parser. Future schema
 
 ### Cryptographic signing
 
-v1 manifests are unsigned. The trust anchor is "you ran this command on this host, the timestamps and hashes are evidence." Cryptographic signing — TPM PCR attestation + minisign — is tracked under [epic #139](https://github.com/williamzujkowski/aegis-boot/issues/139) and will land alongside the TPM measured-boot work as additional fields, not a schema rewrite.
+v1 manifests are unsigned. The trust anchor is "you ran this command on this host, the timestamps and hashes are evidence." Cryptographic signing — TPM PCR attestation + minisign — is tracked under [epic #139](https://github.com/aegis-boot/aegis-boot/issues/139) and will land alongside the TPM measured-boot work as additional fields, not a schema rewrite.
 
 ### What's NOT in v1 (deferred)
 
@@ -569,7 +569,7 @@ Force-unmount of a busy partition (fuser / lsof-integrated) is deliberately out 
 
 ## `aegis-boot update`
 
-Check whether a stick is eligible for a non-destructive in-place signed-chain update. Today this is an eligibility check only — the atomic file-replace step is tracked under [#181](https://github.com/williamzujkowski/aegis-boot/issues/181).
+Check whether a stick is eligible for a non-destructive in-place signed-chain update. Today this is an eligibility check only — the atomic file-replace step is tracked under [#181](https://github.com/aegis-boot/aegis-boot/issues/181).
 
 ### Usage
 
@@ -674,7 +674,7 @@ Turning redaction off requires both `--no-redact` AND the explicit `--i-accept-p
 
 ### `--include-stick PATH` (#342 Phase 3a)
 
-When the operator experiences a rescue-tui failure on a target machine, rescue-tui writes anonymous Tier-A microreports to `AEGIS_ISOS/aegis-boot-logs/` ([#342 Phase 2](https://github.com/williamzujkowski/aegis-boot/issues/342)). To include them in the bundle, plug the stick back into your workstation and pass `--include-stick` pointing at its mount:
+When the operator experiences a rescue-tui failure on a target machine, rescue-tui writes anonymous Tier-A microreports to `AEGIS_ISOS/aegis-boot-logs/` ([#342 Phase 2](https://github.com/aegis-boot/aegis-boot/issues/342)). To include them in the bundle, plug the stick back into your workstation and pass `--include-stick` pointing at its mount:
 
 ```bash
 aegis-boot bug-report --include-stick /media/$USER/AEGIS_ISOS
@@ -733,7 +733,7 @@ aegis-boot compat --help
 
 Download a released `aegis-boot.img` (or `aegis-boot-hybrid.iso`) from GitHub Releases, verify its **[Sigstore cosign](https://docs.sigstore.dev/) keyless signature** against this repo's release workflow identity, and place it in the operator's chosen output directory. Intended for the "I just want to flash without building from source" path — paired with `aegis-boot flash <device> --image <path>` it closes the build-from-source loop for unprivileged operators.
 
-Verification uses the same cosign-keyless chain as every other aegis-boot release artifact: `cosign verify-blob --certificate-identity-regexp '^https://github\.com/williamzujkowski/aegis-boot/.+@refs/tags/v.+$' --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'`. If `cosign` isn't on `PATH` the command fails closed with a clear diagnostic — see [crates/aegis-cli/src/fetch_image.rs](../crates/aegis-cli/src/fetch_image.rs) for the canonical invocation. Operators preferring manual verification run the equivalent recipe from [docs/RELEASE_NOTES_FOOTER.md](RELEASE_NOTES_FOOTER.md) against the downloaded file.
+Verification uses the same cosign-keyless chain as every other aegis-boot release artifact: `cosign verify-blob --certificate-identity-regexp '^https://github\.com/aegis-boot/aegis-boot/.+@refs/tags/v.+$' --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'`. If `cosign` isn't on `PATH` the command fails closed with a clear diagnostic — see [crates/aegis-cli/src/fetch_image.rs](../crates/aegis-cli/src/fetch_image.rs) for the canonical invocation. Operators preferring manual verification run the equivalent recipe from [docs/RELEASE_NOTES_FOOTER.md](RELEASE_NOTES_FOOTER.md) against the downloaded file.
 
 ### Usage
 
@@ -791,7 +791,7 @@ aegis-boot man | less
 aegis-boot man > /tmp/aegis-boot.1   # save for later viewing with `man -l`
 ```
 
-The body is the same man page rendered at build time from [`man/aegis-boot.1.in`](../man/aegis-boot.1.in) with the current version + release date substituted (Phase 1b of [#286](https://github.com/williamzujkowski/aegis-boot/issues/286)).
+The body is the same man page rendered at build time from [`man/aegis-boot.1.in`](../man/aegis-boot.1.in) with the current version + release date substituted (Phase 1b of [#286](https://github.com/aegis-boot/aegis-boot/issues/286)).
 
 ### Exit codes
 
@@ -830,7 +830,7 @@ aegis-boot tour --help
 }
 ```
 
-The wire shape is defined by [`aegis-wire-formats::Version`](../crates/aegis-wire-formats/src/lib.rs) and pinned via JSON Schema at [`reference/schemas/aegis-boot-version.schema.json`](./reference/schemas/aegis-boot-version.schema.json) (Phase 4b-1 of [#286](https://github.com/williamzujkowski/aegis-boot/issues/286)). Scripted consumers that parsed the previous single-line output with a JSON library see no shape change — only whitespace differs.
+The wire shape is defined by [`aegis-wire-formats::Version`](../crates/aegis-wire-formats/src/lib.rs) and pinned via JSON Schema at [`reference/schemas/aegis-boot-version.schema.json`](./reference/schemas/aegis-boot-version.schema.json) (Phase 4b-1 of [#286](https://github.com/aegis-boot/aegis-boot/issues/286)). Scripted consumers that parsed the previous single-line output with a JSON library see no shape change — only whitespace differs.
 
 ## See also
 

@@ -7,7 +7,7 @@
 # the binary to /usr/local/bin (or ~/.local/bin if non-root).
 #
 # Usage:
-#   curl -sSL https://raw.githubusercontent.com/williamzujkowski/aegis-boot/main/scripts/install.sh | sh
+#   curl -sSL https://raw.githubusercontent.com/aegis-boot/aegis-boot/main/scripts/install.sh | sh
 #   sh install.sh --version v0.12.0
 #   sh install.sh --prefix ~/.local/bin
 #   sh install.sh --no-verify             # skip cosign (NOT recommended)
@@ -24,10 +24,10 @@
 
 set -eu
 
-REPO="williamzujkowski/aegis-boot"
+REPO="aegis-boot/aegis-boot"
 DEFAULT_PREFIX_ROOT="/usr/local/bin"
 DEFAULT_PREFIX_USER="$HOME/.local/bin"
-COSIGN_IDENTITY_REGEXP='^https://github\.com/williamzujkowski/aegis-boot/\.github/workflows/release\.yml@refs/tags/v.+$'
+COSIGN_IDENTITY_REGEXP='^https://github\.com/aegis-boot/aegis-boot/\.github/workflows/release\.yml@refs/tags/v.+$'
 COSIGN_OIDC_ISSUER='https://token.actions.githubusercontent.com'
 
 usage() {

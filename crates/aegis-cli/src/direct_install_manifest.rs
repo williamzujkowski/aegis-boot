@@ -44,7 +44,7 @@
 //! in-sync; the test coverage is why they're kept here rather than
 //! deleted and re-added later.
 //!
-//! [#277]: https://github.com/williamzujkowski/aegis-boot/issues/277
+//! [#277]: https://github.com/aegis-boot/aegis-boot/issues/277
 
 #![cfg(target_os = "linux")]
 #![allow(dead_code)]

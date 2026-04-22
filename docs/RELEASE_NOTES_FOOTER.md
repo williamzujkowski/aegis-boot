@@ -10,7 +10,7 @@ gh release download "$TAG" --pattern '*'
 
 # Verify any artifact (here, the operator CLI):
 cosign verify-blob \
-  --certificate-identity-regexp '^https://github\.com/williamzujkowski/aegis-boot/\.github/workflows/release\.yml@refs/tags/v.+$' \
+  --certificate-identity-regexp '^https://github\.com/aegis-boot/aegis-boot/\.github/workflows/release\.yml@refs/tags/v.+$' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
   --signature aegis-boot-x86_64-linux.sig \
   --certificate aegis-boot-x86_64-linux.pem \

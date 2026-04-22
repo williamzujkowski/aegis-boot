@@ -32,7 +32,7 @@
 //! infrastructure values — merging them would fuse two contracts
 //! that must be bumpable independently.
 //!
-//! [#286]: https://github.com/williamzujkowski/aegis-boot/issues/286
+//! [#286]: https://github.com/aegis-boot/aegis-boot/issues/286
 
 // NOTE: this file is `#[path]`-included by
 // `crates/aegis-cli/src/bin/constants_docgen.rs` so the docgen can

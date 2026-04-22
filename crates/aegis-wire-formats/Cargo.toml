@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Signed attestation manifest format for aegis-boot USB sticks — serde types + JSON Schema"
 readme = "README.md"
 documentation = "https://docs.rs/aegis-wire-formats"
-homepage = "https://github.com/williamzujkowski/aegis-boot"
+homepage = "https://github.com/aegis-boot/aegis-boot"
 keywords = ["aegis-boot", "attestation", "manifest", "usb", "secure-boot"]
 categories = ["data-structures", "filesystem"]
 

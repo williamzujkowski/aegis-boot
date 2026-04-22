@@ -26,7 +26,7 @@ header = """
     * drop commits that are scaffold-only (empty PRs, reverted work)
     * promote critical bug fixes out of their section into the lead
 
-  Phase 7 of https://github.com/williamzujkowski/aegis-boot/issues/286
+  Phase 7 of https://github.com/aegis-boot/aegis-boot/issues/286
 -->
 
 """
@@ -40,7 +40,7 @@ body = """
 ### {{ group | upper_first }}
 {% for commit in commits %}
 - {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.message | upper_first | trim }}\
-    {% if commit.remote.pr_number %} ([#{{ commit.remote.pr_number }}](https://github.com/williamzujkowski/aegis-boot/pull/{{ commit.remote.pr_number }})){% endif %}
+    {% if commit.remote.pr_number %} ([#{{ commit.remote.pr_number }}](https://github.com/aegis-boot/aegis-boot/pull/{{ commit.remote.pr_number }})){% endif %}
 {%- endfor %}
 {% endfor %}
 """

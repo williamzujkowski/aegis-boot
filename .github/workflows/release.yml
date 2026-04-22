@@ -180,7 +180,7 @@ jobs:
       # Each artifact gets a .sig (signature) + .pem (certificate)
       # produced via Sigstore keyless signing. Verifiable later with:
       #   cosign verify-blob --certificate-identity-regexp \
-      #     "https://github.com/williamzujkowski/aegis-boot/" \
+      #     "https://github.com/aegis-boot/aegis-boot/" \
       #     --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
       #     --signature aegis-boot-x86_64-linux.sig \
       #     --certificate aegis-boot-x86_64-linux.pem \

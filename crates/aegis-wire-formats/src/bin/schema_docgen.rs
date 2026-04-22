@@ -57,8 +57,8 @@
 //! schema and committed schema diverge silently. Making the schema
 //! a gating check at PR time closes that window.
 //!
-//! [#286]: https://github.com/williamzujkowski/aegis-boot/issues/286
-//! [#290]: https://github.com/williamzujkowski/aegis-boot/issues/290
+//! [#286]: https://github.com/aegis-boot/aegis-boot/issues/286
+//! [#290]: https://github.com/aegis-boot/aegis-boot/issues/290
 
 #![forbid(unsafe_code)]
 

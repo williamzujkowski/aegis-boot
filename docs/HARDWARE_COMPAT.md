@@ -30,7 +30,7 @@ A row in this table represents **one** operator's outcome. Multiple rows for the
 | Machine | Firmware | SB state | Boot key | Stick → boot | kexec | Quirks | Reported by | Date |
 |---|---|---|---|---|---|---|---|---|
 | Generic SanDisk Cruzer Blade 32GB on x86_64 host | OVMF 4M (Debian package, MS-enrolled vars) | enforcing | n/a (USB-passthrough → QEMU) | ✅ | ✅ Ubuntu 24.04.2 boots; ✅ Alpine 3.20.3 correctly refused with `errno 61` | None observed in shakedown (#109) | @williamzujkowski | 2026-04-16 |
-| Framework Laptop (12th Gen Intel Core) | INSYDE Corp. 03.19 (09/18/2025) | enforcing | F12 | ✅ Full chain: BdsDxe → GNU GRUB → EFI stub SB-enabled → rescue-tui ([#236](https://github.com/williamzujkowski/aegis-boot/issues/236)) | Not exercised in this report (kexec is operator choice; chain validity established without it) | TPM 2.0 Intel fTPM (manufacturer INTC); Fast Boot disabled by default in firmware 03.19 — no operator intervention needed | @williamzujkowski | 2026-04-18 |
+| Framework Laptop (12th Gen Intel Core) | INSYDE Corp. 03.19 (09/18/2025) | enforcing | F12 | ✅ Full chain: BdsDxe → GNU GRUB → EFI stub SB-enabled → rescue-tui ([#236](https://github.com/aegis-boot/aegis-boot/issues/236)) | Not exercised in this report (kexec is operator choice; chain validity established without it) | TPM 2.0 Intel fTPM (manufacturer INTC); Fast Boot disabled by default in firmware 03.19 — no operator intervention needed | @williamzujkowski | 2026-04-18 |
 
 The shakedown was performed via QEMU USB-passthrough on a real SanDisk Cruzer 32 GB stick written by `aegis-boot flash`. Direct boot on physical hardware was first validated against the Framework 12th Gen entry above on 2026-04-18 via aegis-hwsim's signed-boot-ubuntu scenario (with the same physical stick, run through QEMU+OVMF with the Framework persona's DMI/firmware fields injected). ThinkPad / Dell / HP / ASUS persona testing also passed in the same matrix run; promoting those rows from persona-only to physical-hardware-Verified requires an operator with each piece of hardware to file a hardware-report.
 
@@ -63,7 +63,7 @@ For a failure:
 
 ### Where to submit
 
-Open a **[hardware report issue](https://github.com/williamzujkowski/aegis-boot/issues/new?template=hardware-report.yml)** using the dedicated [`.github/ISSUE_TEMPLATE/hardware-report.yml`](../.github/ISSUE_TEMPLATE/hardware-report.yml) form. The fields line up 1:1 with the `aegis-boot compat` DB, so curation into this document is mechanical.
+Open a **[hardware report issue](https://github.com/aegis-boot/aegis-boot/issues/new?template=hardware-report.yml)** using the dedicated [`.github/ISSUE_TEMPLATE/hardware-report.yml`](../.github/ISSUE_TEMPLATE/hardware-report.yml) form. The fields line up 1:1 with the `aegis-boot compat` DB, so curation into this document is mechanical.
 
 Alternatively, open a PR adding a row to the table directly. We'll accept PRs from any contributor who's actually booted aegis-boot on the machine in question.
 
@@ -81,4 +81,4 @@ A planned feature is `aegis-boot doctor --report` — opt-in anonymous telemetry
 - [INSTALL.md](./INSTALL.md) — operator install walkthrough
 - [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) — common failure modes by category
 - [UNSIGNED_KERNEL.md](./UNSIGNED_KERNEL.md) — what to do when an ISO's kernel isn't signed
-- [#51](https://github.com/williamzujkowski/aegis-boot/issues/51) — the multi-vendor real-hardware shakedown gate for v1.0.0
+- [#51](https://github.com/aegis-boot/aegis-boot/issues/51) — the multi-vendor real-hardware shakedown gate for v1.0.0

@@ -1,7 +1,7 @@
 # Per-distro ISO + kexec compatibility matrix
 
 **Version:** 1.0 (aegis-boot v0.1.0 baseline)
-**Issue:** [#6](https://github.com/williamzujkowski/aegis-boot/issues/6)
+**Issue:** [#6](https://github.com/aegis-boot/aegis-boot/issues/6)
 **Consumed by:** [`iso_probe::lookup_quirks`](../../crates/iso-probe/src/lib.rs)
 
 This matrix is the ground truth for `iso-probe`'s quirk annotations. Each row reflects the distribution's *default* installation media; user-customized images may differ. Any change to a row should land in the same PR as the corresponding `lookup_quirks` update.

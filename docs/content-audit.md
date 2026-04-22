@@ -1,6 +1,6 @@
 # Content audit log
 
-Per [#78](https://github.com/williamzujkowski/aegis-boot/issues/78), this file records each documentation accuracy audit so we can re-audit on a cadence.
+Per [#78](https://github.com/aegis-boot/aegis-boot/issues/78), this file records each documentation accuracy audit so we can re-audit on a cadence.
 
 | Date       | Reviewing | Files audited | Findings filed | PRs |
 |------------|-----------|---------------|----------------|-----|

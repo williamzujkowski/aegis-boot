@@ -54,7 +54,7 @@ sdb  931G  Samsung NVMe    ABC...XYZ    nvme
 
 You want the **removable USB** one (column `TRAN=usb`). On a fresh install with one stick attached, that's `/dev/sda` here.
 
-If you're nervous about picking the wrong one, run with no device argument and let `aegis-boot` enumerate + pick interactively ([#245](https://github.com/williamzujkowski/aegis-boot/issues/245)):
+If you're nervous about picking the wrong one, run with no device argument and let `aegis-boot` enumerate + pick interactively ([#245](https://github.com/aegis-boot/aegis-boot/issues/245)):
 
 ```
 $ aegis-boot init

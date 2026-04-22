@@ -2,7 +2,7 @@
 
 **Status:** APPROVED (consensus vote 2026-04-22, 80% supermajority). Maintainer-executed checklist; no bot automation.
 **Vote record:** rev 1 rejected at 60% (Gemini surfaced OIDC discontinuity + crates.io squatter race); rev 2 (PR #389) added §1 crates.io pre-registration + §6.3 OIDC identity bridge; rev 2 passed at 80%. Architect ✓88%, Security ✓95% (flipped from rev-1 REJECT), DevEx ✓87%, PM ✓88%, AI/ML abstained (95%), Contrarian ✗95% (operational nitpicks not security-blocking). Verification hashes in PR #389.
-**Scope:** Move `github.com/williamzujkowski/aegis-boot` and `github.com/williamzujkowski/aegis-hwsim` under a new GitHub Organization at `github.com/aegis-boot`.
+**Scope:** Move `github.com/aegis-boot/aegis-boot` and `github.com/aegis-boot/aegis-hwsim` under a new GitHub Organization at `github.com/aegis-boot`.
 **Maintainer:** William Zujkowski (solo). Personal/individual GitHub account; does NOT register a business entity. If Apple Developer Program enrollment becomes necessary (see #369), the **Individual** enrollment tier applies.
 **Org name verified available:** 2026-04-22 — re-verified (`github.com/aegis-boot` → HTTP 404).
 **Plan legend:** [UI] = browser click-through • [CLI] = terminal command • [LOCAL] = local repo edit.
@@ -53,13 +53,13 @@
   ```
   Both should show `nothing to commit, working tree clean` and a recent commit on `main`.
 - [ ] **[UI]** Back up branch protection rules for reference. For each repo open:
-  - `https://github.com/williamzujkowski/aegis-boot/settings/branches`
-  - `https://github.com/williamzujkowski/aegis-hwsim/settings/branches`
+  - `https://github.com/aegis-boot/aegis-boot/settings/branches`
+  - `https://github.com/aegis-boot/aegis-hwsim/settings/branches`
 
   Screenshot or copy the rule set for `main` (required status check names, required reviewers, force-push rules). These **are** carried during transfer but verifying post-move requires knowing what should be there.
 - [ ] **[UI]** Back up repo-level secrets list (names only, not values):
-  - `https://github.com/williamzujkowski/aegis-boot/settings/secrets/actions`
-  - `https://github.com/williamzujkowski/aegis-hwsim/settings/secrets/actions`
+  - `https://github.com/aegis-boot/aegis-boot/settings/secrets/actions`
+  - `https://github.com/aegis-boot/aegis-hwsim/settings/secrets/actions`
 
   Secrets **do not** transfer. You will re-add these in §5.
 - [ ] **[UI]** Back up Environments (if any) at `/settings/environments` for each repo. Note environment names + protection rules.
@@ -73,7 +73,7 @@
   # Edit Cargo.toml: name = "<crate>", version = "0.0.0", description = "placeholder — real crate ships under aegis-boot/aegis-boot (see GitHub)."
   cargo publish --token <token>
   ```
-  **Why this is pre-transfer work, not post-**: the moment the `williamzujkowski/aegis-boot` → `aegis-boot/aegis-boot` transfer completes, the 8 unclaimed crate names are visibly "discovered" via the repo's public source tree. Squatters troll crates.io for name-grab opportunities on newly-prominent repos; the gap between "repo moves" and "we claim the names under the new org" is a race window we can close to zero by claiming under the old account first, then transferring ownership to the org's cargo account post-transfer. Cost: 8 × `cargo publish` + 8 × `cargo owner --add` (~10 minutes total). Benefit: eliminates the squatter race entirely.
+  **Why this is pre-transfer work, not post-**: the moment the `aegis-boot/aegis-boot` → `aegis-boot/aegis-boot` transfer completes, the 8 unclaimed crate names are visibly "discovered" via the repo's public source tree. Squatters troll crates.io for name-grab opportunities on newly-prominent repos; the gap between "repo moves" and "we claim the names under the new org" is a race window we can close to zero by claiming under the old account first, then transferring ownership to the org's cargo account post-transfer. Cost: 8 × `cargo publish` + 8 × `cargo owner --add` (~10 minutes total). Benefit: eliminates the squatter race entirely.
 - [ ] **[LOCAL, post-transfer plan only]** After §4 completes, transfer crate ownership: `cargo owner --add aegis-boot <crate-name>` for each placeholder. Actual trusted-publishing (GitHub Actions OIDC under the new org) ships with the first real release post-transfer.
 
 ---
@@ -115,12 +115,12 @@ All paths below are relative to `https://github.com/organizations/aegis-boot/set
 
 **Order matters:** transfer `aegis-boot` first (the anchor repo), then `aegis-hwsim`. If `aegis-boot` transfer fails, you want to know before you touch the second repo.
 
-### 4.1 Transfer `williamzujkowski/aegis-boot` → `aegis-boot/aegis-boot`
+### 4.1 Transfer `aegis-boot/aegis-boot` → `aegis-boot/aegis-boot`
 
-- [ ] **[UI]** Open `https://github.com/williamzujkowski/aegis-boot/settings` → scroll to **Danger Zone** → **Transfer ownership**.
-- [ ] **[UI]** New owner: `aegis-boot`. Repo name: `aegis-boot` (unchanged). Confirm by typing `williamzujkowski/aegis-boot` in the confirm box.
+- [ ] **[UI]** Open `https://github.com/aegis-boot/aegis-boot/settings` → scroll to **Danger Zone** → **Transfer ownership**.
+- [ ] **[UI]** New owner: `aegis-boot`. Repo name: `aegis-boot` (unchanged). Confirm by typing `aegis-boot/aegis-boot` in the confirm box.
 - [ ] **[UI]** Click **I understand, transfer this repository** — expect ~10-30s spinner, then redirect to `https://github.com/aegis-boot/aegis-boot`.
-- [ ] **[UI]** Verify `https://github.com/williamzujkowski/aegis-boot` redirects (HTTP 301) to the new URL. GitHub honors this redirect for ≥1 year (indefinite if no new repo claims the old slug).
+- [ ] **[UI]** Verify `https://github.com/aegis-boot/aegis-boot` redirects (HTTP 301) to the new URL. GitHub honors this redirect for ≥1 year (indefinite if no new repo claims the old slug).
 - [ ] **[LOCAL]** Update local git remote:
   ```bash
   cd /home/william/git/aegis-boot
@@ -133,7 +133,7 @@ All paths below are relative to `https://github.com/organizations/aegis-boot/set
 - [ ] **[UI]** Verify GitHub Pages settings at `/settings/pages` (if Pages is in use) — the CNAME/custom-domain field transfers but confirm the build source branch is still set.
 - [ ] **[UI]** Verify branch protection on `main` at `/settings/branches` matches the pre-move screenshot from §1.
 
-### 4.2 Transfer `williamzujkowski/aegis-hwsim` → `aegis-boot/aegis-hwsim`
+### 4.2 Transfer `aegis-boot/aegis-hwsim` → `aegis-boot/aegis-hwsim`
 
 - [ ] **[UI]** Same steps as §4.1, substituting `aegis-hwsim` for `aegis-boot` in the repo path. New owner: `aegis-boot`. Repo name: `aegis-hwsim` (unchanged).
 - [ ] **[LOCAL]** Update remote:
@@ -192,20 +192,20 @@ As of 2026-04-22, the sweep reports **169 matches across 56 files** that would b
 
 The sweep handles these in one pass; this table is the eyes-on list for post-sweep review — these are the paths where a bad substitution breaks operator-facing verification.
 
-- [ ] **[LOCAL]** `Cargo.toml` line 26: `repository = "https://github.com/williamzujkowski/aegis-boot"` → `https://github.com/aegis-boot/aegis-boot`.
+- [ ] **[LOCAL]** `Cargo.toml` line 26: `repository = "https://github.com/aegis-boot/aegis-boot"` → `https://github.com/aegis-boot/aegis-boot`.
 - [ ] **[LOCAL]** `scripts/install.sh`:
-  - Line 9 (usage comment): `raw.githubusercontent.com/williamzujkowski/aegis-boot/main/scripts/install.sh` → `raw.githubusercontent.com/aegis-boot/aegis-boot/main/scripts/install.sh`.
-  - Line 26: `REPO="williamzujkowski/aegis-boot"` → `REPO="aegis-boot/aegis-boot"`.
-  - Line 29: `COSIGN_IDENTITY_REGEXP='^https://github\.com/williamzujkowski/aegis-boot/\.github/workflows/release\.yml@refs/tags/v.+$'` → swap org segment to `aegis-boot`. See §6 for exact replacement string.
-- [ ] **[LOCAL]** `Formula/aegis-boot.rb` lines 4, 11, 25, 69, 70, 73, 91, 96 — sweep all `williamzujkowski/aegis-boot` → `aegis-boot/aegis-boot`. Line 96 is the cosign identity regexp (see §6).
+  - Line 9 (usage comment): `raw.githubusercontent.com/aegis-boot/aegis-boot/main/scripts/install.sh` → `raw.githubusercontent.com/aegis-boot/aegis-boot/main/scripts/install.sh`.
+  - Line 26: `REPO="aegis-boot/aegis-boot"` → `REPO="aegis-boot/aegis-boot"`.
+  - Line 29: `COSIGN_IDENTITY_REGEXP='^https://github\.com/aegis-boot/aegis-boot/\.github/workflows/release\.yml@refs/tags/v.+$'` → swap org segment to `aegis-boot`. See §6 for exact replacement string.
+- [ ] **[LOCAL]** `Formula/aegis-boot.rb` lines 4, 11, 25, 69, 70, 73, 91, 96 — sweep all `aegis-boot/aegis-boot` → `aegis-boot/aegis-boot`. Line 96 is the cosign identity regexp (see §6).
 - [ ] **[LOCAL]** `Formula/README.md` lines 8, 22 — same sweep.
 - [ ] **[LOCAL]** `.github/workflows/release.yml` line 183 (commented URL, but verify no uncommented copies).
 - [ ] **[LOCAL]** `docs/RELEASE_NOTES_FOOTER.md` — the cosign verify-blob regexp (see §6).
-- [ ] **[LOCAL]** `README.md` — badges (CI, crates.io, License) typically reference the repo slug. Grep for `williamzujkowski/aegis-boot` and replace.
+- [ ] **[LOCAL]** `README.md` — badges (CI, crates.io, License) typically reference the repo slug. Grep for `aegis-boot/aegis-boot` and replace.
 - [ ] **[LOCAL]** Full sweep:
   ```bash
   cd /home/william/git/aegis-boot
-  grep -rn "williamzujkowski/aegis-boot" . --include="*.md" --include="*.rs" --include="*.toml" --include="*.yml" --include="*.yaml" --include="*.sh" --include="*.rb" --exclude-dir=target --exclude-dir=.git
+  grep -rn "aegis-boot/aegis-boot" . --include="*.md" --include="*.rs" --include="*.toml" --include="*.yml" --include="*.yaml" --include="*.sh" --include="*.rb" --exclude-dir=target --exclude-dir=.git
   ```
   Every match is a candidate replacement. Review each — the CHANGELOG.md **should not** be rewritten (history is history), but README, docs, scripts, Formula, and workflows should all be updated.
 - [ ] **[LOCAL]** Same full-sweep in `/home/william/git/aegis-hwsim`.
@@ -219,13 +219,13 @@ The sweep handles these in one pass; this table is the eyes-on list for post-swe
 
 ## 6. Sigstore / cosign OIDC — critical for release.yml
 
-**Why this matters:** `release.yml` uses cosign keyless signing. The signing certificate binds the artifact to the **GitHub Actions workflow identity**, which includes the org path. Old release artifacts (signed under `williamzujkowski/aegis-boot`) stay valid forever — signatures are hash-bound, not location-bound. **New** releases will sign under `aegis-boot/aegis-boot`, and verification instructions must be updated.
+**Why this matters:** `release.yml` uses cosign keyless signing. The signing certificate binds the artifact to the **GitHub Actions workflow identity**, which includes the org path. Old release artifacts (signed under `aegis-boot/aegis-boot`) stay valid forever — signatures are hash-bound, not location-bound. **New** releases will sign under `aegis-boot/aegis-boot`, and verification instructions must be updated.
 
 ### 6.1 Old → new identity strings
 
 **OLD** (`docs/RELEASE_NOTES_FOOTER.md` + `scripts/install.sh:29` + `Formula/aegis-boot.rb:96`):
 ```
-^https://github\.com/williamzujkowski/aegis-boot/\.github/workflows/release\.yml@refs/tags/v.+$
+^https://github\.com/aegis-boot/aegis-boot/\.github/workflows/release\.yml@refs/tags/v.+$
 ```
 
 **NEW** (for releases cut after the transfer):
@@ -237,7 +237,7 @@ The sweep handles these in one pass; this table is the eyes-on list for post-swe
 
 Release notes MUST cover BOTH identities until old releases fall out of the supported window. Add to `docs/RELEASE_NOTES_FOOTER.md` after the cosign verify-blob block:
 
-> **Note on identity:** releases tagged before `vX.Y.Z` (first release after org transfer, date TBD) were signed under the legacy `williamzujkowski/aegis-boot` identity. Those signatures remain valid; to verify those artifacts, substitute `williamzujkowski` for `aegis-boot` in the `--certificate-identity-regexp` flag above.
+> **Note on identity:** releases tagged before `vX.Y.Z` (first release after org transfer, date TBD) were signed under the legacy `aegis-boot/aegis-boot` identity. Those signatures remain valid; to verify those artifacts, substitute `williamzujkowski` for `aegis-boot` in the `--certificate-identity-regexp` flag above.
 
 - [ ] **[LOCAL]** Update `docs/RELEASE_NOTES_FOOTER.md` cosign block to use the NEW identity as primary, with the legacy note appended.
 - [ ] **[LOCAL]** Update `scripts/install.sh` line 29 to the NEW identity. Add a fallback verification block in the script that tries both identities when the release tag predates the transfer — OR bump a `SCRIPT_VERSION` and require users to use the correct install.sh matching their release.
@@ -251,7 +251,7 @@ Release notes MUST cover BOTH identities until old releases fall out of the supp
 
 **The fix — a signed successor-identity manifest in the PRE-transfer repo.**
 
-- [ ] **[LOCAL, pre-transfer]** Create `.github/identity-transition.json` at the root of the CURRENT `williamzujkowski/aegis-boot` repo with the following shape:
+- [ ] **[LOCAL, pre-transfer]** Create `.github/identity-transition.json` at the root of the CURRENT `aegis-boot/aegis-boot` repo with the following shape:
   ```json
   {
     "schema_version": 1,
@@ -259,7 +259,7 @@ Release notes MUST cover BOTH identities until old releases fall out of the supp
     "predecessor": {
       "github_owner": "williamzujkowski",
       "repo": "aegis-boot",
-      "cosign_identity_regexp": "^https://github\\.com/williamzujkowski/aegis-boot/\\.github/workflows/release\\.yml@refs/tags/v.+$"
+      "cosign_identity_regexp": "^https://github\\.com/aegis-boot/aegis-boot/\\.github/workflows/release\\.yml@refs/tags/v.+$"
     },
     "successor": {
       "github_org": "aegis-boot",
@@ -273,14 +273,14 @@ Release notes MUST cover BOTH identities until old releases fall out of the supp
 - [ ] **[CLI, pre-transfer]** Sign it via `cosign sign-blob` using the current workflow identity, producing `.github/identity-transition.json.sig` + `.github/identity-transition.json.pem`:
   ```bash
   # Runs via a one-off GitHub Actions workflow dispatch against main —
-  # the cert is bound to williamzujkowski/aegis-boot at sign time.
+  # the cert is bound to aegis-boot/aegis-boot at sign time.
   cosign sign-blob --yes \
     --output-signature .github/identity-transition.json.sig \
     --output-certificate .github/identity-transition.json.pem \
     .github/identity-transition.json
   ```
 - [ ] **[LOCAL, pre-transfer]** Commit all three files (`.json`, `.sig`, `.pem`) to `main` BEFORE the §4 transfer. GitHub preserves them through the transfer; automated verifiers pulling the new repo can read them to chain the trust from old → new identity.
-- [ ] **[POST-TRANSFER verification]** On the first release cut under the new org, verify an automated consumer can walk: "trust `williamzujkowski/aegis-boot` legacy identity (baked into my verifier) → read `.github/identity-transition.json` → verify its sig against the baked-in legacy identity → trust the NEW `aegis-boot/aegis-boot` identity per the manifest → verify the current release under the new identity." A sample walker script ships under `scripts/verify-identity-chain.sh` (Phase 2 follow-up of this plan).
+- [ ] **[POST-TRANSFER verification]** On the first release cut under the new org, verify an automated consumer can walk: "trust `aegis-boot/aegis-boot` legacy identity (baked into my verifier) → read `.github/identity-transition.json` → verify its sig against the baked-in legacy identity → trust the NEW `aegis-boot/aegis-boot` identity per the manifest → verify the current release under the new identity." A sample walker script ships under `scripts/verify-identity-chain.sh` (Phase 2 follow-up of this plan).
 
 **Trade-off acknowledged:** the `successor.cosign_identity_regexp` is a *prediction* of what the Fulcio `sub` will look like after transfer — not an observation. This is fine because the Actions workflow identity format is deterministic (`https://github.com/{org}/{repo}/.github/workflows/{workflow}.yml@refs/tags/{tag}`); the only variable is the org slug, which we control. A post-transfer step verifies the prediction matched reality.
 
@@ -294,9 +294,9 @@ If §4 transfer breaks something and you need to revert:
 
 - [ ] **[UI]** Note: GitHub enforces a **1-hour cooldown** before you can transfer the same repo again. Use that hour to diagnose — do not panic-transfer back.
 - [ ] **[UI]** Reverse transfer: `https://github.com/aegis-boot/aegis-boot/settings` → Danger Zone → Transfer ownership → new owner `williamzujkowski`.
-- [ ] **[LOCAL]** Revert `git remote set-url origin git@github.com:williamzujkowski/aegis-boot.git` in every local clone.
+- [ ] **[LOCAL]** Revert `git remote set-url origin git@github.com:aegis-boot/aegis-boot.git` in every local clone.
 - [ ] **[LOCAL]** Revert any `Cargo.toml` / `scripts/install.sh` / `Formula/aegis-boot.rb` / docs edits from §5.2 that were already merged. Keep the branch `docs/365-org-migration-plan` around as the post-mortem source.
-- [ ] **[UI]** GitHub auto-redirect remains in place from `williamzujkowski/aegis-boot` ↔ `aegis-boot/aegis-boot` for ≥1 year; clones using the old URL keep working regardless.
+- [ ] **[UI]** GitHub auto-redirect remains in place from `aegis-boot/aegis-boot` ↔ `aegis-boot/aegis-boot` for ≥1 year; clones using the old URL keep working regardless.
 - [ ] **[UI]** If the `aegis-boot` org becomes unusable, you can delete it at `https://github.com/organizations/aegis-boot/settings/profile` → bottom → **Delete this organization**. Do this only after confirming no repos remain under it.
 
 ---
@@ -314,12 +314,12 @@ Solo maintainer + all repos public + existing `main` + protected-status-checks p
 
 ## 9. Acceptance — what "done" looks like
 
-- [ ] `https://github.com/aegis-boot/aegis-boot` resolves; `https://github.com/williamzujkowski/aegis-boot` redirects to it.
+- [ ] `https://github.com/aegis-boot/aegis-boot` resolves; `https://github.com/aegis-boot/aegis-boot` redirects to it.
 - [ ] `https://github.com/aegis-boot/aegis-hwsim` resolves; old URL redirects.
 - [ ] Latest CI run on `main` passes under new org path for both repos.
 - [ ] Actions spending cap shows `$0` at `https://github.com/organizations/aegis-boot/settings/billing/spending_limit`.
 - [ ] Secret scanning + push protection enabled at `https://github.com/organizations/aegis-boot/settings/security_analysis`.
-- [ ] `grep -rn williamzujkowski/aegis-boot /home/william/git/aegis-boot --exclude-dir=target --exclude-dir=.git --exclude=CHANGELOG.md` returns **zero** matches outside CHANGELOG.md.
+- [ ] `grep -rn aegis-boot/aegis-boot /home/william/git/aegis-boot --exclude-dir=target --exclude-dir=.git --exclude=CHANGELOG.md` returns **zero** matches outside CHANGELOG.md.
 - [ ] First post-transfer release cut, signed with NEW cosign identity, verified end-to-end against updated docs.
 - [ ] `brew tap aegis-boot/aegis-boot && brew install aegis-boot` works from a fresh macOS host.
 - [ ] `curl -sSL https://raw.githubusercontent.com/aegis-boot/aegis-boot/main/scripts/install.sh | sh` works from a fresh Linux host.

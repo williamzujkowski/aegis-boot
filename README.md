@@ -19,13 +19,13 @@
 
 A signed UEFI Secure Boot rescue environment that lets operators pick any ISO from a USB stick's data partition and `kexec` into it — without leaving the chain of trust.
 
-[![License](https://img.shields.io/github/license/williamzujkowski/aegis-boot)](LICENSE-APACHE)
-[![Latest Release](https://img.shields.io/github/v/release/williamzujkowski/aegis-boot)](https://github.com/williamzujkowski/aegis-boot/releases/latest)
-[![CI](https://img.shields.io/github/actions/workflow/status/williamzujkowski/aegis-boot/ci.yml?label=ci)](https://github.com/williamzujkowski/aegis-boot/actions)
+[![License](https://img.shields.io/github/license/aegis-boot/aegis-boot)](LICENSE-APACHE)
+[![Latest Release](https://img.shields.io/github/v/release/aegis-boot/aegis-boot)](https://github.com/aegis-boot/aegis-boot/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/aegis-boot/aegis-boot/ci.yml?label=ci)](https://github.com/aegis-boot/aegis-boot/actions)
 
 </div>
 
-**Status:** pre-1.0. [CHANGELOG.md](./CHANGELOG.md) has the per-release detail; v1.0.0 is gated on the multi-vendor real-hardware sweep ([#51](https://github.com/williamzujkowski/aegis-boot/issues/51)).
+**Status:** pre-1.0. [CHANGELOG.md](./CHANGELOG.md) has the per-release detail; v1.0.0 is gated on the multi-vendor real-hardware sweep ([#51](https://github.com/aegis-boot/aegis-boot/issues/51)).
 
 ## What it does
 
@@ -55,18 +55,18 @@ Install the operator CLI:
 | Platform | Status |
 |---|---|
 | Linux x86_64 | Full support — flash + build, add ISOs, kexec, attest, doctor, compat |
-| macOS (Apple Silicon, arm64) | **Pre-built binary shipped** ([#365](https://github.com/williamzujkowski/aegis-boot/issues/365) Phase A1). Drive detection + `flash --image PATH` ([#229](https://github.com/williamzujkowski/aegis-boot/pull/229)). Image *building* requires Linux (mkusb.sh deps); use `aegis-boot fetch-image` (zero-arg, auto-resolves to latest release + cosign-verifies the signed `.img` — [#235](https://github.com/williamzujkowski/aegis-boot/issues/235)) then pipe to `flash --image $(...)`. Binary is ad-hoc codesigned but not yet notarized (Phase A2) — `brew install` is unaffected; direct downloads may trip Gatekeeper on first launch, see [docs/INSTALL.md § macOS (Apple Silicon)](./docs/INSTALL.md#macos-apple-silicon). |
-| macOS (Intel, x86_64) | Deferred — maintainer decision to ship arm64 first ([#365](https://github.com/williamzujkowski/aegis-boot/issues/365)). Build from source with `cargo install --path crates/aegis-cli`. |
-| Windows | Drive enumeration via `Get-Disk` ([#230](https://github.com/williamzujkowski/aegis-boot/pull/230)). Raw-disk writing deferred — combine `aegis-boot list` with Rufus or `dd-for-Windows` for the write |
+| macOS (Apple Silicon, arm64) | **Pre-built binary shipped** ([#365](https://github.com/aegis-boot/aegis-boot/issues/365) Phase A1). Drive detection + `flash --image PATH` ([#229](https://github.com/aegis-boot/aegis-boot/pull/229)). Image *building* requires Linux (mkusb.sh deps); use `aegis-boot fetch-image` (zero-arg, auto-resolves to latest release + cosign-verifies the signed `.img` — [#235](https://github.com/aegis-boot/aegis-boot/issues/235)) then pipe to `flash --image $(...)`. Binary is ad-hoc codesigned but not yet notarized (Phase A2) — `brew install` is unaffected; direct downloads may trip Gatekeeper on first launch, see [docs/INSTALL.md § macOS (Apple Silicon)](./docs/INSTALL.md#macos-apple-silicon). |
+| macOS (Intel, x86_64) | Deferred — maintainer decision to ship arm64 first ([#365](https://github.com/aegis-boot/aegis-boot/issues/365)). Build from source with `cargo install --path crates/aegis-cli`. |
+| Windows | Drive enumeration via `Get-Disk` ([#230](https://github.com/aegis-boot/aegis-boot/pull/230)). Raw-disk writing deferred — combine `aegis-boot list` with Rufus or `dd-for-Windows` for the write |
 
-Pre-built binaries ship today for Linux x86_64 and macOS arm64 (Apple Silicon); Intel-Mac / Windows users build with `cargo install --path crates/aegis-cli` until their release artifact ships ([#365](https://github.com/williamzujkowski/aegis-boot/issues/365)).
+Pre-built binaries ship today for Linux x86_64 and macOS arm64 (Apple Silicon); Intel-Mac / Windows users build with `cargo install --path crates/aegis-cli` until their release artifact ships ([#365](https://github.com/aegis-boot/aegis-boot/issues/365)).
 
 ```bash
 # Cosign-verified install from the latest GitHub release.
-curl -sSL https://raw.githubusercontent.com/williamzujkowski/aegis-boot/main/scripts/install.sh | sh
+curl -sSL https://raw.githubusercontent.com/aegis-boot/aegis-boot/main/scripts/install.sh | sh
 
 # OR via Homebrew (Linux):
-brew tap williamzujkowski/aegis-boot https://github.com/williamzujkowski/aegis-boot
+brew tap aegis-boot/aegis-boot https://github.com/aegis-boot/aegis-boot
 brew install aegis-boot
 
 # Or pin a version: sh install.sh --version v0.15.0

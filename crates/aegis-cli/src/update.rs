@@ -46,7 +46,7 @@
 //!   diff row — today it surfaces as `UNKNOWN` with an explicit
 //!   Phase-2 pointer)
 //!
-//! Tracked under epic [#181](https://github.com/williamzujkowski/aegis-boot/issues/181).
+//! Tracked under epic [#181](https://github.com/aegis-boot/aegis-boot/issues/181).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};

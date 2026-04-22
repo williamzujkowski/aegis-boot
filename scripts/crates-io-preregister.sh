@@ -82,7 +82,7 @@ version = "0.0.0"
 edition = "2021"
 description = "Placeholder — canonical home will be https://github.com/aegis-boot/aegis-boot."
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/williamzujkowski/aegis-boot"
+repository = "https://github.com/aegis-boot/aegis-boot"
 readme = "README.md"
 
 [lib]

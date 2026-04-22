@@ -36,8 +36,8 @@
 //! CI's `cli-docgen --check` fails any PR that lands (1) without
 //! also landing (3) + (4).
 //!
-//! [#286]: https://github.com/williamzujkowski/aegis-boot/issues/286
-//! [#289]: https://github.com/williamzujkowski/aegis-boot/issues/289
+//! [#286]: https://github.com/aegis-boot/aegis-boot/issues/286
+//! [#289]: https://github.com/aegis-boot/aegis-boot/issues/289
 
 #![forbid(unsafe_code)]
 // Doc comments describe markdown + troff syntax literally; pedantic
@@ -328,7 +328,7 @@ fn render_synopsis(helps: &BTreeMap<String, String>) -> String {
     out.push_str(
         "This file is auto-generated from the live output of `aegis-boot <SUBCOMMAND> --help` — it is the authoritative usage + flags reference. For prose guides, examples, and exit-code narratives, see [`docs/CLI.md`](../CLI.md).\n\n",
     );
-    out.push_str("Phase 3b of [#286](https://github.com/williamzujkowski/aegis-boot/issues/286). Regenerate with:\n\n");
+    out.push_str("Phase 3b of [#286](https://github.com/aegis-boot/aegis-boot/issues/286). Regenerate with:\n\n");
     out.push_str("```bash\ncargo build -p aegis-cli --release\ncargo run -p aegis-cli --bin cli-docgen --features docgen -- --write\n```\n\n");
     out.push_str("---\n\n");
     for (sub, help) in helps {

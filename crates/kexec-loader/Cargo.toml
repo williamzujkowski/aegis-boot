@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Safe wrapper over kexec_file_load(2) (Linux) for boot handoff — supports the signature-verified variant only"
 readme = "README.md"
 documentation = "https://docs.rs/kexec-loader"
-homepage = "https://github.com/williamzujkowski/aegis-boot"
+homepage = "https://github.com/aegis-boot/aegis-boot"
 keywords = ["kexec", "linux", "reboot", "ffi", "syscall"]
 categories = ["os::linux-apis", "api-bindings"]
 

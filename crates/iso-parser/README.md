@@ -2,7 +2,7 @@
 
 Boot entry discovery from ISO installation media. Scans directories for `.iso` files, detects distribution layouts (Arch, Debian/Ubuntu, Fedora, RHEL family, Alpine, NixOS, Mint), and extracts the kernel + initrd paths a bootloader needs to hand off via `kexec_file_load(2)`.
 
-Part of the [aegis-boot](https://github.com/williamzujkowski/aegis-boot) rescue environment — a signed-chain UEFI Secure Boot stick that boots any ISO.
+Part of the [aegis-boot](https://github.com/aegis-boot/aegis-boot) rescue environment — a signed-chain UEFI Secure Boot stick that boots any ISO.
 
 ## Design
 
@@ -50,7 +50,7 @@ See the [API docs](https://docs.rs/iso-parser) for the full surface.
 
 ## Status
 
-**Pre-1.0.** API is settling through real-hardware validation on the parent project's test fleet (Framework / ThinkPad / Dell). Publishing to crates.io at 1.0. Until then, consume via the [aegis-boot workspace](https://github.com/williamzujkowski/aegis-boot).
+**Pre-1.0.** API is settling through real-hardware validation on the parent project's test fleet (Framework / ThinkPad / Dell). Publishing to crates.io at 1.0. Until then, consume via the [aegis-boot workspace](https://github.com/aegis-boot/aegis-boot).
 
 ## License
 

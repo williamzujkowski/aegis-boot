@@ -1,6 +1,6 @@
 # aegis-hwsim persona schema (draft)
 
-**Status:** Draft. Tracking under [#226](https://github.com/williamzujkowski/aegis-boot/issues/226). The sibling repo `aegis-hwsim` doesn't exist yet — this doc exists in aegis-boot so the schema can be reviewed before the sibling repo is spun up.
+**Status:** Draft. Tracking under [#226](https://github.com/aegis-boot/aegis-boot/issues/226). The sibling repo `aegis-hwsim` doesn't exist yet — this doc exists in aegis-boot so the schema can be reviewed before the sibling repo is spun up.
 
 **Audience:** reviewers of the persona format; future authors adding hardware personas to the library.
 
@@ -24,7 +24,7 @@ source:
   #   - lvfs_catalog:     points at the fwupd/LVFS firmware-archive URL
   #   - vendor_docs:      points at a vendor-published spec sheet
   kind: community_report
-  ref: "github.com/williamzujkowski/aegis-boot/issues/307"
+  ref: "github.com/aegis-boot/aegis-boot/issues/307"
   captured_at: 2026-03-14
 
 dmi:

@@ -1,6 +1,6 @@
 # aegis-boot brand guidelines
 
-Source: nexus-agents `ux_expert` spec, 2026-04-15. Track evolution in [#76](https://github.com/williamzujkowski/aegis-boot/issues/76).
+Source: nexus-agents `ux_expert` spec, 2026-04-15. Track evolution in [#76](https://github.com/aegis-boot/aegis-boot/issues/76).
 
 ## Name
 

@@ -2,7 +2,7 @@
 
 Runtime ISO discovery for a live rescue environment. Given a set of root paths (typically the AEGIS_ISOS partition mounted at `/run/media/aegis-isos`), finds every `.iso`, loop-mounts it once, extracts per-ISO boot metadata via [iso-parser](https://crates.io/crates/iso-parser), and returns metadata records suitable for display in a TUI.
 
-Part of the [aegis-boot](https://github.com/williamzujkowski/aegis-boot) rescue environment — a signed-chain UEFI Secure Boot stick that boots any ISO.
+Part of the [aegis-boot](https://github.com/aegis-boot/aegis-boot) rescue environment — a signed-chain UEFI Secure Boot stick that boots any ISO.
 
 ## Two-phase API
 
@@ -37,7 +37,7 @@ See the [API docs](https://docs.rs/iso-probe) for the full surface.
 
 ## Status
 
-**Pre-1.0.** API is settling through real-hardware validation on the parent project's test fleet. Publishing to crates.io at 1.0. Until then, consume via the [aegis-boot workspace](https://github.com/williamzujkowski/aegis-boot).
+**Pre-1.0.** API is settling through real-hardware validation on the parent project's test fleet. Publishing to crates.io at 1.0. Until then, consume via the [aegis-boot workspace](https://github.com/aegis-boot/aegis-boot).
 
 ## License
 
