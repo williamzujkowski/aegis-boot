@@ -405,6 +405,75 @@ fn trust_verdict(iso: &iso_probe::DiscoveredIso) -> TrustVerdict {
 /// Single-character status glyph for a list row, encoding the worst
 /// security state. Visible in monochrome themes (no color reliance).
 /// (#85, k9s/dialog pattern.)
+/// Render a single ISO row for the boot-menu list. Extracted so
+/// `draw_list` stays under clippy's 100-line ceiling. #274 Phase 6c
+/// added the folder-prefix rendering so operators running in
+/// rescue-tui see the subfolder path (e.g. `ubuntu-24.04/Ubuntu
+/// 24.04.2 LTS`) that `aegis-boot list` shows on the host.
+fn render_iso_list_item<'a>(
+    iso: &iso_probe::DiscoveredIso,
+    scanned_roots: &[std::path::PathBuf],
+) -> ListItem<'a> {
+    let glyph = status_glyph(iso);
+    let qs = quirks_summary(iso);
+    // Prefer pretty_name over label when present so operators see the
+    // version (e.g. "Ubuntu 24.04.2 LTS" vs just "Ubuntu"). (#119)
+    let display = iso_probe::display_name(iso);
+    let folder = iso_folder_prefix(&iso.iso_path, scanned_roots);
+    let display_with_folder = match folder {
+        Some(f) => format!("{f}/{display}"),
+        None => display.to_string(),
+    };
+    let line = if qs.is_empty() {
+        format!(
+            "{glyph} {}  ({})",
+            display_with_folder,
+            iso.distribution_name()
+        )
+    } else {
+        format!(
+            "{glyph} {}  ({})  {qs}",
+            display_with_folder,
+            iso.distribution_name()
+        )
+    };
+    ListItem::new(line)
+}
+
+/// #274 Phase 6c — compute the subfolder path for an ISO relative to
+/// whichever scanned root it lives under. Returns `None` if the ISO
+/// sits at the root of any scanned root, or if no scanned root is a
+/// parent of the ISO's `iso_path` (defensive — shouldn't happen since
+/// the iso was discovered under one of the roots, but returning None
+/// renders as a flat-layout row which is the safe degradation).
+///
+/// Always forward-slash separated regardless of host OS — matches
+/// the exFAT stick filesystem's canonical form and mirrors Phase 6a's
+/// `inventory::relative_folder` output shape.
+fn iso_folder_prefix(iso_path: &std::path::Path, roots: &[std::path::PathBuf]) -> Option<String> {
+    // Prefer the longest matching root so nested roots (unlikely but
+    // possible if an operator passes both /run/media/aegis-isos and
+    // /run/media/aegis-isos/subdir) resolve to the tighter one.
+    let parent = iso_path.parent()?;
+    let best_root = roots
+        .iter()
+        .filter(|r| parent.starts_with(r))
+        .max_by_key(|r| r.as_os_str().len())?;
+    let rel = parent.strip_prefix(best_root).ok()?;
+    if rel.as_os_str().is_empty() {
+        return None;
+    }
+    let parts: Vec<String> = rel
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("/"))
+    }
+}
+
 fn status_glyph(iso: &iso_probe::DiscoveredIso) -> &'static str {
     use iso_probe::{HashVerification as H, Quirk, SignatureVerification as S};
     if iso.quirks.contains(&Quirk::NotKexecBootable) {
@@ -702,20 +771,7 @@ fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usiz
     let items: Vec<ListItem> = entries
         .iter()
         .map(|e| match e {
-            ViewEntry::Iso(i) => {
-                let iso = &state.isos[*i];
-                let glyph = status_glyph(iso);
-                let qs = quirks_summary(iso);
-                // Prefer pretty_name over label when present so operators see
-                // the version (e.g. "Ubuntu 24.04.2 LTS" vs just "Ubuntu"). (#119)
-                let display = iso_probe::display_name(iso);
-                let line = if qs.is_empty() {
-                    format!("{glyph} {}  ({})", display, iso.distribution_name())
-                } else {
-                    format!("{glyph} {}  ({})  {qs}", display, iso.distribution_name())
-                };
-                ListItem::new(line)
-            }
+            ViewEntry::Iso(i) => render_iso_list_item(&state.isos[*i], &state.scanned_roots),
             ViewEntry::RescueShell => {
                 ListItem::new("[#] rescue shell (busybox)  — dropped from rescue-tui")
             }
@@ -1167,6 +1223,71 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
     use std::path::PathBuf;
+
+    // ---- #274 Phase 6c: subfolder-prefix rendering ------------------------
+
+    #[test]
+    fn iso_folder_prefix_returns_none_for_root_level_iso() {
+        let roots = vec![PathBuf::from("/run/media/aegis-isos")];
+        let got = iso_folder_prefix(
+            std::path::Path::new("/run/media/aegis-isos/alpine.iso"),
+            &roots,
+        );
+        assert_eq!(got, None, "flat-layout ISO has no folder prefix");
+    }
+
+    #[test]
+    fn iso_folder_prefix_returns_single_level_subfolder() {
+        let roots = vec![PathBuf::from("/run/media/aegis-isos")];
+        let got = iso_folder_prefix(
+            std::path::Path::new("/run/media/aegis-isos/ubuntu-24.04/server.iso"),
+            &roots,
+        );
+        assert_eq!(got.as_deref(), Some("ubuntu-24.04"));
+    }
+
+    #[test]
+    fn iso_folder_prefix_returns_nested_subfolder_forward_slash() {
+        let roots = vec![PathBuf::from("/run/media/aegis-isos")];
+        let got = iso_folder_prefix(
+            std::path::Path::new("/run/media/aegis-isos/ubuntu/24.04/server.iso"),
+            &roots,
+        );
+        assert_eq!(got.as_deref(), Some("ubuntu/24.04"));
+    }
+
+    #[test]
+    fn iso_folder_prefix_picks_longest_matching_root() {
+        // If an operator somehow configures nested roots, prefer the
+        // tighter match so the folder prefix stays short.
+        let roots = vec![
+            PathBuf::from("/run/media"),
+            PathBuf::from("/run/media/aegis-isos"),
+        ];
+        let got = iso_folder_prefix(
+            std::path::Path::new("/run/media/aegis-isos/alpine-3.20/std.iso"),
+            &roots,
+        );
+        assert_eq!(got.as_deref(), Some("alpine-3.20"));
+    }
+
+    #[test]
+    fn iso_folder_prefix_returns_none_when_no_root_matches() {
+        // Defensive: if discovery returned an ISO outside every scanned
+        // root (shouldn't happen), fall back to None → flat render.
+        let roots = vec![PathBuf::from("/run/media/other")];
+        let got = iso_folder_prefix(std::path::Path::new("/tmp/random/thing.iso"), &roots);
+        assert_eq!(got, None);
+    }
+
+    #[test]
+    fn iso_folder_prefix_empty_roots_returns_none() {
+        let got = iso_folder_prefix(
+            std::path::Path::new("/run/media/aegis-isos/ubuntu/server.iso"),
+            &[],
+        );
+        assert_eq!(got, None);
+    }
 
     fn fake_iso(label: &str) -> iso_probe::DiscoveredIso {
         iso_probe::DiscoveredIso {
