@@ -49,6 +49,43 @@ iso-parser = { path = "../iso-parser", version = "1.0" }
 
 The `version` is what gets baked into the published `iso-probe` package; the `path` is used for local workspace builds. Keep these aligned with every bump.
 
+## Pre-publish soundness checks
+
+Before tagging v1.0.0-rc1, confirm the following gates are green. They catch the classes of bug that are painful to walk back once a crate is on the registry.
+
+### 1. `cargo publish --dry-run` per crate (#355, automated on every PR)
+
+`.github/workflows/crates-publish-dryrun.yml` runs `cargo publish --dry-run` against `iso-parser` and `kexec-loader` on every push to main and every PR. Catches metadata regressions (missing `version =` on path deps, bad category names, oversize `description`) before they surface on publish day.
+
+`iso-probe` isn't in this gate yet — its dry-run needs `iso-parser` to already be on the registry (documented in the CI workflow). Add it once iso-parser publishes.
+
+### 2. `cargo-deny` license + advisory policy (#362, automated on every PR)
+
+`.github/workflows/ci.yml`'s `cargo-deny` job runs `check advisories licenses bans sources` against `deny.toml`. The workspace accepts only the dual `MIT OR Apache-2.0` + compatible permissive licenses. Two upstream-unmaintained advisories are explicitly ignored with rationale (see `deny.toml`).
+
+### 3. Miri UB detection on `kexec-loader` (#364, path-gated on crates/kexec-loader/**)
+
+`.github/workflows/miri-kexec-loader.yml` runs `cargo +nightly miri test -p kexec-loader` on any PR touching the `kexec-loader` crate. Miri catches classes of undefined behavior the normal compiler doesn't see: uninitialized reads, stacked-borrows aliasing violations, use-after-free on the `OwnedFd` wrapper, `CString` lifetime bugs across the syscall boundary.
+
+Miri does NOT catch the `libc::syscall(SYS_kexec_file_load)` call itself — miri doesn't execute real syscalls. Syscall-side validation lives in `.github/workflows/kexec-e2e.yml` (OVMF QEMU E2E) + real-hardware shakedown. Together the three gates cover:
+
+- miri: wrapper-layer memory safety (stacked borrows, aliasing, lifetimes)
+- OVMF QEMU: end-to-end kexec path under signed-chain Secure Boot
+- Real hardware (#132 successor): firmware quirks bare-metal QEMU can't simulate
+
+Run miri locally before tagging:
+
+```bash
+rustup toolchain install nightly --component miri
+cargo +nightly miri test -p kexec-loader
+```
+
+Expected output: 6 tests pass, 1 ignored (needs root + would kexec the host). No UB.
+
+### 4. Real-hardware shakedown (#132 successor)
+
+Per the #51 epic body, v1.0.0-rc1 holds until at least one Framework, one Dell, and one ThinkPad successfully boot a direct-install stick under Secure Boot enforcing. This is the largest remaining gate. See `docs/validation/REAL_HARDWARE_REPORT_132.md` for the validation-report template + the first completed run (2026-04-21, SanDisk Cruzer under QEMU USB passthrough).
+
 ## Actual publish flow
 
 From a clean checkout of a tagged release commit (`v1.0.0-rc1` or later):

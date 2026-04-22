@@ -1,0 +1,68 @@
+name: Miri — kexec-loader UB detection
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/kexec-loader/**"
+      - ".github/workflows/miri-kexec-loader.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/kexec-loader/**"
+      - ".github/workflows/miri-kexec-loader.yml"
+  workflow_dispatch:
+
+# #364 Phase 2 — nightly-toolchain miri pass over kexec-loader's
+# unsafe surface. This is the last reasonable pre-publish soundness
+# check before kexec-loader hits crates.io (#51).
+#
+# What miri catches here: wrapper soundness — OwnedFd not double-closed,
+# CString lifetime across the syscall boundary, errno classification
+# doesn't UB on weird values, stacked-borrows aliasing.
+#
+# What miri does NOT catch: the `libc::syscall(SYS_kexec_file_load)`
+# call itself — miri doesn't execute real syscalls. The syscall side
+# is validated by OVMF QEMU E2E (.github/workflows/kexec-e2e.yml) +
+# real-hardware shakedown (#132 successor).
+#
+# Gated by path filters so we don't rerun the ~2-3 min nightly
+# toolchain install on unrelated PRs. Kicks on:
+# - any change under crates/kexec-loader/
+# - this workflow file itself
+# - manual dispatch
+
+jobs:
+  miri:
+    name: cargo +nightly miri test -p kexec-loader
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust nightly + miri
+        # miri is only ever nightly. Pin to a recent nightly that we
+        # know ships miri; Miri is in every nightly as of 2023, but
+        # pinning here prevents a surprise if upstream ever drops it.
+        run: |
+          rustup toolchain install nightly --profile minimal --component miri
+          rustup override set nightly
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: miri-kexec-loader
+
+      - name: cargo +nightly miri test -p kexec-loader
+        # Runs the 6 pure-function tests (classify_errno variants +
+        # path CString round-trips). The 2 root-required tests are
+        # auto-skipped (test body has `#[ignore]`). No --ignored flag
+        # — those need CAP_SYS_BOOT + would kexec the CI runner.
+        env:
+          # Silence miri's network isolation complaints about the
+          # advisory-db download in build scripts; nothing in
+          # kexec-loader's deps needs network at test time.
+          MIRIFLAGS: "-Zmiri-disable-isolation"
+        run: cargo +nightly miri test -p kexec-loader
