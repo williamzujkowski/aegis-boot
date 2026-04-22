@@ -10,7 +10,7 @@
 class AegisBoot < Formula
   desc "Signed UEFI Secure Boot rescue environment for booting any ISO from USB"
   homepage "https://github.com/aegis-boot/aegis-boot"
-  version "0.15.0"
+  version "0.16.0"
   license any_of: ["Apache-2.0", "MIT"]
 
   # Runtime dependencies the operator CLI shells out to. Listed
@@ -38,8 +38,8 @@ class AegisBoot < Formula
   on_linux do
     on_intel do
       # v0.15.0 Linux binary — real URL + sha, `brew install` works today.
-      url "https://github.com/aegis-boot/aegis-boot/releases/download/v0.15.0/aegis-boot-x86_64-linux"
-      sha256 "cae7fae1b70e8d7576be83f86036eac91c53cfc7397f7f98a92332bbb17467d6"
+      url "https://github.com/aegis-boot/aegis-boot/releases/download/v0.16.0/aegis-boot-x86_64-linux"
+      sha256 "e8f22f6d87bdab539cbbcbd7e7c4f75770b5f49c9e25d6624acb6bf20e042a03"
     end
   end
 
