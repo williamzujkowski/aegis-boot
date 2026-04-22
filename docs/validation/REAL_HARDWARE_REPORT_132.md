@@ -115,6 +115,28 @@ So cross-reboot last-booted persistence is **not shipped**. #123 claims "Pre-sel
 
 **Recommendation**: close #132 as "scope mismatch caught — shipped behavior is within-session-only per explicit design"; file a successor issue for cross-reboot persistence with the design work this implies (where to write, fsync semantics on vfat, attestation-manifest interaction, untrusted-stick considerations).
 
+### 2026-04-22 update — #375 Phase 1 shipped cross-reboot persistence
+
+Successor work (per recommendation above): ADR 0003 [`LAST_BOOTED_PERSISTENCE.md`](../architecture/LAST_BOOTED_PERSISTENCE.md) ACCEPTED at 83.3% supermajority; PR #402 implemented the two-tier write (tmpfs full-fidelity + `AEGIS_ISOS` stripped) with atomic rename-over + directory fsync. Pure-Rust round-trip test `persistence::tests::reboot_simulation_round_trip` covers the file-on-disk side of the acceptance criterion. The real-hardware test procedure below closes the remaining gap — the cursor-on-reboot UX observation — which requires physical hardware the QEMU + USB-passthrough setup can't exercise end-to-end (QEMU's USB storage emulation doesn't preserve AEGIS_ISOS state across VM restart cleanly without additional plumbing).
+
+### Hardware test procedure (closes #132 acceptance when executed)
+
+Run on each of Framework / Dell / ThinkPad per the multi-vendor #51 gate:
+
+1. Flash a fresh stick per the standard `aegis-boot quickstart /dev/sdX` path (or `init` if you want a richer ISO set).
+2. Boot the target machine from the stick under UEFI Secure Boot **enforcing**.
+3. In rescue-tui, arrow-down to a non-first ISO (e.g., Ubuntu in position 2 or 3 — the "which row was picked" signal is strongest when it's not the default top row).
+4. Press Enter. When the confirmation dialog appears, press Enter again to confirm kexec.
+5. **Before kexec completes into the booted ISO** — power-cycle the machine (hold power button). The kernel's in-progress kexec write should have already flushed the cross-reboot `last-choice.json` to AEGIS_ISOS via the atomic-rename + dir-fsync sequence in `persistence::save_durable`.
+6. Boot the target machine from the stick again (same UEFI Secure Boot enforcing path).
+7. When rescue-tui's List screen appears: **verify the cursor is on the ISO you picked in step 3**, not on the first row.
+8. Eject / inspect the stick on an operator workstation: `AEGIS_ISOS/.aegis-state/last-choice.json` exists and contains the ISO path you confirmed.
+9. File a `hardware-report` issue or extend the `docs/HARDWARE_COMPAT.md` table with the machine's outcome.
+
+Expected `rescue-tui` log line at step 7 (visible in the boot log if `loglevel=7` / serial-console is configured): `rescue-tui: restored last choice  idx=<N>  iso=<path>`.
+
+Negative-path validation: if step 5's power-cycle happens BEFORE the save completes (e.g., operator is faster than the fsync), the cursor lands on the first row in step 7. That's the designed fresh-start fallback — not a bug. Confirm by checking that no `.aegis-state/last-choice.json` exists on the eject step, or that the file exists but predates step 4 if this is a repeat run.
+
 ## Environment details
 
 | Component | Version |
