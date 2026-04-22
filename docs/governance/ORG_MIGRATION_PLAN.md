@@ -62,9 +62,17 @@
   Secrets **do not** transfer. You will re-add these in §5.
 - [ ] **[UI]** Back up Environments (if any) at `/settings/environments` for each repo. Note environment names + protection rules.
 - [ ] **[UI]** Back up webhooks list (names + URLs only, not secrets) at `/settings/hooks` for each repo. Webhooks usually transfer but sigstore/cosign OIDC needs special verification (§6).
-- [ ] **[LOCAL]** Note current crates.io names in `/home/william/git/aegis-boot/Cargo.toml`:
-  - `iso-parser`, `iso-probe`, `kexec-loader`, `aegis-fitness`, `aegis-cli`, `aegis-wire-formats`, plus the workspace root `aegis-boot`.
-  - Reactively claiming on crates.io is optional (names already verified available 2026-04-21), but if you intend to reserve them, do it **after** the GitHub org transfer so trusted publishing OIDC identity is already under the new path.
+- [ ] **[CLI, pre-transfer] Reserve all crates.io names with v0.0.0 placeholder crates.** Run under the current `williamzujkowski` GitHub-linked cargo account:
+  ```bash
+  # For each of: iso-parser, iso-probe, kexec-loader, aegis-fitness,
+  # aegis-cli, aegis-wire-formats, aegis-boot, aegis-hwsim.
+  cargo new --lib /tmp/crate-placeholder-aegis-boot
+  cd /tmp/crate-placeholder-aegis-boot
+  # Edit Cargo.toml: name = "<crate>", version = "0.0.0", description = "placeholder — real crate ships under aegis-boot/aegis-boot (see GitHub)."
+  cargo publish --token <token>
+  ```
+  **Why this is pre-transfer work, not post-**: the moment the `williamzujkowski/aegis-boot` → `aegis-boot/aegis-boot` transfer completes, the 8 unclaimed crate names are visibly "discovered" via the repo's public source tree. Squatters troll crates.io for name-grab opportunities on newly-prominent repos; the gap between "repo moves" and "we claim the names under the new org" is a race window we can close to zero by claiming under the old account first, then transferring ownership to the org's cargo account post-transfer. Cost: 8 × `cargo publish` + 8 × `cargo owner --add` (~10 minutes total). Benefit: eliminates the squatter race entirely.
+- [ ] **[LOCAL, post-transfer plan only]** After §4 completes, transfer crate ownership: `cargo owner --add aegis-boot <crate-name>` for each placeholder. Actual trusted-publishing (GitHub Actions OIDC under the new org) ships with the first real release post-transfer.
 
 ---
 
@@ -234,6 +242,47 @@ Release notes MUST cover BOTH identities until old releases fall out of the supp
 - [ ] **[LOCAL]** Update `Formula/aegis-boot.rb` line 96 to the NEW identity.
 - [ ] **[LOCAL]** Update `README.md` wherever it documents verification — same NEW identity, same legacy note.
 - [ ] **[UI]** On the FIRST release cut after transfer, manually run `cosign verify-blob` end-to-end against a release artifact to confirm the new identity validates. Before this is confirmed, do not merge the verification-doc updates to `main`.
+
+### 6.3 OIDC identity bridge (pre-transfer signed delegation)
+
+**Why this exists.** Cosign keyless signatures bind to the full GitHub Actions workflow identity string — the `sub` claim in the Fulcio cert. When the repo moves, the `sub` changes. Documentation alone ("use the new identity regex for releases after date X") is fine for humans running `cosign verify-blob` by hand, but an automated admission controller or pinning system has no way to chain from the old identity to the new without a signed authorization from the previous identity. A social-engineered `aegis-boot/` identity would be indistinguishable from the legitimate new one to such a verifier.
+
+**The fix — a signed successor-identity manifest in the PRE-transfer repo.**
+
+- [ ] **[LOCAL, pre-transfer]** Create `.github/identity-transition.json` at the root of the CURRENT `williamzujkowski/aegis-boot` repo with the following shape:
+  ```json
+  {
+    "schema_version": 1,
+    "statement": "Authorization of successor cosign identity on repository transfer",
+    "predecessor": {
+      "github_owner": "williamzujkowski",
+      "repo": "aegis-boot",
+      "cosign_identity_regexp": "^https://github\\.com/williamzujkowski/aegis-boot/\\.github/workflows/release\\.yml@refs/tags/v.+$"
+    },
+    "successor": {
+      "github_org": "aegis-boot",
+      "repo": "aegis-boot",
+      "cosign_identity_regexp": "^https://github\\.com/aegis-boot/aegis-boot/\\.github/workflows/release\\.yml@refs/tags/v.+$"
+    },
+    "transition_date": "2026-XX-XX",
+    "rationale": "Repository moved to dedicated GitHub org; see docs/governance/ORG_MIGRATION_PLAN.md"
+  }
+  ```
+- [ ] **[CLI, pre-transfer]** Sign it via `cosign sign-blob` using the current workflow identity, producing `.github/identity-transition.json.sig` + `.github/identity-transition.json.pem`:
+  ```bash
+  # Runs via a one-off GitHub Actions workflow dispatch against main —
+  # the cert is bound to williamzujkowski/aegis-boot at sign time.
+  cosign sign-blob --yes \
+    --output-signature .github/identity-transition.json.sig \
+    --output-certificate .github/identity-transition.json.pem \
+    .github/identity-transition.json
+  ```
+- [ ] **[LOCAL, pre-transfer]** Commit all three files (`.json`, `.sig`, `.pem`) to `main` BEFORE the §4 transfer. GitHub preserves them through the transfer; automated verifiers pulling the new repo can read them to chain the trust from old → new identity.
+- [ ] **[POST-TRANSFER verification]** On the first release cut under the new org, verify an automated consumer can walk: "trust `williamzujkowski/aegis-boot` legacy identity (baked into my verifier) → read `.github/identity-transition.json` → verify its sig against the baked-in legacy identity → trust the NEW `aegis-boot/aegis-boot` identity per the manifest → verify the current release under the new identity." A sample walker script ships under `scripts/verify-identity-chain.sh` (Phase 2 follow-up of this plan).
+
+**Trade-off acknowledged:** the `successor.cosign_identity_regexp` is a *prediction* of what the Fulcio `sub` will look like after transfer — not an observation. This is fine because the Actions workflow identity format is deterministic (`https://github.com/{org}/{repo}/.github/workflows/{workflow}.yml@refs/tags/{tag}`); the only variable is the org slug, which we control. A post-transfer step verifies the prediction matched reality.
+
+**When this matters:** TODAY, aegis-boot's only `cosign verify-blob` callers are `install.sh` (which can be updated in place via §5) and operator-hand invocations (human reads updated docs). Automated admission controllers (Gatekeeper, Kyverno, sigstore-policy-controller) are not load-bearing consumers today. The identity bridge is bonus defense-in-depth for *future* automation — building the bridge while we still control both endpoints is cheaper than retrofitting after the `williamzujkowski` account stops signing aegis-boot releases. Low-cost, high-option-value work; cheap to ship now.
 
 ---
 
