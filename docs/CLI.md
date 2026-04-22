@@ -485,7 +485,7 @@ Every other USB-imaging tool is silent after flash. The attestation receipt is t
 ```json
 {
   "schema_version": 1,
-  "tool_version": "0.15.0",
+  "tool_version": "0.16.0",
   "flashed_at": "2026-04-16T12:34:56Z",
   "operator": "william",
   "host": {
@@ -818,7 +818,7 @@ aegis-boot tour --help
 
 ## Versioning
 
-`aegis-boot --version` reports the workspace version (currently `0.15.0`). The CLI ships in lockstep with the rest of the workspace; `cargo install --path crates/aegis-cli` (or downloading a release binary) will give you a CLI that matches the on-stick rescue-tui.
+`aegis-boot --version` reports the workspace version (currently `0.16.0`). The CLI ships in lockstep with the rest of the workspace; `cargo install --path crates/aegis-cli` (or downloading a release binary) will give you a CLI that matches the on-stick rescue-tui.
 
 `aegis-boot --version --json` emits the same info as a stable envelope for scripted install verification or Homebrew-style version matching:
 
@@ -826,7 +826,7 @@ aegis-boot tour --help
 {
   "schema_version": 1,
   "tool": "aegis-boot",
-  "version": "0.15.0"
+  "version": "0.16.0"
 }
 ```
 

@@ -64,7 +64,7 @@ macOS x86_64 (Intel) and Windows native builds remain deferred — see [#365](ht
 Sanity check:
 
 ```bash
-aegis-boot --version       # → aegis-boot v0.15.0
+aegis-boot --version       # → aegis-boot v0.16.0
 aegis-boot doctor          # 0–100 health score for host + stick
 ```
 
@@ -170,7 +170,7 @@ If the firmware refuses to show the USB entry, your boot mode might be CSM/Legac
 `rescue-tui` shows your ISOs with verification status:
 
 ```
-aegis-boot v0.15.0    SB:enforcing  TPM:available
+aegis-boot v0.16.0    SB:enforcing  TPM:available
 
   ▸ ubuntu-24.04.2-live-server-amd64.iso        1.6 GiB  [✓ sha256]
     alpine-3.20.3-x86_64.iso                     198 MiB  [no verify]

@@ -12,7 +12,7 @@ name = "rescue-tui"
 path = "src/main.rs"
 
 [dependencies]
-aegis-wire-formats = { path = "../aegis-wire-formats", version = "0.15" }
+aegis-wire-formats = { path = "../aegis-wire-formats", version = "0.16" }
 iso-probe = { path = "../iso-probe" }
 kexec-loader = { path = "../kexec-loader" }
 thiserror.workspace = true

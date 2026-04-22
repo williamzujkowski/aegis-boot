@@ -4,6 +4,90 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-04-22
+
+First release under the dedicated **`aegis-boot` GitHub org**. Direct-install pipeline shipped end-to-end with signed attestation manifests, operator UX gained three one-command workflows (`quickstart`, `init`, catalog-slug `add`), and the supply chain grew a second signed trust anchor (minisign, ADR 0002 ACCEPTED) to sit alongside the cosign-keyless release signing. macOS arm64 release binaries ship per-tag via a new Homebrew bottle and a `release.yml` that builds the darwin target natively. The org move closes the `aegis-boot/aegis-*` naming story, pre-registers all library crates on crates.io with team-based ownership, and replaces the long-lived `CARGO_REGISTRY_TOKEN` with Trusted Publishing (short-lived OIDC tokens per-release).
+
+### Direct-install pipeline lands — v1.0.0 blocker #274 clears (epic [#274](https://github.com/aegis-boot/aegis-boot/issues/274))
+
+`aegis-boot flash --direct-install` replaces the legacy `mkusb.sh + dd` path with a Rust-native pipeline: zap + GPT partition via `sgdisk`, ESP `mkfs.fat`, AEGIS_ISOS `mkfs.exfat` (default) / `fat32` / `ext4`, render grub.cfg, concat initrd, stage the signed chain via `mmd + mcopy`, and — new in this release — write a signed attestation manifest to `::/aegis-boot-manifest.json` on the freshly-staged ESP. Byte-parity against `mkusb.sh` is enforced in CI (`.github/workflows/direct-install-e2e.yml`): each of the 6 canonical ESP files is sha256-compared and the workflow fails on any divergence.
+
+- **Phase 3 — wire `--direct-install`** ([#350](https://github.com/aegis-boot/aegis-boot/pull/350)). First end-to-end run behind the flag; pre-flight deps gate + per-stage wall-clock timers landed in companion PRs ([#353](https://github.com/aegis-boot/aegis-boot/pull/353), [#354](https://github.com/aegis-boot/aegis-boot/pull/354)).
+- **Phase 3b — signed attestation manifest write** ([#386](https://github.com/aegis-boot/aegis-boot/pull/386), closes [#349](https://github.com/aegis-boot/aegis-boot/issues/349)). Stage 7 of the flash pipeline reads device identity (sgdisk + blkid), computes per-file ESP sha256s, builds a `schema_version=1` `Manifest` (`aegis_wire_formats::Manifest`), serializes, and optionally minisign-signs it if `AEGIS_BOOT_SIGNING_KEY` is set. Unsigned operator-default per ADR 0002 §6.3; the maintainer-signed path ships the full cosign-verifiable claim.
+- **Phase 6 — subfolder support** ([#351](https://github.com/aegis-boot/aegis-boot/pull/351), [#381](https://github.com/aegis-boot/aegis-boot/pull/381), [#382](https://github.com/aegis-boot/aegis-boot/pull/382), [#383](https://github.com/aegis-boot/aegis-boot/pull/383)). `aegis-boot list` recurses AEGIS_ISOS; `add --folder NAME` places an ISO under a named subfolder; `doctor --stick` prints per-ISO trust-state rows; rescue-tui surfaces the subfolder prefix in the boot menu.
+
+### Operator UX — three one-command paths (closes [#352](https://github.com/aegis-boot/aegis-boot/issues/352))
+
+The 5-command `doctor → init → fetch → add → boot` walkthrough still works, but two new capstones cover the common cases:
+
+- **`aegis-boot quickstart <device>`** ([#358](https://github.com/aegis-boot/aegis-boot/pull/358)) — sub-10-minute empty-stick-to-booted-rescue with Alpine 3.20 Standard. Thin wrapper over `init --profile minimal --yes --direct-install`.
+- **`aegis-boot init`** — one-command rescue stick with the `panic-room` profile (Alpine + Ubuntu + Rocky) or other curated profiles.
+- **`aegis-boot add <catalog-slug>`** ([#356](https://github.com/aegis-boot/aegis-boot/pull/356)) — operators no longer have to `fetch` then `add`; one verb both fetches (cosign-verifying) and adds to the stick.
+
+rescue-tui's empty-state pointer ([#357](https://github.com/aegis-boot/aegis-boot/pull/357)) surfaces the catalog-slug shortcut directly in the menu when the stick has no ISOs.
+
+### In-place update groundwork — #181 Phase 1 + Phase 2a
+
+`aegis-boot update <device>` goes from not-a-command to two real phases:
+
+- **Phase 1 — eligibility preflight** ([#380](https://github.com/aegis-boot/aegis-boot/pull/380)). Read-only: validates GPT + ESP + AEGIS_ISOS label + attestation-GUID match, prints the per-file sha256 diff between stick and a fresh flash, reports ELIGIBLE / INELIGIBLE with a specific reason. Zero writes.
+- **Phase 2a — rotation planner + `--experimental-apply` gate** ([#388](https://github.com/aegis-boot/aegis-boot/pull/388)). Pure-function planner + rollback analyzer in `update_apply.rs`. The CLI flag `--apply --experimental-apply` dry-prints the plan the Phase 2b executor would run. Still no writes — FAT32 has no journal; Phase 2b will ship the executor with bounded rollback on per-file verify failure.
+
+### macOS arm64 ships — #365 Phase A1 + A3
+
+First cross-platform release binary lands. Native aarch64-apple-darwin build via GitHub Actions macos-14 runner ([#371](https://github.com/aegis-boot/aegis-boot/pull/371)). Homebrew bottle at `aegis-boot/aegis-boot` tap ([#372](https://github.com/aegis-boot/aegis-boot/pull/372)) sidesteps Gatekeeper entirely. Binary is ad-hoc codesigned but not notarized — notarization is demand-signal-gated via [#369](https://github.com/aegis-boot/aegis-boot/issues/369).
+
+### GitHub org migration — williamzujkowski/aegis-* → aegis-boot/ (closes [#365](https://github.com/aegis-boot/aegis-boot/issues/365) migration phase)
+
+Both repositories transferred under a dedicated `aegis-boot` GitHub organization. Old URLs 301-redirect (GitHub preserves for ≥1 year), but all 179 in-repo references + 129 CHANGELOG issue links swept to the new org path ([#394](https://github.com/aegis-boot/aegis-boot/pull/394)). The cosign keyless identity used by `release.yml` changes from `williamzujkowski/aegis-boot/...` to `aegis-boot/aegis-boot/...` — old-identity release signatures remain valid (hash-bound, not location-bound), and the rev-3 ADR 0002 identity-transition bridge (`.github/identity-transition.json` signed under the legacy identity pre-transfer) lets automated verifiers chain cryptographically.
+
+### Crates.io — 8 placeholders + team ownership + Trusted Publishing (ADR 0002)
+
+All 8 workspace + sibling crate names pre-registered as v0.0.0 placeholders to close the post-transfer squatter race: `aegis-boot`, `aegis-bootctl`, `aegis-wire-formats`, `aegis-fitness`, `aegis-hwsim`, `iso-parser`, `iso-probe`, `kexec-loader`. Each is co-owned by `williamzujkowski` + `github:aegis-boot:aegis-boot-admins`, so anyone in the admins team can publish.
+
+**Trusted Publishing** ([#395](https://github.com/aegis-boot/aegis-boot/pull/395)) replaces the long-lived `CARGO_REGISTRY_TOKEN`. The new `.github/workflows/crates-publish.yml` is tag-triggered, gated on the `release` GitHub environment (required-reviewer + `v*`-tag deployment policy), and uses `rust-lang/crates-io-auth-action@v1` to mint a ~30-minute OIDC token per release. No registry secret sits in GitHub org secrets, `pass`, or anywhere else.
+
+**Package rename**: `crates/aegis-cli/` publishes as `aegis-bootctl` on crates.io because the `aegis-cli` name was claimed by an unrelated Aegis Authenticator TOTP tool (v1.3.95). Directory path stays `crates/aegis-cli/` to preserve git history; the binary name is `aegis-boot` (via `[[bin]] name = "aegis-boot"`, independent of package name), so operators see zero change. Tracked in [#392](https://github.com/aegis-boot/aegis-boot/issues/392), landed via [#393](https://github.com/aegis-boot/aegis-boot/pull/393).
+
+### ADRs accepted
+
+- **0002 — Key Management** ([`docs/architecture/KEY_MANAGEMENT.md`](./docs/architecture/KEY_MANAGEMENT.md)). rev 3, **ACCEPTED at 83.3% supermajority** on [#366](https://github.com/aegis-boot/aegis-boot/issues/366). Ships minisign (Ed25519) as the operator-facing trust anchor for runtime-emitted signatures (attestation manifests + future #367 bundle manifests); keeps cosign keyless for release-artifact signing. One active key + historical-anchors list for forever-valid old-manifest verification. Monotonic **Key Epoch counter** with a binary-embedded `MIN_REQUIRED_EPOCH` floor closes the post-compromise rollback window on fresh installs. Quarterly rotation rehearsals keep the runbook exercised.
+- **0003 — Cross-reboot last-booted persistence** ([`docs/architecture/LAST_BOOTED_PERSISTENCE.md`](./docs/architecture/LAST_BOOTED_PERSISTENCE.md)) ([#379](https://github.com/aegis-boot/aegis-boot/pull/379)). PROPOSED. Closes the #132 spec-mismatch: rescue-tui's cursor should persist across reboots, but the shipped module writes to tmpfs. ADR scopes a two-stage `tmpfs → AEGIS_ISOS` migration.
+
+### Bug-report bundler — `aegis-boot bug-report` (closes [#342](https://github.com/aegis-boot/aegis-boot/issues/342))
+
+Three-phase incremental ship of an operator-facing bug-reporting workflow:
+
+- **Phase 1** ([#344](https://github.com/aegis-boot/aegis-boot/pull/344)) — workstation bundler subcommand collects a redacted host-state archive.
+- **Phase 2** ([#345](https://github.com/aegis-boot/aegis-boot/pull/345)) — rescue-tui writes Tier-A failure microreports onto the stick when a kexec fails.
+- **Phase 3a** ([#346](https://github.com/aegis-boot/aegis-boot/pull/346)) — `bug-report --include-stick` pulls those microreports back; exFAT filename fix.
+
+### CI + supply chain
+
+- **SPDX per-file license headers** ([#361](https://github.com/aegis-boot/aegis-boot/pull/361)). Every Rust + shell + YAML source file carries a machine-readable license tag.
+- **cargo-deny license allowlist** ([#362](https://github.com/aegis-boot/aegis-boot/pull/362)). CI fails any PR that introduces a transitive dep under a license not on the allowlist.
+- **NOTICE file** ([#363](https://github.com/aegis-boot/aegis-boot/pull/363)) — upstream-component attribution for the signed Secure Boot chain (shim, grub, distro kernel).
+- **miri UB detection on `kexec-loader`** ([#378](https://github.com/aegis-boot/aegis-boot/pull/378), closes [#364](https://github.com/aegis-boot/aegis-boot/issues/364)). Path-gated `.github/workflows/miri-kexec-loader.yml` runs `cargo +nightly miri test -p kexec-loader` whenever anything under `crates/kexec-loader/` changes. Covers stacked-borrows aliasing + lifetime bugs the normal compiler doesn't catch.
+- **crates.io publish-readiness dry-run workflow** ([#355](https://github.com/aegis-boot/aegis-boot/pull/355)). `cargo publish --dry-run` per library crate on every PR — catches metadata regressions (missing `version =` on path deps, bad category names, oversize `description`) before publish day.
+
+### Documentation + governance
+
+- **Doc-evergreen sweep** ([#384](https://github.com/aegis-boot/aegis-boot/pull/384)) — 14 files refreshed, `<!-- constants:BEGIN:NAME --><!-- constants:END:NAME -->` markers source live values from `crates/aegis-cli/src/constants.rs`, stale issue references re-pointed, dead flag references dropped.
+- **OPSEC scrub** ([#390](https://github.com/aegis-boot/aegis-boot/pull/390)) — public-facing docs no longer reference maintainer employment; technical constraints (no D-U-N-S, Individual Apple Developer enrollment tier) preserved.
+- **Quickstart README promotion** ([#359](https://github.com/aegis-boot/aegis-boot/pull/359)) — `aegis-boot quickstart` now the headlined fastest install.
+
+### Fixed
+
+- **Initramfs exfat modprobe** ([#373](https://github.com/aegis-boot/aegis-boot/pull/373), closes [#132](https://github.com/aegis-boot/aegis-boot/issues/132) external-user report) — rescue kernel now loads `exfat` + `nls_cp437` + `nls_iso8859-1` at init, so sticks formatted with the `exfatprogs` default (#243) actually mount on boot.
+- **`init --direct-install` arg forwarding** ([#376](https://github.com/aegis-boot/aegis-boot/pull/376)) — `quickstart` passes `--direct-install` through to `init` cleanly; previously the flag was silently dropped.
+
+### Not yet shipped (deferred to next milestones)
+
+- **Windows native release binary** — Phase B of [#365](https://github.com/aegis-boot/aegis-boot/issues/365). Drive enumeration + `Get-Disk` logic landed in earlier releases; raw-disk writing + code signing are the gates. Winget manifest scaffold ships in this release ([#370](https://github.com/aegis-boot/aegis-boot/pull/370)) but the real publish is Phase B.
+- **#181 Phase 2b (destructive executor)** — rotation planner ships; the executor that actually writes to the ESP is Phase 2b, gated on OVMF E2E validation of the full backup → stage → verify → rotate → rollback cycle.
+- **#367 Phase D (cross-platform bundle trust anchor)** — unblocked by ADR 0002 acceptance; implementation tracks post-v0.16.0.
+- **Real-hardware multi-vendor shakedown** — [#51](https://github.com/aegis-boot/aegis-boot/issues/51) v1.0.0 gate. QEMU + OVMF passes on every release; Framework / ThinkPad / Dell direct-boot reports are the v1.0.0 threshold.
+
 ## [0.15.0] — 2026-04-20
 
 Doc-automation milestone release. Closes epic [#286](https://github.com/aegis-boot/aegis-boot/issues/286) (7-phase auto-generation + drift-checks for every user-facing doc) and the operator-UX sweep umbrella [#310](https://github.com/aegis-boot/aegis-boot/issues/310). 12 committed JSON Schemas for every `aegis-boot --json` surface. First community hardware-compat submission surfaced four bugs, all fixed. New local cross-distro test harness. CI grew from 17 → 22 drift-checks.
