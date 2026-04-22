@@ -44,6 +44,7 @@ mod init_wizard;
 mod inventory;
 mod man;
 mod mounts;
+mod paths;
 mod plan;
 mod quickstart;
 mod readback;

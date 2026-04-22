@@ -536,20 +536,13 @@ fn read_attestation(path: &Path) -> Result<Attestation, String> {
 }
 
 fn data_dir() -> PathBuf {
-    // When running under sudo, prefer the original user's data dir
-    // rather than root's (/root/.local/share/...). Otherwise `aegis-
-    // boot flash` (run via sudo for dd) would write attestations to
-    // root's home, but `aegis-boot attest list` (run as the operator)
-    // would look under their own home and find nothing — see the
-    // companion `sudo_aware_data_dir` in update.rs::attestation_dir.
-    if let Some(sudo_data) = sudo_aware_data_dir() {
-        return sudo_data.join("aegis-boot");
-    }
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-        .unwrap_or_else(|| PathBuf::from("/tmp"));
-    base.join("aegis-boot")
+    // Delegates to the shared resolver (#375 Phase 1) so
+    // `AEGIS_STATE_DIR` override, sudo-aware `HOME` lookup, and the
+    // XDG/fallback chain live in exactly one place. Pre-refactor this
+    // function had its own copy of the lookup; the logic drifted from
+    // `update.rs::attestation_dir` over time and neither honored
+    // `AEGIS_STATE_DIR`. Phase 1 collapses the duplication.
+    crate::paths::aegis_state_root()
 }
 
 /// When the process runs under `sudo`, the kernel preserves

@@ -867,7 +867,7 @@ pub(crate) fn parse_partitions(sgdisk_out: &str) -> (bool, String) {
 /// Returns `None` if no match is found OR the attestations dir doesn't
 /// exist yet.
 fn find_attestation_by_guid(target_guid: &str) -> Option<PathBuf> {
-    let dir = attestation_dir()?;
+    let dir = attestation_dir();
     let entries = std::fs::read_dir(&dir).ok()?;
     for entry in entries.flatten() {
         let path = entry.path();
@@ -898,25 +898,15 @@ pub(crate) fn body_contains_guid(body: &str, target_guid: &str) -> bool {
     lower_body.contains(&needle)
 }
 
-/// Same resolution rules as `attest::attestation_dir()` — duplicated here
-/// to avoid exporting a new pub surface in attest.rs this PR. Kept
-/// `pub(crate)` so a future `mv` into attest.rs is a mechanical rename.
-///
-/// Sudo handling: when running as root with `SUDO_USER` set (the
-/// typical `sudo aegis-boot update` flow — sudo needed to read the
-/// raw block device), prefer the original user's data dir rather
-/// than root's. Otherwise update-via-sudo would never find the
-/// attestations that flash-via-sudo wrote under the same user's
-/// home — that's the exact bug this fix closes (caught 2026-04-18
-/// during real-stick testing of #181).
-pub(crate) fn attestation_dir() -> Option<PathBuf> {
-    if let Some(sudo_data) = crate::attest::sudo_aware_data_dir() {
-        return Some(sudo_data.join("aegis-boot").join("attestations"));
-    }
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
-    Some(base.join("aegis-boot").join("attestations"))
+/// Path to the attestations directory. Delegates to the shared
+/// resolver (#375 Phase 1) which honors `AEGIS_STATE_DIR`, sudo-aware
+/// `HOME` (so `sudo aegis-boot update` lands in the same dir
+/// `aegis-boot flash` wrote to), and the XDG/fallback chain — in one
+/// place, so the lookup can't drift between callers the way it did
+/// pre-refactor. Kept `pub(crate)` because this module has consumers
+/// that are easier to leave on the shim than rewire at call-sites.
+pub(crate) fn attestation_dir() -> PathBuf {
+    crate::paths::attestations_dir()
 }
 
 #[cfg(test)]
