@@ -45,7 +45,7 @@ use crate::detect::Drive;
 // consumers of the on-disk attestation JSON depend on
 // `aegis-wire-formats` directly with a JSON Schema pin.
 pub use aegis_wire_formats::{
-    Attestation, HostInfo, IsoRecord, TargetInfo, ATTESTATION_SCHEMA_VERSION as SCHEMA_VERSION,
+    ATTESTATION_SCHEMA_VERSION as SCHEMA_VERSION, Attestation, HostInfo, IsoRecord, TargetInfo,
 };
 
 /// One-line summary of the attestation matching a mounted stick. Used
@@ -314,7 +314,9 @@ fn print_help() {
     println!();
     println!("EXAMPLES:");
     println!("  aegis-boot attest list");
-    println!("  aegis-boot attest show ~/.local/share/aegis-boot/attestations/abc123-2026-04-16T12-34-56Z.json");
+    println!(
+        "  aegis-boot attest show ~/.local/share/aegis-boot/attestations/abc123-2026-04-16T12-34-56Z.json"
+    );
     println!("  aegis-boot attest list --json | jq '.attestations[].flashed_at'");
 }
 
@@ -744,6 +746,14 @@ fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
+    // Edition-2024 made std::env::set_var / remove_var unsafe; some
+    // tests in this module mutate process env to exercise the
+    // data_dir() resolution chain (XDG_DATA_HOME / HOME / sudo-aware
+    // fallbacks). The mutations are serialized via ENV_MUTEX, so the
+    // "not safe across threads" hazard the unsafe requirement is
+    // guarding against doesn't apply here. Scoped allow so the
+    // production-code unsafe_code = "deny" stays intact.
+    #![allow(unsafe_code)]
     use super::*;
 
     #[test]
@@ -817,12 +827,15 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let prev = std::env::var_os("XDG_DATA_HOME");
-        std::env::set_var("XDG_DATA_HOME", "/tmp/aegis-test-xdg-data");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("XDG_DATA_HOME", "/tmp/aegis-test-xdg-data") };
         let p = data_dir();
         assert_eq!(p, PathBuf::from("/tmp/aegis-test-xdg-data/aegis-boot"));
         match prev {
-            Some(v) => std::env::set_var("XDG_DATA_HOME", v),
-            None => std::env::remove_var("XDG_DATA_HOME"),
+            // TODO: Audit that the environment access only happens in single-threaded code.
+            Some(v) => unsafe { std::env::set_var("XDG_DATA_HOME", v) },
+            // TODO: Audit that the environment access only happens in single-threaded code.
+            None => unsafe { std::env::remove_var("XDG_DATA_HOME") },
         }
     }
 
@@ -833,20 +846,26 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let prev_xdg = std::env::var_os("XDG_DATA_HOME");
         let prev_home = std::env::var_os("HOME");
-        std::env::remove_var("XDG_DATA_HOME");
-        std::env::set_var("HOME", "/tmp/aegis-test-home2");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::remove_var("XDG_DATA_HOME") };
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("HOME", "/tmp/aegis-test-home2") };
         let p = data_dir();
         assert_eq!(
             p,
             PathBuf::from("/tmp/aegis-test-home2/.local/share/aegis-boot")
         );
         match prev_xdg {
-            Some(v) => std::env::set_var("XDG_DATA_HOME", v),
-            None => std::env::remove_var("XDG_DATA_HOME"),
+            // TODO: Audit that the environment access only happens in single-threaded code.
+            Some(v) => unsafe { std::env::set_var("XDG_DATA_HOME", v) },
+            // TODO: Audit that the environment access only happens in single-threaded code.
+            None => unsafe { std::env::remove_var("XDG_DATA_HOME") },
         }
         match prev_home {
-            Some(v) => std::env::set_var("HOME", v),
-            None => std::env::remove_var("HOME"),
+            // TODO: Audit that the environment access only happens in single-threaded code.
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            // TODO: Audit that the environment access only happens in single-threaded code.
+            None => unsafe { std::env::remove_var("HOME") },
         }
     }
 

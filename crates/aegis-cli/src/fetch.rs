@@ -29,7 +29,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use crate::catalog::{find_entry, Entry, SbStatus};
+use crate::catalog::{Entry, SbStatus, find_entry};
 
 /// Entry point for `aegis-boot fetch [--out DIR] [--no-gpg] <slug>`.
 pub fn run(args: &[String]) -> ExitCode {
@@ -504,6 +504,12 @@ fn print_success(entry: &Entry, dest: &Path, iso_filename: &str) {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
+    // Edition-2024 made std::env::set_var / remove_var unsafe; some
+    // tests mutate XDG_CACHE_HOME + HOME to exercise cache-dir
+    // resolution. Serialized via ENV_MUTEX, so the "not safe across
+    // threads" unsafety requirement doesn't apply. Scoped allow so
+    // production-code unsafe_code = "deny" stays intact.
+    #![allow(unsafe_code)]
     use super::*;
 
     #[test]
@@ -575,15 +581,18 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let prev_xdg = std::env::var_os("XDG_CACHE_HOME");
         // SAFETY: ENV_MUTEX serializes env-mutating tests in this module.
-        std::env::set_var("XDG_CACHE_HOME", "/tmp/aegis-test-xdg");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("XDG_CACHE_HOME", "/tmp/aegis-test-xdg") };
         let p = default_cache_dir("ubuntu-24.04-live-server");
         assert_eq!(
             p,
             PathBuf::from("/tmp/aegis-test-xdg/aegis-boot/ubuntu-24.04-live-server")
         );
         match prev_xdg {
-            Some(v) => std::env::set_var("XDG_CACHE_HOME", v),
-            None => std::env::remove_var("XDG_CACHE_HOME"),
+            // TODO: Audit that the environment access only happens in single-threaded code.
+            Some(v) => unsafe { std::env::set_var("XDG_CACHE_HOME", v) },
+            // TODO: Audit that the environment access only happens in single-threaded code.
+            None => unsafe { std::env::remove_var("XDG_CACHE_HOME") },
         }
     }
 
@@ -594,20 +603,26 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let prev_xdg = std::env::var_os("XDG_CACHE_HOME");
         let prev_home = std::env::var_os("HOME");
-        std::env::remove_var("XDG_CACHE_HOME");
-        std::env::set_var("HOME", "/tmp/aegis-test-home");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::remove_var("XDG_CACHE_HOME") };
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("HOME", "/tmp/aegis-test-home") };
         let p = default_cache_dir("alpine-3.20-standard");
         assert_eq!(
             p,
             PathBuf::from("/tmp/aegis-test-home/.cache/aegis-boot/alpine-3.20-standard")
         );
         match prev_xdg {
-            Some(v) => std::env::set_var("XDG_CACHE_HOME", v),
-            None => std::env::remove_var("XDG_CACHE_HOME"),
+            // TODO: Audit that the environment access only happens in single-threaded code.
+            Some(v) => unsafe { std::env::set_var("XDG_CACHE_HOME", v) },
+            // TODO: Audit that the environment access only happens in single-threaded code.
+            None => unsafe { std::env::remove_var("XDG_CACHE_HOME") },
         }
         match prev_home {
-            Some(v) => std::env::set_var("HOME", v),
-            None => std::env::remove_var("HOME"),
+            // TODO: Audit that the environment access only happens in single-threaded code.
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            // TODO: Audit that the environment access only happens in single-threaded code.
+            None => unsafe { std::env::remove_var("HOME") },
         }
     }
 }

@@ -1399,7 +1399,7 @@ mod tests {
 
     #[test]
     fn add_error_fat32_ceiling_renders_numbered_list_with_both_reflash_recipes() {
-        use crate::userfacing::{render_string, UserFacing};
+        use crate::userfacing::{UserFacing, render_string};
         let err = AddError::Fat32CeilingExceeded {
             detail: "Win11_25H2.iso is 7.9 GiB — exceeds FAT32's 4 GiB per-file ceiling. \
                      The AEGIS_ISOS partition is formatted as vfat, which cannot store \

@@ -4,14 +4,14 @@
 //! [`ratatui::backend::Backend`]. Tested with `TestBackend`.
 
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Gauge, List, ListItem, ListState, Paragraph, Wrap},
-    Frame,
 };
 
-use crate::state::{quirks_summary, AppState, Screen, SecureBootStatus};
+use crate::state::{AppState, Screen, SecureBootStatus, quirks_summary};
 use crate::theme::Theme;
 
 /// Render the current frame for the given state.
@@ -1220,8 +1220,8 @@ impl DistributionLabel for iso_probe::DiscoveredIso {
 mod tests {
     use super::*;
     use iso_probe::{Distribution, Quirk};
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
     use std::path::PathBuf;
 
     // ---- #274 Phase 6c: subfolder-prefix rendering ------------------------

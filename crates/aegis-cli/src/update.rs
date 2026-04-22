@@ -1104,7 +1104,7 @@ mod tests {
 
     #[test]
     fn update_error_ineligible_renders_structured_block_with_numbered_options() {
-        use crate::userfacing::{render_string, UserFacing};
+        use crate::userfacing::{UserFacing, render_string};
         let err = UpdateError::Ineligible {
             reason: "partition 2 label is \"\" — expected AEGIS_ISOS. \
                      This stick was not flashed by aegis-boot."

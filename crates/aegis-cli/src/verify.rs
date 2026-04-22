@@ -142,11 +142,7 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
 
     // Exit code: any Mismatch, Forged, or Unreadable is a fail. NotPresent
     // alone is OK — see module doc for the rationale.
-    if tally.any_failure() {
-        Err(1)
-    } else {
-        Ok(())
-    }
+    if tally.any_failure() { Err(1) } else { Ok(()) }
 }
 
 /// Empty-stick JSON envelope. Stable `schema_version=1`; every field

@@ -481,7 +481,9 @@ fn print_help() {
     println!();
     let current_ver = env!("CARGO_PKG_VERSION");
     println!("USAGE:");
-    println!("  aegis-boot fetch-image                               # latest release, cosign auto-verify");
+    println!(
+        "  aegis-boot fetch-image                               # latest release, cosign auto-verify"
+    );
     println!(
         "  aegis-boot fetch-image --version v{current_ver}             # pin to a specific release"
     );
@@ -713,9 +715,11 @@ mod tests {
             basename.starts_with("aegis-boot-abcdef01"),
             "got {basename}"
         );
-        assert!(std::path::Path::new(&basename)
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("img")));
+        assert!(
+            std::path::Path::new(&basename)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("img"))
+        );
     }
 
     #[test]

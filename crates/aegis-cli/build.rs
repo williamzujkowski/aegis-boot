@@ -46,11 +46,9 @@ fn main() {
              into the crate dir before packaging — see scripts/publish-if-new.sh."
         )
     });
-    let changelog_path = first_existing(&[
-        Path::new("../../CHANGELOG.md"),
-        Path::new("CHANGELOG.md"),
-    ])
-    .unwrap_or_else(|| PathBuf::from("../../CHANGELOG.md"));
+    let changelog_path =
+        first_existing(&[Path::new("../../CHANGELOG.md"), Path::new("CHANGELOG.md")])
+            .unwrap_or_else(|| PathBuf::from("../../CHANGELOG.md"));
     let out_dir = std::env::var_os("OUT_DIR").expect("OUT_DIR must be set by cargo");
     let out_path = Path::new(&out_dir).join("aegis-boot.1");
 

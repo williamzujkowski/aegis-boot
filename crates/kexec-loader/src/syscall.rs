@@ -8,7 +8,7 @@
 use std::ffi::CStr;
 use std::io;
 
-use crate::{classify_errno, KexecError};
+use crate::{KexecError, classify_errno};
 
 // From `<linux/kexec.h>`. Hard-coded rather than pulled from a crate so the
 // trusted-path surface has zero transitive dependencies.

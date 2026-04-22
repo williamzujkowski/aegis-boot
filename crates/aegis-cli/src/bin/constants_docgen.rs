@@ -357,8 +357,7 @@ mod tests {
 
     #[test]
     fn apply_markers_leaves_unknown_name_body_untouched() {
-        let input =
-            "<!-- constants:BEGIN:UNKNOWN_MARKER -->dont-touch<!-- constants:END:UNKNOWN_MARKER -->";
+        let input = "<!-- constants:BEGIN:UNKNOWN_MARKER -->dont-touch<!-- constants:END:UNKNOWN_MARKER -->";
         let (out, n) = apply_markers(input, &fixture_markers());
         assert_eq!(n, 0);
         assert_eq!(out, input, "unknown marker body should be preserved");

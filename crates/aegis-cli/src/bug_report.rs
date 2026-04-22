@@ -254,7 +254,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
                     other => {
                         return Err(format!(
                             "--format must be 'markdown' or 'json', got '{other}'"
-                        ))
+                        ));
                     }
                 });
             }
@@ -495,11 +495,7 @@ fn collect_storage() -> StorageSection {
             }
             acc.push_str(chunk.trim_end());
         }
-        if acc.is_empty() {
-            None
-        } else {
-            Some(acc)
-        }
+        if acc.is_empty() { None } else { Some(acc) }
     };
     StorageSection {
         removable_drives,

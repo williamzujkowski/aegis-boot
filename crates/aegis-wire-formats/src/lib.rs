@@ -1650,9 +1650,11 @@ mod tests {
                 source: "s".to_string(),
             },
         };
-        assert!(serde_json::to_string(&m)
-            .expect("ok")
-            .contains("\"verdict\":\"Mismatch\""));
+        assert!(
+            serde_json::to_string(&m)
+                .expect("ok")
+                .contains("\"verdict\":\"Mismatch\"")
+        );
 
         let u = VerifyEntry {
             name: "x".to_string(),
@@ -1661,17 +1663,21 @@ mod tests {
                 reason: "r".to_string(),
             },
         };
-        assert!(serde_json::to_string(&u)
-            .expect("ok")
-            .contains("\"verdict\":\"Unreadable\""));
+        assert!(
+            serde_json::to_string(&u)
+                .expect("ok")
+                .contains("\"verdict\":\"Unreadable\"")
+        );
 
         let n = VerifyEntry {
             name: "x".to_string(),
             verdict: VerifyVerdict::NotPresent,
         };
-        assert!(serde_json::to_string(&n)
-            .expect("ok")
-            .contains("\"verdict\":\"NotPresent\""));
+        assert!(
+            serde_json::to_string(&n)
+                .expect("ok")
+                .contains("\"verdict\":\"NotPresent\"")
+        );
     }
 
     fn sample_update_eligible() -> UpdateReport {

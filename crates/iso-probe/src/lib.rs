@@ -39,12 +39,12 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 pub use iso_parser::{BootEntry, Distribution, IsoError};
-pub use minisign::{verify_iso_signature, SignatureVerification};
+pub use minisign::{SignatureVerification, verify_iso_signature};
 pub use sidecar::{
-    load_sidecar, sidecar_path_for, to_toml as sidecar_to_toml, write_sidecar, IsoSidecar,
-    SidecarError,
+    IsoSidecar, SidecarError, load_sidecar, sidecar_path_for, to_toml as sidecar_to_toml,
+    write_sidecar,
 };
-pub use signature::{verify_iso_hash, verify_iso_hash_with_progress, HashVerification};
+pub use signature::{HashVerification, verify_iso_hash, verify_iso_hash_with_progress};
 
 /// Metadata for a single discovered ISO. Paths are relative to the (now
 /// unmounted) ISO root and become absolute once handed to [`prepare`].

@@ -27,7 +27,7 @@
 
 use std::path::{Path, PathBuf};
 
-use aegis_wire_formats::{FailureMicroreport, FAILURE_MICROREPORT_SCHEMA_VERSION};
+use aegis_wire_formats::{FAILURE_MICROREPORT_SCHEMA_VERSION, FailureMicroreport};
 use sha2::{Digest, Sha256};
 
 /// Tmpfs root where microreports land during a failure-in-flight.
@@ -464,19 +464,22 @@ mod tests {
 
         // Both json files should now be in dst, the txt file should
         // still be in src.
-        assert!(dst
-            .path()
-            .join("2026-04-20T12:00:00Z-abc123.json")
-            .is_file());
-        assert!(dst
-            .path()
-            .join("2026-04-20T12:05:00Z-def456.json")
-            .is_file());
+        assert!(
+            dst.path()
+                .join("2026-04-20T12:00:00Z-abc123.json")
+                .is_file()
+        );
+        assert!(
+            dst.path()
+                .join("2026-04-20T12:05:00Z-def456.json")
+                .is_file()
+        );
         assert!(src.path().join("unrelated.txt").is_file());
-        assert!(!src
-            .path()
-            .join("2026-04-20T12:00:00Z-abc123.json")
-            .is_file());
+        assert!(
+            !src.path()
+                .join("2026-04-20T12:00:00Z-abc123.json")
+                .is_file()
+        );
     }
 
     #[test]

@@ -1521,9 +1521,11 @@ mod tests {
         // Should find at least the Arch entry (might also find via other layouts that scan /boot)
         assert!(!entries.is_empty());
         assert!(entries.iter().any(|e| e.distribution == Distribution::Arch));
-        assert!(entries
-            .iter()
-            .any(|e| e.kernel.to_string_lossy().contains("vmlinuz")));
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.kernel.to_string_lossy().contains("vmlinuz"))
+        );
     }
 
     #[tokio::test]
@@ -1538,9 +1540,11 @@ mod tests {
             .unwrap();
 
         assert!(!entries.is_empty());
-        assert!(entries
-            .iter()
-            .any(|e| e.distribution == Distribution::Debian));
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.distribution == Distribution::Debian)
+        );
     }
 
     #[tokio::test]
@@ -1555,9 +1559,11 @@ mod tests {
             .unwrap();
 
         assert!(!entries.is_empty());
-        assert!(entries
-            .iter()
-            .any(|e| e.distribution == Distribution::Fedora));
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.distribution == Distribution::Fedora)
+        );
     }
 
     #[test]

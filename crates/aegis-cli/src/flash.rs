@@ -603,8 +603,8 @@ fn flash_direct_install(drive: &Drive, out_dir: &Path) -> Result<(), FlashError>
     // as part of the stage-5 grouping for #352 UX-3; the import stays
     // scoped there.
     use crate::direct_install::{
-        format_data_partition, format_esp, partition_stick, render_grub_cfg, stage_esp,
-        EspStagingSources,
+        EspStagingSources, format_data_partition, format_esp, partition_stick, render_grub_cfg,
+        stage_esp,
     };
 
     // #352 UX-2: pre-flight deps gate. Runs BEFORE any destructive
@@ -731,8 +731,8 @@ fn write_manifest_stage(
     work_dir: &Path,
 ) -> Result<(), FlashError> {
     use crate::direct_install_manifest::{
-        build_manifest, compute_esp_file_hashes, read_device_identity, serialize_manifest,
-        MANIFEST_ESP_PATH, MANIFEST_SIG_ESP_PATH,
+        MANIFEST_ESP_PATH, MANIFEST_SIG_ESP_PATH, build_manifest, compute_esp_file_hashes,
+        read_device_identity, serialize_manifest,
     };
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1795,7 +1795,9 @@ pub(crate) enum FlashError {
     /// reachable) without `--image`, so there's no source for the
     /// image. #282. Carries the target device path so suggestions
     /// can be rendered with the exact `/dev/sdX` interpolation.
-    #[error("no image source available (not in a repo checkout and --image not supplied) for device {0}")]
+    #[error(
+        "no image source available (not in a repo checkout and --image not supplied) for device {0}"
+    )]
     NoImageSource(String),
     /// Direct-install pipeline (#274 Phase 3) failed at a specific
     /// stage. The typed `stage` lets test assertions and operator
@@ -2017,7 +2019,7 @@ impl crate::userfacing::UserFacing for FlashError {
 /// comparison. No sudo needed — the image is a regular file the
 /// operator owns.
 fn precompute_image_prefix_hash(img_path: &Path) -> Result<String, String> {
-    use crate::readback::{sha256_of_first_bytes, DEFAULT_READBACK_BYTES};
+    use crate::readback::{DEFAULT_READBACK_BYTES, sha256_of_first_bytes};
     let mut f =
         std::fs::File::open(img_path).map_err(|e| format!("open {}: {e}", img_path.display()))?;
     let (hex, consumed) = sha256_of_first_bytes(&mut f, DEFAULT_READBACK_BYTES)
@@ -2036,7 +2038,7 @@ fn precompute_image_prefix_hash(img_path: &Path) -> Result<String, String> {
 /// to read since the device is root-owned; the dd output is held in
 /// memory (~64 MB) and hashed in-process via `sha256_of_first_bytes`.
 fn readback_verify_device(device: &Path, expected_hex: &str) -> Result<(), String> {
-    use crate::readback::{sha256_of_first_bytes, DEFAULT_READBACK_BYTES};
+    use crate::readback::{DEFAULT_READBACK_BYTES, sha256_of_first_bytes};
     println!(
         "Reading back first {} MB of {} for verification...",
         DEFAULT_READBACK_BYTES / 1024 / 1024,

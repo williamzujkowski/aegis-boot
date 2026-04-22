@@ -22,7 +22,16 @@
 //! manually. The binary is named `aegis-boot` so operators type
 //! `aegis-boot flash /dev/sdX` etc.
 
-#![forbid(unsafe_code)]
+// Workspace-level `unsafe_code = "deny"` (Cargo.toml [workspace.lints])
+// already denies `unsafe` everywhere. Binary-level `#![forbid]` was
+// previously redundant AND hostile to narrow test-only allowlists —
+// edition 2024 made `std::env::set_var` + `remove_var` unsafe, and
+// the existing env-mutating tests in `attest.rs` + `fetch.rs`
+// legitimately need to poke process env. Downgrading `forbid` → `deny`
+// lets those specific test-site `#[allow(unsafe_code)]` tags compile
+// while keeping production-path `unsafe` denied. No new unsafe blocks
+// are introduced in non-test code.
+#![deny(unsafe_code)]
 
 mod attest;
 mod bug_report;

@@ -388,7 +388,9 @@ fn report_my_machine_miss(json_mode: bool) -> Result<(), u8> {
         eprintln!(
             "  On Linux, verify /sys/class/dmi/id/ has populated sys_vendor and product_name."
         );
-        eprintln!("  On non-Linux hosts, this flag is not supported — use `aegis-boot compat <query>` instead.");
+        eprintln!(
+            "  On non-Linux hosts, this flag is not supported — use `aegis-boot compat <query>` instead."
+        );
     }
     Err(2)
 }

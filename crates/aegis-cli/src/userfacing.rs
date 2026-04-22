@@ -93,10 +93,10 @@ pub trait UserFacing: std::error::Error {
 ///
 /// Returns the underlying formatter error if writing fails.
 #[allow(dead_code)] // Sibling of `render_string`. No `Display` impl uses
-                    // this yet; kept so the two render paths stay in
-                    // sync via the `display_via_render_matches_render_string`
-                    // test and become importable when `Display` integration
-                    // appears on an error wrapper.
+// this yet; kept so the two render paths stay in
+// sync via the `display_via_render_matches_render_string`
+// test and become importable when `Display` integration
+// appears on an error wrapper.
 pub fn render(err: &dyn UserFacing, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     if let Some(code) = err.code() {
         writeln!(f, "error[{code}]: {}", err.summary())?;
