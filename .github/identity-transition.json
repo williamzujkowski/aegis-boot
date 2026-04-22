@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "statement": "Authorization of successor cosign identity on repository transfer",
+  "predecessor": {
+    "github_owner": "williamzujkowski",
+    "repo": "aegis-boot",
+    "cosign_identity_regexp": "^https://github\\.com/williamzujkowski/aegis-boot/\\.github/workflows/release\\.yml@refs/tags/v.+$"
+  },
+  "successor": {
+    "github_org": "aegis-boot",
+    "repo": "aegis-boot",
+    "cosign_identity_regexp": "^https://github\\.com/aegis-boot/aegis-boot/\\.github/workflows/release\\.yml@refs/tags/v.+$"
+  },
+  "transition_date": "2026-04-22",
+  "rationale": "Repository transferred from williamzujkowski/aegis-boot to aegis-boot/aegis-boot to stand under a dedicated org. See docs/governance/ORG_MIGRATION_PLAN.md. Old-identity signatures on pre-transfer releases remain valid (signatures are hash-bound, not location-bound)."
+}

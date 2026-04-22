@@ -17,14 +17,15 @@
 | GitHub org | `Aegisub` | exists (unrelated) | subtitle editor, different domain |
 | GitHub org | `aegis-aead` | exists (unrelated) | AEAD cipher library, different domain |
 | GitHub org | `aegiswp` | exists (unrelated) | WordPress plugin, different domain |
-| crates.io | `aegis-boot` | **AVAILABLE** | |
-| crates.io | `aegis-cli` | **AVAILABLE** | |
-| crates.io | `aegis-wire-formats` | **AVAILABLE** | |
-| crates.io | `aegis-fitness` | **AVAILABLE** | |
-| crates.io | `aegis-hwsim` | **AVAILABLE** | |
-| crates.io | `iso-parser` | **AVAILABLE** | |
-| crates.io | `iso-probe` | **AVAILABLE** | |
-| crates.io | `kexec-loader` | **AVAILABLE** | |
+| crates.io | `aegis-boot` | **CLAIMED** (ours, v0.0.0 placeholder 2026-04-22) | |
+| crates.io | `aegis-cli` | **TAKEN** (unrelated project — Aegis Authenticator TOTP tool, v1.3.95) | Our workspace CLI will rename to `aegis-bootctl` — tracked in #392 |
+| crates.io | `aegis-bootctl` | **CLAIMED** (ours, v0.0.0 placeholder 2026-04-22) | Successor name for our operator CLI package |
+| crates.io | `aegis-wire-formats` | **CLAIMED** (ours, v0.0.0 placeholder 2026-04-22) | |
+| crates.io | `aegis-fitness` | **CLAIMED** (ours, v0.0.0 placeholder 2026-04-22) | |
+| crates.io | `aegis-hwsim` | **CLAIMED** (ours, v0.0.0 placeholder 2026-04-22) | |
+| crates.io | `iso-parser` | **CLAIMED** (ours, v0.0.0 placeholder 2026-04-22) | |
+| crates.io | `iso-probe` | CLAIMED (pending — rate-limited on first attempt; retry scheduled) | |
+| crates.io | `kexec-loader` | CLAIMED (pending — rate-limited on first attempt; retry scheduled) | |
 | Docker Hub | `aegis-boot` | AVAILABLE | not actively used by this project |
 | npm | `aegis-boot` | AVAILABLE | not actively used (no JS surface) |
 | npm | `aegis-cli` | **TAKEN** (unrelated) | "editorconfig for AI agents"; no collision — we don't publish JS |
