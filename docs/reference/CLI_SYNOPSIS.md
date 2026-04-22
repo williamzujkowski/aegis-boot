@@ -19,11 +19,17 @@ cargo run -p aegis-cli --bin cli-docgen --features docgen -- --write
 aegis-boot add — copy an ISO onto the stick with verification
 
 USAGE: aegis-boot add <iso-file-or-catalog-slug> [/dev/sdX | /mnt/aegis-isos]
+                  [--folder NAME]
                   [--description TEXT] [--version VER] [--category CAT]
 
 If the first arg is NOT a file on disk but IS a known catalog slug
 (e.g. 'ubuntu-24.04-live-server'), add fetches + verifies it first,
 then stages the cached copy — collapses 'fetch X && add <path>' (#352).
+
+--folder NAME places the ISO + sidecars under AEGIS_ISOS/NAME/ instead
+of the root. list + rescue-tui handle both layouts transparently (#274
+Phase 6a). Name must be a single path segment (no '/', no '..', no
+leading '.', no whitespace, ≤64 bytes, no exFAT-reserved chars).
 
 Optional sidecar metadata (#246) is written next to the ISO as
 <iso>.aegis.toml so rescue-tui can show 'Network-install Debian 12'

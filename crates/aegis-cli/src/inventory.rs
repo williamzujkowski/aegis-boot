@@ -177,6 +177,7 @@ pub(crate) fn try_run_add(args: &[String]) -> Result<(), u8> {
         description,
         version,
         category,
+        folder,
     } = parse_add_args(args)?;
 
     // #352 UX-4: if the positional arg is a catalog slug (not a real
@@ -234,8 +235,19 @@ pub(crate) fn try_run_add(args: &[String]) -> Result<(), u8> {
         _ => {}
     }
 
+    let dest_dir = match resolve_add_dest_dir(&mount.path, folder.as_deref()) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("aegis-boot add: {e}");
+            if mount.temporary {
+                unmount_temp(&mount);
+            }
+            return Err(1);
+        }
+    };
+
     // Copy the ISO + any sidecars.
-    let dest = mount.path.join(iso_filename);
+    let dest = dest_dir.join(iso_filename);
     println!("  Copying {iso_filename}...");
     if let Err(e) = copy_with_sudo(&iso_arg, &dest) {
         eprintln!("aegis-boot add: copy failed: {e}");
@@ -245,10 +257,10 @@ pub(crate) fn try_run_add(args: &[String]) -> Result<(), u8> {
         return Err(1);
     }
 
-    let mut sidecars_copied = copy_classic_sidecars(&iso_arg, iso_filename, &mount.path);
+    let mut sidecars_copied = copy_classic_sidecars(&iso_arg, iso_filename, &dest_dir);
 
     maybe_write_aegis_sidecar(
-        &mount.path,
+        &dest_dir,
         iso_filename,
         AegisSidecarFlags {
             description,
@@ -269,10 +281,20 @@ pub(crate) fn try_run_add(args: &[String]) -> Result<(), u8> {
         println!("show GRAY (no verification) verdict and require typed 'boot' confirmation.");
     }
 
-    // Append to the matching attestation receipt — best-effort. Failure
-    // here doesn't fail the add (the ISO is on the stick regardless);
-    // we just print a warning.
-    match crate::attest::record_iso_added(&mount.path, &iso_arg, sidecars_copied) {
+    record_add_attestation(&mount.path, &iso_arg, sidecars_copied);
+
+    if mount.temporary {
+        unmount_temp(&mount);
+    }
+    Ok(())
+}
+
+/// Append the just-added ISO to the matching attestation receipt.
+/// Best-effort: failure logs a warning + returns Ok — the ISO is
+/// already on the stick regardless. Extracted so `try_run_add` stays
+/// under the 100-line budget.
+fn record_add_attestation(mount: &Path, iso_src: &Path, sidecars_copied: Vec<String>) {
+    match crate::attest::record_iso_added(mount, iso_src, sidecars_copied) {
         Ok(att_path) => {
             println!();
             println!("Attestation updated: {}", att_path.display());
@@ -283,11 +305,6 @@ pub(crate) fn try_run_add(args: &[String]) -> Result<(), u8> {
             eprintln!("(the ISO is still on the stick; this is a host-side audit-trail miss)");
         }
     }
-
-    if mount.temporary {
-        unmount_temp(&mount);
-    }
-    Ok(())
 }
 
 // ---- helpers ---------------------------------------------------------------
@@ -463,6 +480,12 @@ struct AddArgs {
     description: Option<String>,
     version: Option<String>,
     category: Option<String>,
+    /// #274 Phase 6b: place the ISO + sidecars in a subfolder under
+    /// `AEGIS_ISOS/<folder>/` instead of at the mount root. Matched
+    /// by the recursive `scan_isos` from Phase 6a so `list` renders
+    /// it correctly. Validated by [`validate_folder_name`] to reject
+    /// path-traversal / reserved-char / exFAT-unsafe input.
+    folder: Option<String>,
 }
 
 /// Parse the argv tail of `aegis-boot add`. Recognizes positional
@@ -476,6 +499,7 @@ fn parse_add_args(args: &[String]) -> Result<AddArgs, u8> {
     let mut description: Option<String> = None;
     let mut version: Option<String> = None;
     let mut category: Option<String> = None;
+    let mut folder: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
         let a = &args[i];
@@ -513,6 +537,17 @@ fn parse_add_args(args: &[String]) -> Result<AddArgs, u8> {
             s if s.starts_with("--category=") => {
                 category = Some(s["--category=".len()..].to_string());
             }
+            "--folder" => {
+                i += 1;
+                let Some(v) = args.get(i) else {
+                    eprintln!("aegis-boot add: --folder requires a value");
+                    return Err(2);
+                };
+                folder = Some(v.clone());
+            }
+            s if s.starts_with("--folder=") => {
+                folder = Some(s["--folder=".len()..].to_string());
+            }
             s if s.starts_with("--") => {
                 eprintln!("aegis-boot add: unknown option '{s}'");
                 return Err(2);
@@ -534,13 +569,62 @@ fn parse_add_args(args: &[String]) -> Result<AddArgs, u8> {
         eprintln!("aegis-boot add: missing required <iso-file> argument");
         return Err(2);
     };
+    if let Some(ref f) = folder {
+        if let Err(reason) = validate_folder_name(f) {
+            eprintln!("aegis-boot add: --folder {f:?}: {reason}");
+            return Err(2);
+        }
+    }
     Ok(AddArgs {
         iso_path,
         mount_arg,
         description,
         version,
         category,
+        folder,
     })
+}
+
+/// #274 Phase 6b: validate a `--folder` argument. Returns `Err` with a
+/// specific reason string on any rejection. Accept ONLY names that are
+/// safe on exFAT (the `AEGIS_ISOS` filesystem) AND match the slug-ish
+/// shape that Phase 6a's recursive `scan_isos` will read back.
+///
+/// Rules (must ALL pass):
+/// - Non-empty
+/// - No path separator (`/`, `\\`) — prevents nested paths and traversal
+/// - No `..` — belt-and-suspenders against traversal
+/// - No leading dot — matches Phase 6a's dot-prefix skip
+/// - No whitespace — cross-OS filesystem pain
+/// - No exFAT-reserved characters: `< > : " | ? *` (and the null byte,
+///   though that's unreachable from a shell argv in practice)
+/// - ≤ 64 bytes (exFAT allows 255-char filenames but operator folder
+///   names over 64 chars are almost always a mistake; shorter = safer)
+fn validate_folder_name(name: &str) -> Result<(), &'static str> {
+    if name.is_empty() {
+        return Err("folder name is empty");
+    }
+    if name.len() > 64 {
+        return Err("folder name exceeds 64 bytes");
+    }
+    if name.starts_with('.') {
+        return Err("folder name must not start with '.'");
+    }
+    for c in name.chars() {
+        if c == '/' || c == '\\' {
+            return Err("folder name must not contain a path separator");
+        }
+        if c.is_whitespace() {
+            return Err("folder name must not contain whitespace");
+        }
+        if matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*' | '\0') {
+            return Err("folder name must not contain any of: < > : \" | ? *");
+        }
+    }
+    if name == ".." || name.contains("..") {
+        return Err("folder name must not contain '..'");
+    }
+    Ok(())
 }
 
 /// Copy any sibling `.sha256`, `.SHA256SUMS`, and `.minisig` files that
@@ -567,11 +651,17 @@ fn print_add_help() {
     println!("aegis-boot add — copy an ISO onto the stick with verification");
     println!();
     println!("USAGE: aegis-boot add <iso-file-or-catalog-slug> [/dev/sdX | /mnt/aegis-isos]");
+    println!("                  [--folder NAME]");
     println!("                  [--description TEXT] [--version VER] [--category CAT]");
     println!();
     println!("If the first arg is NOT a file on disk but IS a known catalog slug");
     println!("(e.g. 'ubuntu-24.04-live-server'), add fetches + verifies it first,");
     println!("then stages the cached copy — collapses 'fetch X && add <path>' (#352).");
+    println!();
+    println!("--folder NAME places the ISO + sidecars under AEGIS_ISOS/NAME/ instead");
+    println!("of the root. list + rescue-tui handle both layouts transparently (#274");
+    println!("Phase 6a). Name must be a single path segment (no '/', no '..', no");
+    println!("leading '.', no whitespace, ≤64 bytes, no exFAT-reserved chars).");
     println!();
     println!("Optional sidecar metadata (#246) is written next to the ISO as");
     println!("<iso>.aegis.toml so rescue-tui can show 'Network-install Debian 12'");
@@ -837,6 +927,38 @@ fn copy_with_sudo(src: &Path, dest: &Path) -> Result<(), String> {
         ])
         .output()
         .map_err(|e| format!("cp exec: {e}"))?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    Ok(())
+}
+
+/// #274 Phase 6b — compute the destination dir for an add operation.
+/// When `folder` is `Some`, target `mount/<folder>/` and create it via
+/// sudo if absent; flat layout (no `--folder`) returns `mount` itself.
+/// Split out so `try_run_add` stays under the 100-line budget.
+fn resolve_add_dest_dir(mount: &Path, folder: Option<&str>) -> Result<PathBuf, String> {
+    let Some(f) = folder else {
+        return Ok(mount.to_path_buf());
+    };
+    let subdir = mount.join(f);
+    if !subdir.exists() {
+        println!("  Creating folder {f}/ under {}...", mount.display());
+        mkdir_with_sudo(&subdir)
+            .map_err(|e| format!("mkdir -p {} failed: {e}", subdir.display()))?;
+    }
+    Ok(subdir)
+}
+
+/// #274 Phase 6b helper — `mkdir -p <dir>` via sudo because `AEGIS_ISOS`
+/// is typically root-owned on a freshly-flashed stick. Mirrors the
+/// error-propagation shape of [`copy_with_sudo`] so both destructive
+/// operations look the same to the caller.
+fn mkdir_with_sudo(dir: &Path) -> Result<(), String> {
+    let out = Command::new("sudo")
+        .args(["mkdir", "-p", &dir.display().to_string()])
+        .output()
+        .map_err(|e| format!("mkdir exec: {e}"))?;
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }
@@ -1125,6 +1247,83 @@ mod tests {
     fn parse_add_args_rejects_unknown_flag() {
         let err = parse_add_args(&[s("debian.iso"), s("--bogus")]).unwrap_err();
         assert_eq!(err, 2);
+    }
+
+    // ---- #274 Phase 6b: --folder flag -------------------------------------
+
+    #[test]
+    fn parse_add_args_recognises_folder_both_forms() {
+        let a = parse_add_args(&[s("debian.iso"), s("--folder"), s("debian-12")]).unwrap();
+        assert_eq!(a.folder.as_deref(), Some("debian-12"));
+        let b = parse_add_args(&[s("debian.iso"), s("--folder=debian-12")]).unwrap();
+        assert_eq!(b.folder.as_deref(), Some("debian-12"));
+    }
+
+    #[test]
+    fn parse_add_args_rejects_dangling_folder_flag() {
+        let err = parse_add_args(&[s("debian.iso"), s("--folder")]).unwrap_err();
+        assert_eq!(err, 2);
+    }
+
+    #[test]
+    fn parse_add_args_rejects_unsafe_folder_name() {
+        // Path traversal — explicit .. must fail at argv-parse time.
+        let err = parse_add_args(&[s("debian.iso"), s("--folder=../evil")]).unwrap_err();
+        assert_eq!(err, 2);
+        // Path separator — multi-segment path must fail.
+        let err = parse_add_args(&[s("debian.iso"), s("--folder=a/b")]).unwrap_err();
+        assert_eq!(err, 2);
+        // Leading dot — matches Phase 6a's skip rule.
+        let err = parse_add_args(&[s("debian.iso"), s("--folder=.hidden")]).unwrap_err();
+        assert_eq!(err, 2);
+        // Whitespace — cross-OS FS pain.
+        let err = parse_add_args(&[s("debian.iso"), s("--folder=has space")]).unwrap_err();
+        assert_eq!(err, 2);
+        // exFAT-reserved colon.
+        let err = parse_add_args(&[s("debian.iso"), s("--folder=win:bad")]).unwrap_err();
+        assert_eq!(err, 2);
+    }
+
+    #[test]
+    fn validate_folder_name_accepts_reasonable_names() {
+        for good in [
+            "ubuntu-24.04",
+            "ubuntu24",
+            "debian-12-network",
+            "alpine-3.20-standard",
+            "a",
+            "numbers-123-and-dashes",
+        ] {
+            assert!(validate_folder_name(good).is_ok(), "should accept {good:?}");
+        }
+    }
+
+    #[test]
+    fn validate_folder_name_rejects_explicit_cases() {
+        for (bad, _why) in [
+            ("", "empty"),
+            ("..", "literal dot-dot"),
+            ("a..b", "embedded dot-dot"),
+            (".hidden", "leading dot"),
+            ("/absolute", "leading slash"),
+            ("sub/path", "internal slash"),
+            ("win\\path", "backslash"),
+            ("has space", "whitespace"),
+            ("win:bad", "colon"),
+            ("win|bad", "pipe"),
+            ("win?bad", "question mark"),
+            ("win*bad", "asterisk"),
+            ("win\"bad", "double quote"),
+            ("win<bad", "less-than"),
+            ("win>bad", "greater-than"),
+        ] {
+            assert!(validate_folder_name(bad).is_err(), "should reject {bad:?}");
+        }
+        // Length cap.
+        let too_long = "a".repeat(65);
+        assert!(validate_folder_name(&too_long).is_err());
+        let exactly_64 = "a".repeat(64);
+        assert!(validate_folder_name(&exactly_64).is_ok(), "64 is the cap");
     }
 
     #[test]
