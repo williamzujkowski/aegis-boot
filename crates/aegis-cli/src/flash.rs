@@ -762,7 +762,53 @@ fn write_manifest_stage(
     if let Some(sig_path) = sign_manifest_if_configured(&body, work_dir, stage_err)? {
         mcopy_to_esp(part1_dev, &sig_path, MANIFEST_SIG_ESP_PATH)?;
     }
+
+    // Also mirror the manifest to the host-side attestations store so
+    // `aegis-boot update` can find it via disk_guid lookup (#428). The
+    // ESP-side write above is the canonical record; the host-side copy
+    // is a convenience index. A failure here is logged but must NOT
+    // abort the flash — the ESP copy is the source of truth.
+    if let Err(e) = write_host_side_attestation(&body, &manifest.device.disk_guid) {
+        eprintln!("warning: host-side attestation mirror failed: {e}");
+        eprintln!(
+            "(the ESP manifest is still in place; `aegis-boot update` may not find this stick until the mirror succeeds on a re-flash)"
+        );
+    }
+
     Ok(())
+}
+
+/// Write a copy of the direct-install manifest to the host-side
+/// attestations store so `aegis-boot update`'s disk-GUID lookup in
+/// `~/.local/share/aegis-boot/attestations/` finds this stick. Filename
+/// mirrors the legacy `attest::record_flash` pattern:
+/// `<disk-guid>-<ts>.json`.
+///
+/// Failure here is surfaced to the caller as a warning — the ESP
+/// manifest is authoritative; this is a convenience index for update.
+/// See issue #428 for the gap this closes.
+#[cfg(target_os = "linux")]
+fn write_host_side_attestation(body: &[u8], disk_guid: &str) -> Result<PathBuf, String> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let dest_dir = crate::paths::aegis_state_root().join("attestations");
+    std::fs::create_dir_all(&dest_dir)
+        .map_err(|e| format!("create {}: {e}", dest_dir.display()))?;
+
+    // Sortable epoch-second timestamp; bakes uniqueness across rapid
+    // re-flashes without needing a UUID generator.
+    let ts_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(1);
+    let id = if disk_guid.is_empty() {
+        "unknown".to_string()
+    } else {
+        disk_guid.to_lowercase()
+    };
+    let dest = dest_dir.join(format!("{id}-{ts_secs}.json"));
+    std::fs::write(&dest, body).map_err(|e| format!("write {}: {e}", dest.display()))?;
+    Ok(dest)
 }
 
 /// Load the signing key from `AEGIS_BOOT_SIGNING_KEY` (if set), sign
