@@ -495,9 +495,10 @@ fn status_glyph(iso: &iso_probe::DiscoveredIso) -> &'static str {
 }
 
 fn draw_help_overlay(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
-    // Center a 60x18 panel.
-    let w = area.width.min(70);
-    let h = area.height.min(20);
+    // Centered panel. Grew from 70x20 to 80x32 when the SysRq
+    // cheatsheet expanded to the full REISUB sequence (#93).
+    let w = area.width.min(80);
+    let h = area.height.min(32);
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
     let panel = Rect::new(x, y, w, h);
@@ -533,9 +534,13 @@ fn draw_help_overlay(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         Line::from("   default · monochrome · high-contrast · okabe-ito · aegis"),
         Line::from(""),
         Line::from(" Emergency escape hatches (kernel SysRq)"),
-        Line::from("   Alt+SysRq+b   reboot now"),
+        Line::from("   REISUB = safe forced reboot; hit each slowly, in order."),
+        Line::from("   Alt+SysRq+r   raw keyboard mode (reclaim from X/Wayland)"),
+        Line::from("   Alt+SysRq+e   SIGTERM all processes except init"),
+        Line::from("   Alt+SysRq+i   SIGKILL all processes except init"),
         Line::from("   Alt+SysRq+s   sync disks"),
-        Line::from("   Alt+SysRq+e   SIGTERM all userspace"),
+        Line::from("   Alt+SysRq+u   remount all filesystems readonly"),
+        Line::from("   Alt+SysRq+b   reboot now"),
         Line::from(""),
         Line::from(Span::styled(
             " Esc or ? to dismiss",
