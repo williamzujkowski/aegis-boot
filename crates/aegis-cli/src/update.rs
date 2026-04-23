@@ -352,12 +352,87 @@ fn resolve_host_chain() -> Vec<HostChainEntry> {
     ));
     let (kernel_path, kernel_ver) = find_kernel();
     out.push(resolve_one("kernel", kernel_path.clone()));
-    let initrd_path = match kernel_ver {
+    let distro_initrd_path = match kernel_ver {
         Some(v) => PathBuf::from(format!("/boot/initrd.img-{v}")),
         None => PathBuf::from("/boot/initrd.img-*"),
     };
-    out.push(resolve_one("initrd", initrd_path));
+    out.push(resolve_combined_initrd(&distro_initrd_path));
     out
+}
+
+/// Resolve the `initrd` host-chain entry to the hash of the **combined**
+/// initrd that direct-install would mcopy onto the stick's `/initrd.img`.
+///
+/// Per #430: the stick carries a combined initrd (distro initrd + aegis-
+/// boot initramfs, concatenated), not the raw distro initrd. Comparing
+/// the stick's `/initrd.img` sha256 to the distro initrd's sha256 always
+/// reports false-positive drift. Here we synthesize the combined initrd
+/// via `direct_install::combine_initrd` into a tempfile, hash that, and
+/// discard — gives `update`'s diff the same ground truth that
+/// `flash --direct-install` would actually write.
+///
+/// If either input is missing, return an UNKNOWN row with a specific
+/// next-step message rather than silently falling back to the distro
+/// hash (that's the bug we're fixing). Operators see "run
+/// scripts/build-initramfs.sh first" instead of a quiet wrong answer.
+fn resolve_combined_initrd(distro_initrd_path: &Path) -> HostChainEntry {
+    let aegis_initrd_path = PathBuf::from("out/initramfs.cpio.gz");
+    // Synthetic display label — the combined initrd is built at query
+    // time into a tempfile that's gone by the time we return. Anyone
+    // trying to mcopy from this PathBuf sees a clear non-path token and
+    // must synthesize separately at execution time.
+    let path_for_display = PathBuf::from(format!(
+        "<combined: {} + {}>",
+        distro_initrd_path.display(),
+        aegis_initrd_path.display()
+    ));
+
+    if !distro_initrd_path.is_file() {
+        return HostChainEntry {
+            role: "initrd",
+            path: path_for_display,
+            sha256: Err("distro initrd not found or not readable".to_string()),
+        };
+    }
+    if !aegis_initrd_path.is_file() {
+        return HostChainEntry {
+            role: "initrd",
+            path: path_for_display,
+            sha256: Err(format!(
+                "aegis-boot initramfs not found at {} — run `scripts/build-initramfs.sh` \
+                 to generate it before running `aegis-boot update`",
+                aegis_initrd_path.display()
+            )),
+        };
+    }
+
+    // Synthesize the combined initrd the same way direct-install does,
+    // hash it, then discard the bytes. Lives in a tempfile rather than
+    // memory so it works against initramfs sizes without ballooning RSS.
+    let Ok(tmp) = tempfile::NamedTempFile::new() else {
+        return HostChainEntry {
+            role: "initrd",
+            path: path_for_display,
+            sha256: Err("could not create tempfile for combined-initrd synthesis".to_string()),
+        };
+    };
+    let tmp_path = tmp.path().to_path_buf();
+    if let Err(e) =
+        crate::direct_install::combine_initrd(distro_initrd_path, &aegis_initrd_path, &tmp_path)
+    {
+        return HostChainEntry {
+            role: "initrd",
+            path: path_for_display,
+            sha256: Err(format!("combine_initrd: {e}")),
+        };
+    }
+    let sha256 = sha256_file(&tmp_path);
+    // tmp goes out of scope here and is deleted.
+    HostChainEntry {
+        role: "initrd",
+        path: path_for_display,
+        sha256,
+    }
 }
 
 /// Find the first readable `vmlinuz-*-{virtual,generic}` in /boot,
@@ -1500,5 +1575,77 @@ mod tests {
         assert!(missing.is_err(), "missing file should be Err");
         // Cleanup best-effort — don't fail the test on leftover tmp.
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn resolve_combined_initrd_hashes_distro_plus_aegis() {
+        // Happy path: both inputs present, hash matches manual combine.
+        let tmp = tempfile::tempdir().unwrap();
+        let distro = tmp.path().join("boot-initrd.img");
+        let aegis_out_dir = tmp.path().join("out");
+        std::fs::create_dir_all(&aegis_out_dir).unwrap();
+        let aegis = aegis_out_dir.join("initramfs.cpio.gz");
+        std::fs::write(&distro, b"DISTRO-INITRD-BYTES").unwrap();
+        std::fs::write(&aegis, b"AEGIS-INITRAMFS-BYTES").unwrap();
+
+        // cd into tmp so the resolver's relative "out/initramfs.cpio.gz"
+        // path resolves under our fixture tree, not the real repo.
+        let saved_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&tmp).unwrap();
+        let entry = resolve_combined_initrd(&distro);
+        std::env::set_current_dir(&saved_cwd).unwrap();
+
+        let hash = entry
+            .sha256
+            .expect("happy path should produce an Ok(sha256)");
+        // Compute the expected hash via the same sha256sum path the
+        // production code uses, so this test doesn't drift on sha2 API.
+        let combined = tmp.path().join("expected.bin");
+        let mut body = Vec::new();
+        body.extend_from_slice(b"DISTRO-INITRD-BYTES");
+        body.extend_from_slice(b"AEGIS-INITRAMFS-BYTES");
+        std::fs::write(&combined, &body).unwrap();
+        let want = sha256_file(&combined).unwrap();
+        assert_eq!(hash, want);
+        // The displayed path is the synthetic combined label, not a
+        // real file — the executor must resynthesize, not mcopy this.
+        let path_str = entry.path.display().to_string();
+        assert!(path_str.starts_with("<combined:"), "path_str={path_str}");
+        assert!(path_str.contains("boot-initrd.img"), "path_str={path_str}");
+        assert!(
+            path_str.contains("initramfs.cpio.gz"),
+            "path_str={path_str}"
+        );
+    }
+
+    #[test]
+    fn resolve_combined_initrd_returns_err_when_aegis_initramfs_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let distro = tmp.path().join("boot-initrd.img");
+        std::fs::write(&distro, b"DISTRO-ONLY").unwrap();
+        // NOTE: out/initramfs.cpio.gz is *not* created.
+
+        let saved_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&tmp).unwrap();
+        let entry = resolve_combined_initrd(&distro);
+        std::env::set_current_dir(&saved_cwd).unwrap();
+
+        let err = entry.sha256.expect_err("missing aegis initramfs → Err");
+        assert!(
+            err.contains("scripts/build-initramfs.sh"),
+            "error should surface the build command: {err}"
+        );
+    }
+
+    #[test]
+    fn resolve_combined_initrd_returns_err_when_distro_initrd_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing_distro = tmp.path().join("no-such-initrd");
+        let entry = resolve_combined_initrd(&missing_distro);
+        let err = entry.sha256.expect_err("missing distro initrd → Err");
+        assert!(
+            err.contains("distro initrd"),
+            "error should name distro initrd: {err}"
+        );
     }
 }
