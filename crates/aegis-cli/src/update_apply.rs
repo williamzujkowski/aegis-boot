@@ -256,29 +256,33 @@ pub(crate) fn execute_rotation(
             ));
         };
 
-        let new_path = format!("{}.new", step.esp_path);
-        let bak_path = format!("{}.bak", step.esp_path);
+        // mtools wants `::/`-rooted paths; the planner stores bare
+        // `/vmlinuz`-style paths to match `ESP_DIFF_SLOTS`. Add the
+        // `::` drive-prefix here so mcopy/mren operate on the image,
+        // not the host filesystem (which is what happens silently if
+        // the `::` is missing — the file ends up in `/` on the host
+        // and the subsequent mren can't find it on the ESP).
+        let mtools_orig = format!("::{}", step.esp_path);
+        let mtools_new = format!("::{}.new", step.esp_path);
+        let mtools_bak = format!("::{}.bak", step.esp_path);
 
         // Stage: mcopy src → <esp_path>.new
-        let mcopy = crate::direct_install::build_mcopy_argv(&dev, src, &new_path);
+        let mcopy = crate::direct_install::build_mcopy_argv(&dev, src, &mtools_new);
         let mcopy_refs: Vec<&str> = mcopy.iter().map(String::as_str).collect();
         if let Err(e) = run_mtool(&mcopy_refs) {
-            return Err((format!("mcopy {new_path}: {e}"), progress));
+            return Err((format!("mcopy {mtools_new}: {e}"), progress));
         }
         progress[i].state = StepState::Staged;
 
         // Rotate step 1: mren <esp_path> → <esp_path>.bak
-        let mren_bak = crate::direct_install::build_mren_argv(&dev, step.esp_path, &bak_path);
+        let mren_bak = crate::direct_install::build_mren_argv(&dev, &mtools_orig, &mtools_bak);
         let mren_bak_refs: Vec<&str> = mren_bak.iter().map(String::as_str).collect();
         if let Err(e) = run_mtool(&mren_bak_refs) {
-            return Err((
-                format!("mren {} → {}: {e}", step.esp_path, bak_path),
-                progress,
-            ));
+            return Err((format!("mren {mtools_orig} → {mtools_bak}: {e}"), progress));
         }
 
         // Rotate step 2: mren <esp_path>.new → <esp_path>
-        let mren_new = crate::direct_install::build_mren_argv(&dev, &new_path, step.esp_path);
+        let mren_new = crate::direct_install::build_mren_argv(&dev, &mtools_new, &mtools_orig);
         let mren_new_refs: Vec<&str> = mren_new.iter().map(String::as_str).collect();
         if let Err(e) = run_mtool(&mren_new_refs) {
             // Mid-rotation failure — .bak exists, .new exists, <esp_path> missing.
@@ -289,8 +293,7 @@ pub(crate) fn execute_rotation(
             // the partial state with a clear error.
             return Err((
                 format!(
-                    "mren {new_path} → {}: {e} — .bak preserved, manual recovery: mren ::<path>.bak ::<path>",
-                    step.esp_path
+                    "mren {mtools_new} → {mtools_orig}: {e} — .bak preserved, manual recovery: mren {mtools_bak} {mtools_orig}"
                 ),
                 progress,
             ));
@@ -326,27 +329,29 @@ pub(crate) fn execute_rollback(
     for action in actions {
         match action {
             RollbackAction::DeleteStaged { esp_path } => {
-                let new_path = format!("{esp_path}.new");
-                let mdel = crate::direct_install::build_mdel_argv(&dev, &new_path);
+                // Same `::/`-prefix convention as execute_rotation.
+                let mtools_new = format!("::{esp_path}.new");
+                let mdel = crate::direct_install::build_mdel_argv(&dev, &mtools_new);
                 let mdel_refs: Vec<&str> = mdel.iter().map(String::as_str).collect();
                 if let Err(e) = run_mtool(&mdel_refs) {
-                    errs.push(format!("rollback DeleteStaged {new_path}: {e}"));
+                    errs.push(format!("rollback DeleteStaged {mtools_new}: {e}"));
                 }
             }
             RollbackAction::RestoreFromBak { esp_path } => {
-                let bak_path = format!("{esp_path}.bak");
+                let mtools_orig = format!("::{esp_path}");
+                let mtools_bak = format!("::{esp_path}.bak");
                 // Delete the current (rotated) file, then rename .bak back over it.
-                let mdel = crate::direct_install::build_mdel_argv(&dev, esp_path);
+                let mdel = crate::direct_install::build_mdel_argv(&dev, &mtools_orig);
                 let mdel_refs: Vec<&str> = mdel.iter().map(String::as_str).collect();
                 if let Err(e) = run_mtool(&mdel_refs) {
-                    errs.push(format!("rollback delete-before-restore {esp_path}: {e}"));
+                    errs.push(format!("rollback delete-before-restore {mtools_orig}: {e}"));
                     continue;
                 }
-                let mren = crate::direct_install::build_mren_argv(&dev, &bak_path, esp_path);
+                let mren = crate::direct_install::build_mren_argv(&dev, &mtools_bak, &mtools_orig);
                 let mren_refs: Vec<&str> = mren.iter().map(String::as_str).collect();
                 if let Err(e) = run_mtool(&mren_refs) {
                     errs.push(format!(
-                        "rollback RestoreFromBak {bak_path} → {esp_path}: {e}"
+                        "rollback RestoreFromBak {mtools_bak} → {mtools_orig}: {e}"
                     ));
                 }
             }

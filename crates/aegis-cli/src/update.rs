@@ -172,16 +172,20 @@ fn handle_eligible(
     if apply_plan {
         print_rotation_plan(&diff);
         println!();
-        println!(
-            "NOTE: #181 Phase 2a — planner only. No writes made to {}.",
-            dev.display()
-        );
-        println!("The destructive executor ships in Phase 2b after OVMF E2E.");
-    } else {
-        println!("NOTE: this is a read-only eligibility check (phase 1 of #181).");
-        println!("The actual in-place update lands in a follow-up PR. No writes");
-        println!("were made to {} during this command.", dev.display());
+        #[cfg(target_os = "linux")]
+        return apply_rotation(dev, &esp_part, &diff);
+        #[cfg(not(target_os = "linux"))]
+        {
+            println!(
+                "NOTE: destructive executor is Linux-only; cross-platform \
+                 rotation ships under #367 Phase D."
+            );
+            return Ok(());
+        }
     }
+    println!("NOTE: this is a read-only eligibility check (phase 1 of #181).");
+    println!("The actual in-place update lands in a follow-up PR. No writes");
+    println!("were made to {} during this command.", dev.display());
     Ok(())
 }
 
@@ -1099,6 +1103,166 @@ pub(crate) fn body_contains_guid(body: &str, target_guid: &str) -> bool {
 /// that are easier to leave on the shim than rewire at call-sites.
 pub(crate) fn attestation_dir() -> PathBuf {
     crate::paths::attestations_dir()
+}
+
+/// #181 Phase 2b — actually execute the rotation plan against the
+/// stick's ESP partition. Called from [`handle_eligible`] when the
+/// double-flag (`--apply --experimental-apply`) is present.
+///
+/// Flow:
+/// 1. Build the plan from the diff (same `plan_rotation` as 2a).
+/// 2. If empty → nothing to rotate; return Ok.
+/// 3. Materialize host-side source files for mcopy — shim/grub/kernel
+///    come from the `chain` resolver; the combined initrd is synthesized
+///    into a `NamedTempFile` (same protocol `resolve_combined_initrd`
+///    uses for hashing, now kept alive for the mcopy).
+/// 4. Invoke `execute_rotation`. On success, print summary + return Ok.
+/// 5. On failure, invoke `execute_rollback` with the progress trace +
+///    surface both the original error and any rollback errors.
+#[cfg(target_os = "linux")]
+fn apply_rotation(dev: &Path, part1_dev: &Path, diff: &[EspFileDiff]) -> Result<(), u8> {
+    use crate::update_apply::plan_rotation;
+
+    let plan = plan_rotation(diff);
+    if plan.is_empty() {
+        println!("Nothing to rotate — stick already matches host-side chain.");
+        return Ok(());
+    }
+
+    // Materialize host-side source files into tempfiles the executor
+    // can mcopy from. The tempfiles must live for the duration of the
+    // rotation (NamedTempFile drop deletes them), so they're owned
+    // here and borrowed into RotationSources below.
+    let sources_mats = materialize_rotation_sources()?;
+    let sources = sources_mats.to_rotation_sources();
+
+    println!(
+        "Rotating {} file(s) on {}…",
+        plan.len(),
+        part1_dev.display()
+    );
+    dispatch_rotation(dev, part1_dev, &plan, &sources)
+}
+
+/// Owned host-side-source paths the rotation executor mcopies from.
+/// Holds the `NamedTempFile`s by value so they stay on disk until this
+/// struct drops. The `to_rotation_sources` borrow produces the
+/// `RotationSources<'_>` the executor actually accepts.
+#[cfg(target_os = "linux")]
+struct RotationMaterials {
+    shim: PathBuf,
+    grub: PathBuf,
+    kernel: PathBuf,
+    initrd_tmp: tempfile::NamedTempFile,
+    grub_cfg_tmp: tempfile::NamedTempFile,
+}
+
+#[cfg(target_os = "linux")]
+impl RotationMaterials {
+    fn to_rotation_sources(&self) -> crate::update_apply::RotationSources<'_> {
+        crate::update_apply::RotationSources {
+            shim: &self.shim,
+            grub: &self.grub,
+            grub_cfg: self.grub_cfg_tmp.path(),
+            kernel: &self.kernel,
+            combined_initrd: self.initrd_tmp.path(),
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn materialize_rotation_sources() -> Result<RotationMaterials, u8> {
+    let (kernel_path, kernel_ver) = find_kernel();
+    let shim = PathBuf::from("/usr/lib/shim/shimx64.efi.signed");
+    let grub = PathBuf::from("/usr/lib/grub/x86_64-efi-signed/grubx64.efi.signed");
+    let Some(v) = kernel_ver else {
+        eprintln!("aegis-boot update --apply: no kernel found in /boot — cannot rotate");
+        return Err(1);
+    };
+    let distro_initrd = PathBuf::from(format!("/boot/initrd.img-{v}"));
+    let aegis_initramfs = PathBuf::from("out/initramfs.cpio.gz");
+    if !aegis_initramfs.is_file() {
+        eprintln!(
+            "aegis-boot update --apply: {} missing — run `scripts/build-initramfs.sh` first",
+            aegis_initramfs.display()
+        );
+        return Err(1);
+    }
+    let initrd_tmp = tempfile::NamedTempFile::new().map_err(|e| {
+        eprintln!("aegis-boot update --apply: tempfile for combined initrd: {e}");
+        1u8
+    })?;
+    crate::direct_install::combine_initrd(&distro_initrd, &aegis_initramfs, initrd_tmp.path())
+        .map_err(|e| {
+            eprintln!("aegis-boot update --apply: combine_initrd: {e}");
+            1u8
+        })?;
+    // Render grub.cfg too — even though today's planner always skips
+    // it (UNKNOWN diff per Phase-1 grub.cfg-is-rendered-in-process),
+    // a future fix will make it rotate and the executor wants a real
+    // file to reference.
+    let grub_cfg_tmp = tempfile::NamedTempFile::new().map_err(|e| {
+        eprintln!("aegis-boot update --apply: tempfile for grub.cfg: {e}");
+        1u8
+    })?;
+    crate::direct_install::render_grub_cfg(grub_cfg_tmp.path()).map_err(|e| {
+        eprintln!("aegis-boot update --apply: render_grub_cfg: {e}");
+        1u8
+    })?;
+    Ok(RotationMaterials {
+        shim,
+        grub,
+        kernel: kernel_path,
+        initrd_tmp,
+        grub_cfg_tmp,
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn dispatch_rotation(
+    dev: &Path,
+    part1_dev: &Path,
+    plan: &[crate::update_apply::RotationStep],
+    sources: &crate::update_apply::RotationSources<'_>,
+) -> Result<(), u8> {
+    use crate::update_apply::{StepState, execute_rollback, execute_rotation, rollback_plan};
+
+    match execute_rotation(plan, part1_dev, sources) {
+        Ok(progress) => {
+            let rotated = progress
+                .iter()
+                .filter(|p| matches!(p.state, StepState::Rotated))
+                .count();
+            println!("Rotation complete: {rotated} file(s) rotated in place.");
+            println!("Previous bytes preserved at `.bak` on the ESP for recovery.");
+            println!("AEGIS_ISOS preserved byte-for-byte.");
+            Ok(())
+        }
+        Err((reason, progress)) => {
+            eprintln!("Rotation FAILED: {reason}");
+            let rollback_actions = rollback_plan(&progress);
+            if rollback_actions.is_empty() {
+                eprintln!("Nothing to roll back — failure happened before any write took effect.");
+                return Err(1);
+            }
+            eprintln!("Rolling back {} action(s)…", rollback_actions.len());
+            if let Err(errs) = execute_rollback(&rollback_actions, part1_dev) {
+                eprintln!("Rollback encountered errors:");
+                for e in errs {
+                    eprintln!("  - {e}");
+                }
+                eprintln!(
+                    "Stick is in an INDETERMINATE state. Boot menu may be broken. \
+                     Manually inspect ESP contents (mdir -i {}1 ::/) or re-flash \
+                     with `aegis-boot flash --direct-install`.",
+                    dev.display()
+                );
+            } else {
+                eprintln!("Rollback complete. Stick restored to pre-apply state as best we could.");
+            }
+            Err(1)
+        }
+    }
 }
 
 #[cfg(test)]
