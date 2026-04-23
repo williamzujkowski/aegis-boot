@@ -290,6 +290,7 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
     if let Some(dev) = stick.or_else(autodetect_single_stick) {
         check_stick_partitions(&mut report, &dev);
         check_aegis_isos_mount(&mut report, &dev);
+        check_manifest_sequence(&mut report, &dev);
     } else {
         report.add(
             Verdict::Skip,
@@ -989,6 +990,105 @@ fn classify_trust_state(entry: &crate::inventory::IsoEntry) -> Verdict {
         (true, false) | (false, true) => Verdict::Warn,
         (false, false) => Verdict::Fail,
     }
+}
+
+/// #181 Phase 4: surface the attestation manifest's `sequence` and
+/// `tool_version` so operators can see whether `aegis-boot update
+/// --apply` has been run against this stick, and if so with what
+/// version. Silent-skip if no attestation is reachable — that's not
+/// a health issue by itself; the other stick checks already fail
+/// loudly when the stick isn't aegis-boot-flashed.
+fn check_manifest_sequence(report: &mut Report, dev: &Path) {
+    let name = format!("manifest sequence: {}", dev.display());
+    let Some(att_path) = find_attestation_for_dev(dev) else {
+        report.add(
+            Verdict::Skip,
+            name,
+            "no host-side attestation matching this stick's disk GUID",
+        );
+        return;
+    };
+    let body = match std::fs::read_to_string(&att_path) {
+        Ok(b) => b,
+        Err(e) => {
+            report.add(
+                Verdict::Warn,
+                name,
+                format!("could not read {}: {e}", att_path.display()),
+            );
+            return;
+        }
+    };
+    let manifest: aegis_wire_formats::Manifest = match serde_json::from_str(&body) {
+        Ok(m) => m,
+        Err(e) => {
+            report.add(
+                Verdict::Warn,
+                name,
+                format!("parse error on {}: {e}", att_path.display()),
+            );
+            return;
+        }
+    };
+    report.add(
+        Verdict::Pass,
+        name,
+        format!(
+            "sequence={} tool_version={}",
+            manifest.sequence, manifest.tool_version
+        ),
+    );
+}
+
+/// Look up the host-side attestation manifest file for a stick by
+/// disk GUID. Small mirror of the resolver in `update::find_attestation_by_guid`;
+/// kept local because doctor shouldn't take a cross-module dependency
+/// through the update path (update is destructive-capable and this
+/// doctor check is read-only).
+fn find_attestation_for_dev(dev: &Path) -> Option<PathBuf> {
+    let out = Command::new("sudo")
+        .args(["sgdisk", "-p"])
+        .arg(dev)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let guid = extract_disk_guid(&text)?;
+    let lower = guid.to_ascii_lowercase();
+    let dir = crate::paths::attestations_dir();
+    for entry in std::fs::read_dir(&dir).ok()?.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(body) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        // Substring match on the lowercased body; GUID is anchored by
+        // the `"disk_guid":` key so false-positive prefix matches can't
+        // occur on typical manifest shapes.
+        if body.to_ascii_lowercase().contains(&lower) {
+            return Some(path);
+        }
+    }
+    None
+}
+
+/// Extract `Disk identifier (GUID): <guid>` from `sgdisk -p` output.
+/// Duplicates the logic in `update::parse_disk_guid` locally to keep
+/// doctor independent of the update module.
+fn extract_disk_guid(out: &str) -> Option<String> {
+    for line in out.lines() {
+        if let Some(rest) = line.trim().strip_prefix("Disk identifier (GUID): ") {
+            let g = rest.trim().to_ascii_lowercase();
+            if g.len() == 36 && g.matches('-').count() == 4 {
+                return Some(g);
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]
