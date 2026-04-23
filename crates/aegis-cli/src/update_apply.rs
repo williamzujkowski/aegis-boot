@@ -168,6 +168,206 @@ pub(crate) fn rollback_plan(progress: &[StepProgress]) -> Vec<RollbackAction> {
         .collect()
 }
 
+/// Sources the executor pulls rotated file bytes from. One host-side
+/// path per rotation role. The executor mcopies these into `.new`
+/// slots on the ESP, which Phase 2a's planner never sees — the planner
+/// only knows hashes, not paths. Caller (CLI layer) resolves the paths
+/// from [`crate::update::resolve_host_chain`] output.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) struct RotationSources<'a> {
+    pub shim: &'a std::path::Path,
+    pub grub: &'a std::path::Path,
+    pub grub_cfg: &'a std::path::Path,
+    pub kernel: &'a std::path::Path,
+    pub combined_initrd: &'a std::path::Path,
+}
+
+impl<'a> RotationSources<'a> {
+    /// Resolve the host-side source file for a rotation step based on
+    /// the step's role label. Returns `None` for an unrecognized role,
+    /// which the executor treats as a hard error — an unknown role in
+    /// the plan is a planner/executor drift bug, not a recoverable
+    /// runtime condition.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn source_for(&self, role: &str) -> Option<&'a std::path::Path> {
+        match role {
+            "shim" => Some(self.shim),
+            "grub" => Some(self.grub),
+            "grub_cfg_boot" | "grub_cfg_ubuntu" => Some(self.grub_cfg),
+            "kernel" => Some(self.kernel),
+            "initrd" => Some(self.combined_initrd),
+            _ => None,
+        }
+    }
+}
+
+/// Execute the planned rotation against `part1_dev`. Returns the
+/// progress trace so the caller can pass it to [`rollback_plan`] on
+/// failure and drive the unwind via [`execute_rollback`].
+///
+/// Contract per ADR-free Phase 2b design:
+/// 1. For each step (in plan order):
+///    a. `mcopy` the fresh host source to `<esp_path>.new`
+///    b. Mark the step `Staged`
+///    c. `mren <esp_path> <esp_path>.bak` (preserves previous bytes)
+///    d. `mren <esp_path>.new <esp_path>` (commits the new bytes)
+///    e. Mark the step `Rotated`
+/// 2. On any subprocess failure: return `Err(reason, progress)` so the
+///    caller can decide whether to rollback or surface the partial state
+///    to the operator.
+///
+/// This function does NOT call [`execute_rollback`] itself — the CLI
+/// layer owns that decision so an operator running with `--no-rollback`
+/// (future flag) can inspect the partial state.
+///
+/// # Errors
+///
+/// Returns `Err((reason, progress))` with the progress at the point of
+/// failure. Caller typically threads `progress` into [`rollback_plan`].
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn execute_rotation(
+    steps: &[RotationStep],
+    part1_dev: &std::path::Path,
+    sources: &RotationSources<'_>,
+) -> Result<Vec<StepProgress>, (String, Vec<StepProgress>)> {
+    let dev = part1_dev.display().to_string();
+    let mut progress: Vec<StepProgress> = steps
+        .iter()
+        .map(|s| StepProgress {
+            step: s.clone(),
+            state: StepState::Pending,
+        })
+        .collect();
+
+    for i in 0..steps.len() {
+        let step = &steps[i];
+        let Some(src) = sources.source_for(step.role) else {
+            return Err((
+                format!(
+                    "no host-side source for role '{}' — planner/executor drift",
+                    step.role
+                ),
+                progress,
+            ));
+        };
+
+        let new_path = format!("{}.new", step.esp_path);
+        let bak_path = format!("{}.bak", step.esp_path);
+
+        // Stage: mcopy src → <esp_path>.new
+        let mcopy = crate::direct_install::build_mcopy_argv(&dev, src, &new_path);
+        let mcopy_refs: Vec<&str> = mcopy.iter().map(String::as_str).collect();
+        if let Err(e) = run_mtool(&mcopy_refs) {
+            return Err((format!("mcopy {new_path}: {e}"), progress));
+        }
+        progress[i].state = StepState::Staged;
+
+        // Rotate step 1: mren <esp_path> → <esp_path>.bak
+        let mren_bak = crate::direct_install::build_mren_argv(&dev, step.esp_path, &bak_path);
+        let mren_bak_refs: Vec<&str> = mren_bak.iter().map(String::as_str).collect();
+        if let Err(e) = run_mtool(&mren_bak_refs) {
+            return Err((
+                format!("mren {} → {}: {e}", step.esp_path, bak_path),
+                progress,
+            ));
+        }
+
+        // Rotate step 2: mren <esp_path>.new → <esp_path>
+        let mren_new = crate::direct_install::build_mren_argv(&dev, &new_path, step.esp_path);
+        let mren_new_refs: Vec<&str> = mren_new.iter().map(String::as_str).collect();
+        if let Err(e) = run_mtool(&mren_new_refs) {
+            // Mid-rotation failure — .bak exists, .new exists, <esp_path> missing.
+            // State is `Staged` still (we haven't reached Rotated); rollback_plan
+            // will DeleteStaged, but the pre-rotation file is now at .bak. Caller
+            // must also restore .bak → original via a manual recovery step, or the
+            // executor can be extended to represent this tri-state. For now surface
+            // the partial state with a clear error.
+            return Err((
+                format!(
+                    "mren {new_path} → {}: {e} — .bak preserved, manual recovery: mren ::<path>.bak ::<path>",
+                    step.esp_path
+                ),
+                progress,
+            ));
+        }
+        progress[i].state = StepState::Rotated;
+    }
+
+    Ok(progress)
+}
+
+/// Execute the rollback actions produced by [`rollback_plan`] against
+/// the same ESP device. Walks the actions in order — since
+/// [`rollback_plan`] emits them in reverse plan order (last-rotated
+/// first), executing in-order is the LIFO semantics documented on
+/// that function.
+///
+/// # Errors
+///
+/// Returns a vec of per-action error strings rather than short-circuiting
+/// on first failure — rollback is best-effort, and the caller wants to
+/// know every slot that's in an indeterminate state so the operator can
+/// physically inspect + reflash.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn execute_rollback(
+    actions: &[RollbackAction],
+    part1_dev: &std::path::Path,
+) -> Result<(), Vec<String>> {
+    let dev = part1_dev.display().to_string();
+    let mut errs: Vec<String> = Vec::new();
+    for action in actions {
+        match action {
+            RollbackAction::DeleteStaged { esp_path } => {
+                let new_path = format!("{esp_path}.new");
+                let mdel = crate::direct_install::build_mdel_argv(&dev, &new_path);
+                let mdel_refs: Vec<&str> = mdel.iter().map(String::as_str).collect();
+                if let Err(e) = run_mtool(&mdel_refs) {
+                    errs.push(format!("rollback DeleteStaged {new_path}: {e}"));
+                }
+            }
+            RollbackAction::RestoreFromBak { esp_path } => {
+                let bak_path = format!("{esp_path}.bak");
+                // Delete the current (rotated) file, then rename .bak back over it.
+                let mdel = crate::direct_install::build_mdel_argv(&dev, esp_path);
+                let mdel_refs: Vec<&str> = mdel.iter().map(String::as_str).collect();
+                if let Err(e) = run_mtool(&mdel_refs) {
+                    errs.push(format!("rollback delete-before-restore {esp_path}: {e}"));
+                    continue;
+                }
+                let mren = crate::direct_install::build_mren_argv(&dev, &bak_path, esp_path);
+                let mren_refs: Vec<&str> = mren.iter().map(String::as_str).collect();
+                if let Err(e) = run_mtool(&mren_refs) {
+                    errs.push(format!(
+                        "rollback RestoreFromBak {bak_path} → {esp_path}: {e}"
+                    ));
+                }
+            }
+        }
+    }
+    if errs.is_empty() { Ok(()) } else { Err(errs) }
+}
+
+/// Thin sudo wrapper local to the executor. Mirrors `direct_install::
+/// run_sudo` but lives here so `update_apply` has no cross-module
+/// coupling through a private helper. Fails closed on any non-zero
+/// exit with the subprocess's stderr rolled up.
+#[cfg_attr(not(test), allow(dead_code))]
+fn run_mtool(argv: &[&str]) -> Result<(), String> {
+    let out = std::process::Command::new("sudo")
+        .args(argv)
+        .output()
+        .map_err(|e| format!("{} exec failed: {e}", argv.first().unwrap_or(&"?")))?;
+    if !out.status.success() {
+        return Err(format!(
+            "{} exited {}: {}",
+            argv.first().unwrap_or(&"?"),
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -333,5 +533,51 @@ mod tests {
                 esp_path: "/initrd.img",
             }]
         );
+    }
+
+    #[test]
+    fn rotation_sources_maps_canonical_roles_to_paths() {
+        use std::path::Path;
+        let shim = Path::new("/h/shim.efi");
+        let grub = Path::new("/h/grubx64.efi");
+        let grub_cfg = Path::new("/h/grub.cfg");
+        let kernel = Path::new("/h/vmlinuz");
+        let initrd = Path::new("/h/initrd.img");
+        let sources = RotationSources {
+            shim,
+            grub,
+            grub_cfg,
+            kernel,
+            combined_initrd: initrd,
+        };
+
+        assert_eq!(sources.source_for("shim"), Some(shim));
+        assert_eq!(sources.source_for("grub"), Some(grub));
+        assert_eq!(sources.source_for("kernel"), Some(kernel));
+        assert_eq!(sources.source_for("initrd"), Some(initrd));
+        // Two roles share the grub.cfg source — boot vs ubuntu paths
+        // are both the same byte content on the stick.
+        assert_eq!(sources.source_for("grub_cfg_boot"), Some(grub_cfg));
+        assert_eq!(sources.source_for("grub_cfg_ubuntu"), Some(grub_cfg));
+    }
+
+    #[test]
+    fn rotation_sources_returns_none_for_unknown_role() {
+        use std::path::Path;
+        let p = Path::new("/h/anything");
+        let sources = RotationSources {
+            shim: p,
+            grub: p,
+            grub_cfg: p,
+            kernel: p,
+            combined_initrd: p,
+        };
+        assert!(sources.source_for("").is_none());
+        assert!(sources.source_for("bogus").is_none());
+        // Case-sensitivity: roles are defined in the planner as
+        // lowercase fixed strings — anything else is a planner/executor
+        // drift bug that the executor turns into a hard error.
+        assert!(sources.source_for("Shim").is_none());
+        assert!(sources.source_for("KERNEL").is_none());
     }
 }
