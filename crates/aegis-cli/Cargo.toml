@@ -77,7 +77,7 @@ thiserror = { workspace = true }
 # renders a bytes/sec + ETA bar. macOS dd doesn't emit progress on
 # stderr, so the bar is Linux-only; macOS falls back to the original
 # silent .status() call.
-indicatif = { version = "0.17", default-features = false }
+indicatif = { version = "0.18", default-features = false }
 # Signed attestation manifest for direct-install (#274 PR3, #277).
 # Ed25519-based minisign in pure Rust — no sigtool shellout, no PATH
 # dependency. Used to sign `::/aegis-boot-manifest.json` on flashed
