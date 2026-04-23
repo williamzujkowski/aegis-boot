@@ -73,7 +73,7 @@ jobs:
           sudo partprobe "$LOOP"
           ls -l "${LOOP}p1" "${LOOP}p2"
 
-      - name: Baseline `verify --stick` — must be 0 drift
+      - name: "Baseline verify --stick (must be 0 drift)"
         run: |
           LOOP=$(cat /tmp/update-rotate.loop)
           sudo ./target/release/aegis-boot verify --stick "$LOOP" \
@@ -95,7 +95,7 @@ jobs:
           sudo umount /tmp/esp-rotate
           sudo sync
 
-      - name: `update` must report CHANGED on vmlinuz
+      - name: "update must report CHANGED on vmlinuz"
         run: |
           LOOP=$(cat /tmp/update-rotate.loop)
           sudo ./target/release/aegis-boot update "$LOOP" \
@@ -103,7 +103,7 @@ jobs:
           grep -q 'CHANGED */vmlinuz' /tmp/update-diff.out \
             || { echo "update should detect vmlinuz drift"; exit 1; }
 
-      - name: `--apply --experimental-apply` must complete + refresh manifest
+      - name: "--apply --experimental-apply must complete + refresh manifest"
         run: |
           LOOP=$(cat /tmp/update-rotate.loop)
           sudo ./target/release/aegis-boot update "$LOOP" \
@@ -114,7 +114,7 @@ jobs:
           grep -q 'Manifest refreshed' /tmp/update-apply.out \
             || { echo "manifest was not refreshed"; exit 1; }
 
-      - name: Post-rotation `verify --stick` must be 0 drift
+      - name: "Post-rotation verify --stick (must be 0 drift)"
         run: |
           LOOP=$(cat /tmp/update-rotate.loop)
           sudo ./target/release/aegis-boot verify --stick "$LOOP" \
@@ -122,7 +122,7 @@ jobs:
           grep -q '0 drift, 0 unreadable' /tmp/verify-post.out \
             || { echo "post-rotation verify should be clean"; exit 1; }
 
-      - name: Post-rotation `doctor --stick` surfaces bumped sequence
+      - name: "Post-rotation doctor --stick surfaces bumped sequence"
         run: |
           LOOP=$(cat /tmp/update-rotate.loop)
           sudo ./target/release/aegis-boot doctor --stick "$LOOP" \
