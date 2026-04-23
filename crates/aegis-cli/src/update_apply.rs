@@ -298,6 +298,45 @@ pub(crate) fn execute_rotation(
                 progress,
             ));
         }
+
+        // Post-rotate verification: re-hash the rotated destination and
+        // assert it matches the planner's `fresh_sha256`. Closes the
+        // gap where a silent exFAT write corruption or a mcopy that
+        // swallowed bytes could leave the stick with a byte-stream
+        // that doesn't match what the operator signed off on.
+        //
+        // We call mtype_sha256 through the crate boundary rather than
+        // duplicating the mtype pipeline here. Failure is treated as a
+        // rotation failure so the caller can rollback the current step
+        // (the rotate already happened — rollback will try to restore
+        // .bak over the current). This surfaces as `Rotated` state in
+        // progress[i] only AFTER verification clears; failure leaves
+        // it as Staged, which rollback_plan translates into DeleteStaged
+        // (the .new is already gone at this point — the rollback will
+        // no-op harmlessly) — caller still sees the error and knows
+        // to re-flash.
+        match crate::update::mtype_sha256(part1_dev, step.esp_path) {
+            Ok(observed) if hashes_eq(&observed, &step.fresh_sha256) => {
+                // Hashes match — safe to mark rotated.
+            }
+            Ok(observed) => {
+                return Err((
+                    format!(
+                        "post-rotate verify {mtools_orig}: observed {} but planner expected {} — stick may have silently corrupted the write",
+                        short(&observed),
+                        short(&step.fresh_sha256)
+                    ),
+                    progress,
+                ));
+            }
+            Err(e) => {
+                return Err((
+                    format!("post-rotate verify {mtools_orig}: mtype_sha256 failed: {e}"),
+                    progress,
+                ));
+            }
+        }
+
         progress[i].state = StepState::Rotated;
     }
 
@@ -366,6 +405,19 @@ pub(crate) fn execute_rollback(
 /// exit with the subprocess's stderr rolled up.
 #[cfg(target_os = "linux")]
 #[cfg_attr(not(test), allow(dead_code))]
+/// Case-insensitive + whitespace-tolerant hex hash compare. sha256sum
+/// on Linux already emits lowercase but mtools+filesystem round-trips
+/// vary; normalizing here keeps the executor robust to that.
+fn hashes_eq(a: &str, b: &str) -> bool {
+    a.trim().eq_ignore_ascii_case(b.trim())
+}
+
+/// First 16 hex chars of a hash string — matches the print style used
+/// across update.rs so error messages read consistently.
+fn short(h: &str) -> &str {
+    &h[..h.len().min(16)]
+}
+
 fn run_mtool(argv: &[&str]) -> Result<(), String> {
     let out = std::process::Command::new("sudo")
         .args(argv)
@@ -593,5 +645,24 @@ mod tests {
         // drift bug that the executor turns into a hard error.
         assert!(sources.source_for("Shim").is_none());
         assert!(sources.source_for("KERNEL").is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn hashes_eq_is_case_and_whitespace_tolerant() {
+        assert!(hashes_eq("abc123", "ABC123"));
+        assert!(hashes_eq("  abc123 ", "abc123"));
+        assert!(hashes_eq("abc123", "abc123"));
+        assert!(!hashes_eq("abc123", "def456"));
+        assert!(!hashes_eq("abc12", "abc123"));
+        assert!(!hashes_eq("", "abc123"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn short_returns_16_hex_chars_or_less() {
+        assert_eq!(short("0123456789abcdefFF"), "0123456789abcdef");
+        assert_eq!(short("deadbeef"), "deadbeef");
+        assert_eq!(short(""), "");
     }
 }
