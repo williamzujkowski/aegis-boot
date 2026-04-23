@@ -69,7 +69,7 @@ aegis-wire-formats = { path = "../aegis-wire-formats", version = "0.16" }
 tempfile = "3.14"
 # sha2 + hex are already transitive deps via iso-probe; surfaced
 # directly here for the post-write readback verifier (#244 PR1).
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 thiserror = { workspace = true }
 # Per-stage progress UI during dd (#244 PR3). Captures dd's
