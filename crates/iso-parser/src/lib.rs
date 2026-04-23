@@ -1510,6 +1510,56 @@ mod tests {
         assert!(matches!(result, Err(IsoError::PathTraversal(_))));
     }
 
+    #[test]
+    fn test_dots_embedded_in_filename_are_not_traversal() {
+        // Regression for the nightly-fuzz panic on 2026-04-19..23:
+        // filenames like `..\x03|.` or `foo..bar` contain `..` as a
+        // substring but are single legitimate path components (no `/`
+        // separator around the dots). validate_path correctly accepts
+        // them because `Path::components()` reports them as Normal,
+        // not ParentDir. Real ISOs in the wild can carry such
+        // filenames; rejecting them would block legitimate extraction.
+        let env = MockIsoEnvironment::new();
+
+        for weird_name in [
+            "foo..bar",
+            "..\x03|.",
+            "..hidden",
+            "trailing..",
+            "..".repeat(4).as_str(),
+        ] {
+            let candidate = PathBuf::from(format!("/safe/{weird_name}"));
+            let result = env.validate_path(PathBuf::from("/safe").as_path(), candidate.as_path());
+            // filenames that are LITERALLY ".." are ParentDir and
+            // should reject; anything else with embedded dots is a
+            // Normal component and should pass through.
+            if weird_name == ".." {
+                assert!(
+                    matches!(result, Err(IsoError::PathTraversal(_))),
+                    "literal `..` must reject, got {result:?} for {weird_name:?}"
+                );
+            } else {
+                assert!(
+                    result.is_ok(),
+                    "`..`-substring but not a ParentDir component must pass: {weird_name:?} got {result:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_parent_dir_in_middle_of_path_rejected() {
+        // Genuine traversal: `..` as a path component between
+        // `/` boundaries. validate_path catches this via
+        // `Component::ParentDir` detection.
+        let env = MockIsoEnvironment::new();
+        let result = env.validate_path(
+            PathBuf::from("/safe").as_path(),
+            PathBuf::from("/safe/a/../b").as_path(),
+        );
+        assert!(matches!(result, Err(IsoError::PathTraversal(_))));
+    }
+
     #[tokio::test]
     async fn test_arch_detection() {
         let mock = MockIsoEnvironment::with_iso(Distribution::Arch);

@@ -4,10 +4,21 @@
 
 use iso_parser::{IsoEnvironment, OsIsoEnvironment};
 use libfuzzer_sys::fuzz_target;
-use std::path::Path;
+use std::path::{Component, Path};
 
 // Fuzz the path-traversal guard. validate_path MUST never panic on arbitrary
-// byte input and MUST reject any path that escapes the base directory.
+// byte input and MUST reject any path that escapes the base directory via a
+// genuine `..` PATH COMPONENT (between `/` boundaries), not an arbitrary
+// substring.
+//
+// Why component-based, not substring-based: a filename like `foo..bar` or
+// `..\x03|.` is a single legitimate component name. ISOs in the wild can
+// legally contain such filenames, and validate_path must extract them
+// without interpreting the embedded dots as a traversal. The earlier
+// substring-based invariant flagged these as false traversals, which
+// surfaced as a nightly-fuzz panic on 2026-04-19 through 2026-04-23.
+// Fixing the invariant is the right move because validate_path's own
+// implementation already uses `Path::components()` correctly.
 fuzz_target!(|data: &[u8]| {
     let Ok(s) = std::str::from_utf8(data) else {
         return;
@@ -27,11 +38,16 @@ fuzz_target!(|data: &[u8]| {
     let env = OsIsoEnvironment::new();
     let result = env.validate_path(Path::new(base), Path::new(candidate));
 
-    // Invariant: if the candidate contains "..", validation MUST fail.
-    if candidate.contains("..") {
+    // Invariant: if the candidate has a `..` PATH COMPONENT (ParentDir),
+    // validation MUST fail. Substring matches like `foo..bar` or
+    // `..\x03|.` are legitimate filenames, not traversal attempts.
+    let has_parent_component = Path::new(candidate)
+        .components()
+        .any(|c| matches!(c, Component::ParentDir));
+    if has_parent_component {
         assert!(
             result.is_err(),
-            "path containing '..' was not rejected: base={base:?} candidate={candidate:?}"
+            "path with a `..` parent component was not rejected: base={base:?} candidate={candidate:?}"
         );
     }
 });
