@@ -40,11 +40,6 @@
 //! - Any write to the device (phase 2 — atomic file replace with
 //!   backup)
 //! - CA signature verification on the new chain (phase 3)
-//! - A full pre-rendered grub.cfg to hash against (direct-install
-//!   builds grub.cfg in-process via `build_grub_cfg_body`; Phase 2
-//!   will wire that into the fresh-side so grub.cfg gets a real
-//!   diff row — today it surfaces as `UNKNOWN` with an explicit
-//!   Phase-2 pointer)
 //!
 //! Tracked under epic [#181](https://github.com/aegis-boot/aegis-boot/issues/181).
 
@@ -370,7 +365,56 @@ fn resolve_host_chain() -> Vec<HostChainEntry> {
                      flash rotation ships under #367 Phase D"
             .to_string()),
     });
+
+    // grub.cfg: direct-install renders it in-process (see
+    // `direct_install::render_grub_cfg`) rather than reading from a
+    // file, so there's no stable pre-existing host-side path to hash.
+    // Same fix-shape as #430/initrd: materialize via the same builder
+    // direct-install uses, hash that, return a synthetic label.
+    #[cfg(target_os = "linux")]
+    out.push(resolve_rendered_grub_cfg());
+    #[cfg(not(target_os = "linux"))]
+    out.push(HostChainEntry {
+        role: "grub_cfg",
+        path: PathBuf::from("<rendered in-process>"),
+        sha256: Err("grub.cfg rendering is Linux-only; cross-platform rotation \
+                     ships under #367 Phase D"
+            .to_string()),
+    });
+
     out
+}
+
+/// Resolve the `grub_cfg` host-chain entry to the hash of the grub.cfg
+/// that direct-install would mcopy onto the stick's
+/// `/EFI/BOOT/grub.cfg` and `/EFI/ubuntu/grub.cfg`. direct-install
+/// builds this in-process via [`direct_install::render_grub_cfg`],
+/// so there's no host-side file to hash — we render into a tempfile,
+/// hash, and discard. Same synthesis-label pattern as
+/// [`resolve_combined_initrd`].
+#[cfg(target_os = "linux")]
+fn resolve_rendered_grub_cfg() -> HostChainEntry {
+    let path_for_display = PathBuf::from("<rendered: direct_install::render_grub_cfg>");
+    let Ok(tmp) = tempfile::NamedTempFile::new() else {
+        return HostChainEntry {
+            role: "grub_cfg",
+            path: path_for_display,
+            sha256: Err("could not create tempfile for grub.cfg rendering".to_string()),
+        };
+    };
+    if let Err(e) = crate::direct_install::render_grub_cfg(tmp.path()) {
+        return HostChainEntry {
+            role: "grub_cfg",
+            path: path_for_display,
+            sha256: Err(format!("render_grub_cfg: {e}")),
+        };
+    }
+    let sha256 = sha256_file(tmp.path());
+    HostChainEntry {
+        role: "grub_cfg",
+        path: path_for_display,
+        sha256,
+    }
 }
 
 /// Resolve the `initrd` host-chain entry to the hash of the **combined**
@@ -592,11 +636,9 @@ const ESP_DIFF_SLOTS: &[(&str, &str, &str)] = &[
 /// and pairs each row with the matching host-side source's
 /// sha256 (already computed by [`resolve_host_chain`]).
 ///
-/// The `grub.cfg` rows carry a Phase-1-specific error on the
-/// fresh side because direct-install renders grub.cfg
-/// in-process (see `direct_install::build_grub_cfg_body`) rather
-/// than reading it from a file — so we have no stable host-side
-/// hash for it today. Phase 2 will close that gap.
+/// All six canonical ESP slots now resolve on Linux — `grub.cfg`
+/// is materialized via [`resolve_rendered_grub_cfg`] and `initrd`
+/// via [`resolve_combined_initrd`], same tempfile-then-hash pattern.
 pub(crate) fn build_esp_diff(esp_part: &Path, chain: &[HostChainEntry]) -> Vec<EspFileDiff> {
     ESP_DIFF_SLOTS
         .iter()
@@ -614,14 +656,14 @@ pub(crate) fn build_esp_diff(esp_part: &Path, chain: &[HostChainEntry]) -> Vec<E
 }
 
 /// Look up a host-chain entry by role and return its hash
-/// `Result`. Absent role → Phase-1-specific "not sampled on host
-/// side" message (grub.cfg today, flagged for Phase 2).
+/// `Result`. Absent role → clear message. All canonical roles are
+/// now resolved in `resolve_host_chain`; a missing role here would
+/// be an internal bug.
 fn lookup_chain_sha(chain: &[HostChainEntry], role: &str) -> Result<String, String> {
     match chain.iter().find(|e| e.role == role) {
         Some(entry) => entry.sha256.clone(),
         None => Err(format!(
-            "host-side source for role '{role}' not sampled in Phase 1 \
-             (grub.cfg is rendered in-process; Phase 2 will wire this up)"
+            "host-side source for role '{role}' missing from chain — internal bug"
         )),
     }
 }
@@ -1605,14 +1647,17 @@ mod tests {
         assert!(shim.current.is_err());
         // fresh comes from the synthetic chain.
         assert_eq!(shim.fresh.as_ref().ok(), Some(&"a".repeat(64)));
-        // grub.cfg rows get the Phase-1 "not sampled" error on
-        // the fresh side because the chain has no grub_cfg entry.
+        // grub.cfg rows: when the synthetic chain has no grub_cfg
+        // entry, the fresh side falls to the "missing from chain"
+        // internal-bug error. Real chains produced by
+        // `resolve_host_chain` always populate grub_cfg via
+        // `resolve_rendered_grub_cfg` on Linux.
         let grub_cfg = diff
             .iter()
             .find(|d| d.esp_path == "/EFI/BOOT/grub.cfg")
             .expect("grub.cfg row");
         let err = grub_cfg.fresh.as_ref().expect_err("fresh is Err today");
-        assert!(err.contains("not sampled in Phase 1"), "{err}");
+        assert!(err.contains("missing from chain"), "{err}");
     }
 
     #[test]
