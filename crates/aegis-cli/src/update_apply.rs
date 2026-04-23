@@ -220,10 +220,15 @@ impl<'a> RotationSources<'a> {
 /// layer owns that decision so an operator running with `--no-rollback`
 /// (future flag) can inspect the partial state.
 ///
+/// Linux-only because it consumes `direct_install::build_*_argv`
+/// helpers which are `#![cfg(target_os = "linux")]`. macOS / Windows
+/// rotation adapters ship under #367 Phase D.
+///
 /// # Errors
 ///
 /// Returns `Err((reason, progress))` with the progress at the point of
 /// failure. Caller typically threads `progress` into [`rollback_plan`].
+#[cfg(target_os = "linux")]
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn execute_rotation(
     steps: &[RotationStep],
@@ -302,12 +307,15 @@ pub(crate) fn execute_rotation(
 /// first), executing in-order is the LIFO semantics documented on
 /// that function.
 ///
+/// Linux-only — same rationale as [`execute_rotation`].
+///
 /// # Errors
 ///
 /// Returns a vec of per-action error strings rather than short-circuiting
 /// on first failure — rollback is best-effort, and the caller wants to
 /// know every slot that's in an indeterminate state so the operator can
 /// physically inspect + reflash.
+#[cfg(target_os = "linux")]
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn execute_rollback(
     actions: &[RollbackAction],
@@ -351,6 +359,7 @@ pub(crate) fn execute_rollback(
 /// run_sudo` but lives here so `update_apply` has no cross-module
 /// coupling through a private helper. Fails closed on any non-zero
 /// exit with the subprocess's stderr rolled up.
+#[cfg(target_os = "linux")]
 #[cfg_attr(not(test), allow(dead_code))]
 fn run_mtool(argv: &[&str]) -> Result<(), String> {
     let out = std::process::Command::new("sudo")
