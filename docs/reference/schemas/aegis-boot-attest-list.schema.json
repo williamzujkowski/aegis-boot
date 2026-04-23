@@ -1,73 +1,61 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "AttestListReport",
-  "description": "Envelope emitted by `aegis-boot attest list --json`. Scans the host's attestation directory, attempts to parse each file, and reports either a parsed summary or a parse-error placeholder per entry. Enables monitoring / fleet tools to audit chain-of-custody across all flashed sticks on a host.",
+  "description": "Envelope emitted by `aegis-boot attest list --json`. Scans the\nhost's attestation directory, attempts to parse each file, and\nreports either a parsed summary or a parse-error placeholder per\nentry. Enables monitoring / fleet tools to audit chain-of-custody\nacross all flashed sticks on a host.",
   "type": "object",
-  "required": [
-    "attestations",
-    "attestations_dir",
-    "count",
-    "schema_version",
-    "tool_version"
-  ],
   "properties": {
     "attestations": {
-      "description": "One entry per file found. See [`AttestListEntry`] for the success/error shape selection.",
+      "description": "One entry per file found. See [`AttestListEntry`] for the\nsuccess/error shape selection.",
       "type": "array",
       "items": {
-        "$ref": "#/definitions/AttestListEntry"
+        "$ref": "#/$defs/AttestListEntry"
       }
     },
     "attestations_dir": {
-      "description": "Host filesystem path of the attestations directory scanned (typically `$XDG_DATA_HOME/aegis-boot/attestations/`).",
+      "description": "Host filesystem path of the attestations directory scanned\n(typically `$XDG_DATA_HOME/aegis-boot/attestations/`).",
       "type": "string"
     },
     "count": {
       "description": "Number of files scanned (including parse-failure entries).",
       "type": "integer",
       "format": "uint32",
-      "minimum": 0.0
+      "minimum": 0
     },
     "schema_version": {
       "description": "Wire-format version. See [`ATTEST_LIST_SCHEMA_VERSION`].",
       "type": "integer",
       "format": "uint32",
-      "minimum": 0.0
+      "minimum": 0
     },
     "tool_version": {
       "description": "`aegis-boot` binary version that produced this envelope.",
       "type": "string"
     }
   },
-  "definitions": {
+  "required": [
+    "schema_version",
+    "tool_version",
+    "attestations_dir",
+    "count",
+    "attestations"
+  ],
+  "$defs": {
     "AttestListEntry": {
-      "description": "One entry in an [`AttestListReport`]. Two mutually-exclusive wire shapes via serde's `untagged` tagging:\n\n* **Success** — a successful parse, reporting the manifest's headline fields. The `error` field is absent. * **Error** — the file existed but could not be parsed. Only `manifest_path` + `error` are emitted; the summary fields are absent.\n\nSchemars emits this as a JSON Schema `oneOf` so consumers know to branch on the presence of the `error` field.",
+      "description": "One entry in an [`AttestListReport`]. Two mutually-exclusive\nwire shapes via serde's `untagged` tagging:\n\n* **Success** — a successful parse, reporting the manifest's\n  headline fields. The `error` field is absent.\n* **Error** — the file existed but could not be parsed. Only\n  `manifest_path` + `error` are emitted; the summary fields\n  are absent.\n\nSchemars emits this as a JSON Schema `oneOf` so consumers know\nto branch on the presence of the `error` field.",
       "anyOf": [
         {
           "description": "Parsed manifest summary.",
-          "allOf": [
-            {
-              "$ref": "#/definitions/AttestListSuccess"
-            }
-          ]
+          "$ref": "#/$defs/AttestListSuccess"
         },
         {
           "description": "Placeholder for a file that existed but failed to parse.",
-          "allOf": [
-            {
-              "$ref": "#/definitions/AttestListError"
-            }
-          ]
+          "$ref": "#/$defs/AttestListError"
         }
       ]
     },
     "AttestListError": {
-      "description": "Parse-failure entry inside an [`AttestListReport`]. Consumer decision: show the operator which file failed + why, so they can audit / repair / delete.",
+      "description": "Parse-failure entry inside an [`AttestListReport`]. Consumer\ndecision: show the operator which file failed + why, so they\ncan audit / repair / delete.",
       "type": "object",
-      "required": [
-        "error",
-        "manifest_path"
-      ],
       "properties": {
         "error": {
           "description": "Human-readable error message from the parser.",
@@ -77,22 +65,15 @@
           "description": "Host filesystem path of the unparseable file.",
           "type": "string"
         }
-      }
+      },
+      "required": [
+        "manifest_path",
+        "error"
+      ]
     },
     "AttestListSuccess": {
-      "description": "Successfully-parsed attestation summary inside an [`AttestListReport`]. Deliberately a strict subset of the full [`Attestation`] — enough to drive a dashboard without requiring consumers to re-parse each file. Full detail is one `aegis-boot attest show <path>` away.",
+      "description": "Successfully-parsed attestation summary inside an\n[`AttestListReport`]. Deliberately a strict subset of the full\n[`Attestation`] — enough to drive a dashboard without requiring\nconsumers to re-parse each file. Full detail is one\n`aegis-boot attest show <path>` away.",
       "type": "object",
-      "required": [
-        "disk_guid",
-        "flashed_at",
-        "iso_count",
-        "manifest_path",
-        "operator",
-        "schema_version",
-        "target_device",
-        "target_model",
-        "tool_version"
-      ],
       "properties": {
         "disk_guid": {
           "description": "GPT disk GUID from the attestation's target info.",
@@ -106,7 +87,7 @@
           "description": "Number of [`IsoRecord`] entries inside the attestation.",
           "type": "integer",
           "format": "uint32",
-          "minimum": 0.0
+          "minimum": 0
         },
         "manifest_path": {
           "description": "Host filesystem path of the attestation manifest file.",
@@ -117,10 +98,10 @@
           "type": "string"
         },
         "schema_version": {
-          "description": "Schema version declared inside the attestation manifest (see [`ATTESTATION_SCHEMA_VERSION`]).",
+          "description": "Schema version declared inside the attestation manifest\n(see [`ATTESTATION_SCHEMA_VERSION`]).",
           "type": "integer",
           "format": "uint32",
-          "minimum": 0.0
+          "minimum": 0
         },
         "target_device": {
           "description": "`target.device` from the attestation (e.g. `/dev/sda`).",
@@ -134,7 +115,18 @@
           "description": "`tool_version` field from the attestation manifest.",
           "type": "string"
         }
-      }
+      },
+      "required": [
+        "manifest_path",
+        "schema_version",
+        "tool_version",
+        "flashed_at",
+        "operator",
+        "target_device",
+        "target_model",
+        "disk_guid",
+        "iso_count"
+      ]
     }
   }
 }

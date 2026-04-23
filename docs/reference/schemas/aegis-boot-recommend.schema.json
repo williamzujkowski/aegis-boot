@@ -1,83 +1,60 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "RecommendReport",
-  "description": "Envelope emitted by `aegis-boot recommend --json`. Untagged wrapper around three mutually-exclusive shapes: a full catalog listing, a single-entry response, or a miss. Consumers branch on the presence of `entries` / `entry` / `error`.\n\nThe miss shape intentionally omits `tool_version` — matches the existing wire format. Future schema bumps can unify the three shapes; Phase 4b-6 preserves the current contract.",
+  "description": "Envelope emitted by `aegis-boot recommend --json`. Untagged\nwrapper around three mutually-exclusive shapes: a full catalog\nlisting, a single-entry response, or a miss. Consumers branch\non the presence of `entries` / `entry` / `error`.\n\nThe miss shape intentionally omits `tool_version` — matches\nthe existing wire format. Future schema bumps can unify the\nthree shapes; Phase 4b-6 preserves the current contract.",
   "anyOf": [
     {
-      "description": "Full catalog listing. Emitted when `aegis-boot recommend --json` is called with no slug.",
-      "allOf": [
-        {
-          "$ref": "#/definitions/RecommendCatalogReport"
-        }
-      ]
+      "description": "Full catalog listing. Emitted when `aegis-boot recommend\n--json` is called with no slug.",
+      "$ref": "#/$defs/RecommendCatalogReport"
     },
     {
-      "description": "Single-entry response. Emitted when the slug matched one catalog entry exactly.",
-      "allOf": [
-        {
-          "$ref": "#/definitions/RecommendSingleReport"
-        }
-      ]
+      "description": "Single-entry response. Emitted when the slug matched one\ncatalog entry exactly.",
+      "$ref": "#/$defs/RecommendSingleReport"
     },
     {
       "description": "Miss — the slug didn't match any entry.",
-      "allOf": [
-        {
-          "$ref": "#/definitions/RecommendMissReport"
-        }
-      ]
+      "$ref": "#/$defs/RecommendMissReport"
     }
   ],
-  "definitions": {
+  "$defs": {
     "RecommendCatalogReport": {
       "description": "Full-catalog variant of [`RecommendReport`].",
       "type": "object",
-      "required": [
-        "count",
-        "entries",
-        "schema_version",
-        "tool_version"
-      ],
       "properties": {
         "count": {
           "description": "Total entries in the catalog. Equals `entries.len()`.",
           "type": "integer",
           "format": "uint32",
-          "minimum": 0.0
+          "minimum": 0
         },
         "entries": {
-          "description": "All catalog entries in the order `CATALOG` defines them (typically alphabetical by slug).",
+          "description": "All catalog entries in the order `CATALOG` defines them\n(typically alphabetical by slug).",
           "type": "array",
           "items": {
-            "$ref": "#/definitions/RecommendEntry"
+            "$ref": "#/$defs/RecommendEntry"
           }
         },
         "schema_version": {
           "description": "Wire-format version. See [`RECOMMEND_SCHEMA_VERSION`].",
           "type": "integer",
           "format": "uint32",
-          "minimum": 0.0
+          "minimum": 0
         },
         "tool_version": {
           "description": "`aegis-boot` binary version that produced this envelope.",
           "type": "string"
         }
-      }
+      },
+      "required": [
+        "schema_version",
+        "tool_version",
+        "count",
+        "entries"
+      ]
     },
     "RecommendEntry": {
-      "description": "One curated catalog entry. Used in both [`RecommendCatalogReport::entries`] and [`RecommendSingleReport::entry`].",
+      "description": "One curated catalog entry. Used in both\n[`RecommendCatalogReport::entries`] and\n[`RecommendSingleReport::entry`].",
       "type": "object",
-      "required": [
-        "arch",
-        "iso_url",
-        "name",
-        "purpose",
-        "sb",
-        "sha256_url",
-        "sig_url",
-        "size_mib",
-        "slug"
-      ],
       "properties": {
         "arch": {
           "description": "CPU architecture (`\"amd64\"`, `\"arm64\"`, …).",
@@ -92,11 +69,11 @@
           "type": "string"
         },
         "purpose": {
-          "description": "One-line operator-facing purpose (e.g. `\"Standard server install media\"`).",
+          "description": "One-line operator-facing purpose (e.g. `\"Standard server\ninstall media\"`).",
           "type": "string"
         },
         "sb": {
-          "description": "Secure Boot status string — one of `\"signed:<vendor>\"` (e.g. `\"signed:canonical\"`), `\"unsigned-needs-mok\"`, or `\"unknown\"`.",
+          "description": "Secure Boot status string — one of `\"signed:<vendor>\"` (e.g.\n`\"signed:canonical\"`), `\"unsigned-needs-mok\"`, or\n`\"unknown\"`.",
           "type": "string"
         },
         "sha256_url": {
@@ -104,28 +81,35 @@
           "type": "string"
         },
         "sig_url": {
-          "description": "HTTPS URL of the detached signature over the SHA256SUMS file (typically a GPG `.gpg`).",
+          "description": "HTTPS URL of the detached signature over the SHA256SUMS file\n(typically a GPG `.gpg`).",
           "type": "string"
         },
         "size_mib": {
-          "description": "ISO size in mebibytes (rounded to nearest; informational for download-time estimates, not a strict guarantee). `u32` accommodates up to ~4 PiB — plenty of headroom for any realistic ISO.",
+          "description": "ISO size in mebibytes (rounded to nearest; informational\nfor download-time estimates, not a strict guarantee).\n`u32` accommodates up to ~4 PiB — plenty of headroom for\nany realistic ISO.",
           "type": "integer",
           "format": "uint32",
-          "minimum": 0.0
+          "minimum": 0
         },
         "slug": {
-          "description": "Short stable identifier (e.g. `\"ubuntu-24.04-live-server\"`). Used by `aegis-boot fetch <slug>` to resolve a URL set.",
+          "description": "Short stable identifier (e.g. `\"ubuntu-24.04-live-server\"`).\nUsed by `aegis-boot fetch <slug>` to resolve a URL set.",
           "type": "string"
         }
-      }
+      },
+      "required": [
+        "slug",
+        "name",
+        "arch",
+        "size_mib",
+        "iso_url",
+        "sha256_url",
+        "sig_url",
+        "sb",
+        "purpose"
+      ]
     },
     "RecommendMissReport": {
-      "description": "Miss variant of [`RecommendReport`] — no catalog entry matched the given slug. The envelope is deliberately asymmetric from the success variants (no `tool_version`) to match the existing wire format; tightening to always emit `tool_version` would be an additive (non-breaking) future change.",
+      "description": "Miss variant of [`RecommendReport`] — no catalog entry matched\nthe given slug. The envelope is deliberately asymmetric from\nthe success variants (no `tool_version`) to match the existing\nwire format; tightening to always emit `tool_version` would be\nan additive (non-breaking) future change.",
       "type": "object",
-      "required": [
-        "error",
-        "schema_version"
-      ],
       "properties": {
         "error": {
           "description": "Human-readable error (\"no catalog entry matching '<slug>'\").",
@@ -135,38 +119,38 @@
           "description": "Wire-format version. See [`RECOMMEND_SCHEMA_VERSION`].",
           "type": "integer",
           "format": "uint32",
-          "minimum": 0.0
+          "minimum": 0
         }
-      }
+      },
+      "required": [
+        "schema_version",
+        "error"
+      ]
     },
     "RecommendSingleReport": {
       "description": "Single-entry variant of [`RecommendReport`].",
       "type": "object",
-      "required": [
-        "entry",
-        "schema_version",
-        "tool_version"
-      ],
       "properties": {
         "entry": {
           "description": "The matched catalog entry.",
-          "allOf": [
-            {
-              "$ref": "#/definitions/RecommendEntry"
-            }
-          ]
+          "$ref": "#/$defs/RecommendEntry"
         },
         "schema_version": {
           "description": "Wire-format version. See [`RECOMMEND_SCHEMA_VERSION`].",
           "type": "integer",
           "format": "uint32",
-          "minimum": 0.0
+          "minimum": 0
         },
         "tool_version": {
           "description": "`aegis-boot` binary version that produced this envelope.",
           "type": "string"
         }
-      }
+      },
+      "required": [
+        "schema_version",
+        "tool_version",
+        "entry"
+      ]
     }
   }
 }

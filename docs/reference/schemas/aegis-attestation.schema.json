@@ -1,89 +1,74 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Attestation",
-  "description": "One flash + zero-or-more ISO additions, captured as a single JSON document on the host. Stored under `$XDG_DATA_HOME/aegis-boot/attestations/` (or `~/.local/share/aegis-boot/attestations/` if `XDG_DATA_HOME` is unset). The `aegis-boot attest list` / `attest show` commands read these back for chain-of-custody queries.\n\nv0 ships unsigned — the trust anchor is \"the operator ran this command on this host, the timestamps + hashes are the evidence.\" TPM PCR attestation + signing lands under epic [#139](https://github.com/aegis-boot/aegis-boot/issues/139) as additive fields; the current schema is forward-compatible (consumers ignore unknown fields).",
+  "description": "One flash + zero-or-more ISO additions, captured as a single\nJSON document on the host. Stored under\n`$XDG_DATA_HOME/aegis-boot/attestations/` (or\n`~/.local/share/aegis-boot/attestations/` if `XDG_DATA_HOME` is\nunset). The `aegis-boot attest list` / `attest show` commands\nread these back for chain-of-custody queries.\n\nv0 ships unsigned — the trust anchor is \"the operator ran this\ncommand on this host, the timestamps + hashes are the evidence.\"\nTPM PCR attestation + signing lands under epic\n[#139](https://github.com/aegis-boot/aegis-boot/issues/139)\nas additive fields; the current schema is forward-compatible\n(consumers ignore unknown fields).",
   "type": "object",
-  "required": [
-    "flashed_at",
-    "host",
-    "isos",
-    "operator",
-    "schema_version",
-    "target",
-    "tool_version"
-  ],
   "properties": {
     "flashed_at": {
-      "description": "RFC 3339 / ISO 8601 timestamp of the flash operation. Generated via the host's `date -u +%FT%TZ` so the crate does not pull a chrono dep.",
+      "description": "RFC 3339 / ISO 8601 timestamp of the flash operation.\nGenerated via the host's `date -u +%FT%TZ` so the crate\ndoes not pull a chrono dep.",
       "type": "string"
     },
     "host": {
       "description": "Host environment captured at flash time.",
-      "allOf": [
-        {
-          "$ref": "#/definitions/HostInfo"
-        }
-      ]
+      "$ref": "#/$defs/HostInfo"
     },
     "isos": {
-      "description": "ISO records appended on each successful `aegis-boot add`. Empty immediately after flash; grows over the stick's lifetime.",
+      "description": "ISO records appended on each successful `aegis-boot add`.\nEmpty immediately after flash; grows over the stick's\nlifetime.",
       "type": "array",
       "items": {
-        "$ref": "#/definitions/IsoRecord"
+        "$ref": "#/$defs/IsoRecord"
       }
     },
     "operator": {
-      "description": "The user that ran `aegis-boot flash` — captured from `$SUDO_USER` if set, else `$USER`.",
+      "description": "The user that ran `aegis-boot flash` — captured from\n`$SUDO_USER` if set, else `$USER`.",
       "type": "string"
     },
     "schema_version": {
       "description": "Wire-format version. See [`ATTESTATION_SCHEMA_VERSION`].",
       "type": "integer",
       "format": "uint32",
-      "minimum": 0.0
+      "minimum": 0
     },
     "target": {
       "description": "Target stick captured at flash time.",
-      "allOf": [
-        {
-          "$ref": "#/definitions/TargetInfo"
-        }
-      ]
+      "$ref": "#/$defs/TargetInfo"
     },
     "tool_version": {
-      "description": "`aegis-boot` binary version that produced this record (e.g. `\"aegis-boot 0.14.1\"`).",
+      "description": "`aegis-boot` binary version that produced this record\n(e.g. `\"aegis-boot 0.14.1\"`).",
       "type": "string"
     }
   },
-  "definitions": {
+  "required": [
+    "schema_version",
+    "tool_version",
+    "flashed_at",
+    "operator",
+    "host",
+    "target",
+    "isos"
+  ],
+  "$defs": {
     "HostInfo": {
       "description": "Host environment fingerprint at flash time.",
       "type": "object",
-      "required": [
-        "kernel",
-        "secure_boot"
-      ],
       "properties": {
         "kernel": {
           "description": "`uname -r` output.",
           "type": "string"
         },
         "secure_boot": {
-          "description": "Secure Boot state: one of `\"enforcing\"`, `\"disabled\"`, or `\"unknown\"`.",
+          "description": "Secure Boot state: one of `\"enforcing\"`, `\"disabled\"`, or\n`\"unknown\"`.",
           "type": "string"
         }
-      }
+      },
+      "required": [
+        "kernel",
+        "secure_boot"
+      ]
     },
     "IsoRecord": {
-      "description": "One `aegis-boot add` operation appended to the stick's attestation record.",
+      "description": "One `aegis-boot add` operation appended to the stick's\nattestation record.",
       "type": "object",
-      "required": [
-        "added_at",
-        "filename",
-        "sha256",
-        "sidecars",
-        "size_bytes"
-      ],
       "properties": {
         "added_at": {
           "description": "RFC 3339 / ISO 8601 timestamp of when the ISO was added.",
@@ -98,7 +83,7 @@
           "type": "string"
         },
         "sidecars": {
-          "description": "Sidecar filenames recorded alongside the ISO (e.g. a `.aegis.toml` operator-label file).",
+          "description": "Sidecar filenames recorded alongside the ISO (e.g. a\n`.aegis.toml` operator-label file).",
           "type": "array",
           "items": {
             "type": "string"
@@ -108,28 +93,27 @@
           "description": "ISO size in bytes.",
           "type": "integer",
           "format": "uint64",
-          "minimum": 0.0
+          "minimum": 0
         }
-      }
+      },
+      "required": [
+        "filename",
+        "sha256",
+        "size_bytes",
+        "sidecars",
+        "added_at"
+      ]
     },
     "TargetInfo": {
       "description": "Target stick fingerprint at flash time.",
       "type": "object",
-      "required": [
-        "device",
-        "disk_guid",
-        "image_sha256",
-        "image_size_bytes",
-        "model",
-        "size_bytes"
-      ],
       "properties": {
         "device": {
           "description": "Device node path (e.g. `/dev/sda`).",
           "type": "string"
         },
         "disk_guid": {
-          "description": "GPT disk GUID, captured from `sgdisk -p` after `partprobe`. May be empty if sgdisk fails or the drive isn't partitioned.",
+          "description": "GPT disk GUID, captured from `sgdisk -p` after `partprobe`.\nMay be empty if sgdisk fails or the drive isn't partitioned.",
           "type": "string"
         },
         "image_sha256": {
@@ -137,10 +121,10 @@
           "type": "string"
         },
         "image_size_bytes": {
-          "description": "Size in bytes of the image body (for sanity-checking the sha256 over the correct length).",
+          "description": "Size in bytes of the image body (for sanity-checking the\nsha256 over the correct length).",
           "type": "integer",
           "format": "uint64",
-          "minimum": 0.0
+          "minimum": 0
         },
         "model": {
           "description": "Vendor + model string from `/sys/block/sdX/device/{vendor,model}`.",
@@ -150,9 +134,17 @@
           "description": "Raw device size in bytes, rounded to the nearest 512B sector.",
           "type": "integer",
           "format": "uint64",
-          "minimum": 0.0
+          "minimum": 0
         }
-      }
+      },
+      "required": [
+        "device",
+        "model",
+        "size_bytes",
+        "image_sha256",
+        "image_size_bytes",
+        "disk_guid"
+      ]
     }
   }
 }

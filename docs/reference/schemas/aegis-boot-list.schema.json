@@ -1,21 +1,14 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "ListReport",
-  "description": "Envelope emitted by `aegis-boot list --json`. Reports the ISOs discovered on a stick's AEGIS_ISOS data partition, plus the attestation summary if one was recorded at flash time.",
+  "description": "Envelope emitted by `aegis-boot list --json`. Reports the ISOs\ndiscovered on a stick's AEGIS_ISOS data partition, plus the\nattestation summary if one was recorded at flash time.",
   "type": "object",
-  "required": [
-    "count",
-    "isos",
-    "mount_path",
-    "schema_version",
-    "tool_version"
-  ],
   "properties": {
     "attestation": {
-      "description": "Chain-of-custody summary from the matching attestation record, or null if no attestation was found (operator flashed on a different host, or pre-v0.13.0 stick).",
+      "description": "Chain-of-custody summary from the matching attestation\nrecord, or null if no attestation was found (operator\nflashed on a different host, or pre-v0.13.0 stick).",
       "anyOf": [
         {
-          "$ref": "#/definitions/ListAttestationSummary"
+          "$ref": "#/$defs/ListAttestationSummary"
         },
         {
           "type": "null"
@@ -23,53 +16,54 @@
       ]
     },
     "count": {
-      "description": "Number of ISOs observed. Redundant with `isos.len()` but useful for consumers that only read the header.",
+      "description": "Number of ISOs observed. Redundant with `isos.len()` but\nuseful for consumers that only read the header.",
       "type": "integer",
       "format": "uint32",
-      "minimum": 0.0
+      "minimum": 0
     },
     "isos": {
       "description": "Per-ISO details. See [`ListIsoSummary`].",
       "type": "array",
       "items": {
-        "$ref": "#/definitions/ListIsoSummary"
+        "$ref": "#/$defs/ListIsoSummary"
       }
     },
     "mount_path": {
-      "description": "Filesystem mount path the stick was resolved to (e.g. `/run/media/alice/AEGIS_ISOS`).",
+      "description": "Filesystem mount path the stick was resolved to (e.g.\n`/run/media/alice/AEGIS_ISOS`).",
       "type": "string"
     },
     "schema_version": {
       "description": "Wire-format version. See [`LIST_SCHEMA_VERSION`].",
       "type": "integer",
       "format": "uint32",
-      "minimum": 0.0
+      "minimum": 0
     },
     "tool_version": {
       "description": "`aegis-boot` binary version that produced this envelope.",
       "type": "string"
     }
   },
-  "definitions": {
+  "required": [
+    "schema_version",
+    "tool_version",
+    "mount_path",
+    "count",
+    "isos"
+  ],
+  "$defs": {
     "ListAttestationSummary": {
-      "description": "Compact attestation summary embedded in [`ListReport`]. Derived from the stored [`Attestation`] record; smaller than the full attestation (no device fingerprint, no host kernel string) so the list envelope stays lightweight.",
+      "description": "Compact attestation summary embedded in [`ListReport`]. Derived\nfrom the stored [`Attestation`] record; smaller than the full\nattestation (no device fingerprint, no host kernel string) so\nthe list envelope stays lightweight.",
       "type": "object",
-      "required": [
-        "flashed_at",
-        "isos_recorded",
-        "manifest_path",
-        "operator"
-      ],
       "properties": {
         "flashed_at": {
           "description": "RFC 3339 timestamp of the flash operation.",
           "type": "string"
         },
         "isos_recorded": {
-          "description": "Count of ISOs recorded in the attestation. Note this can differ from [`ListReport::count`] — the attestation tracks ISOs that were added via `aegis-boot add`, while the list count scans the actual partition. A mismatch is a signal that someone hand-copied an ISO rather than using the CLI.",
+          "description": "Count of ISOs recorded in the attestation. Note this can\ndiffer from [`ListReport::count`] — the attestation tracks\nISOs that were added via `aegis-boot add`, while the list\ncount scans the actual partition. A mismatch is a signal\nthat someone hand-copied an ISO rather than using the CLI.",
           "type": "integer",
           "format": "uint32",
-          "minimum": 0.0
+          "minimum": 0
         },
         "manifest_path": {
           "description": "Filesystem path of the host-side attestation manifest.",
@@ -79,34 +73,34 @@
           "description": "Operator that ran `aegis-boot flash`.",
           "type": "string"
         }
-      }
+      },
+      "required": [
+        "flashed_at",
+        "operator",
+        "isos_recorded",
+        "manifest_path"
+      ]
     },
     "ListIsoSummary": {
-      "description": "Per-ISO detail in [`ListReport`]. The `display_name` + `description` fields come from an optional `<iso>.aegis.toml` operator-label sidecar (#246); they are always present in the wire format (as `null` when absent) so consumers see a stable shape.",
+      "description": "Per-ISO detail in [`ListReport`]. The `display_name` +\n`description` fields come from an optional `<iso>.aegis.toml`\noperator-label sidecar (#246); they are always present in the\nwire format (as `null` when absent) so consumers see a stable\nshape.",
       "type": "object",
-      "required": [
-        "has_minisig",
-        "has_sha256",
-        "name",
-        "size_bytes"
-      ],
       "properties": {
         "description": {
-          "description": "Operator-curated description from `<iso>.aegis.toml`, or null when the sidecar is absent.",
+          "description": "Operator-curated description from `<iso>.aegis.toml`, or\nnull when the sidecar is absent.",
           "type": [
             "string",
             "null"
           ]
         },
         "display_name": {
-          "description": "Operator-curated display name from `<iso>.aegis.toml`, or null when the sidecar is absent. Intentionally NOT omitted when null — consumers depend on a stable field set.",
+          "description": "Operator-curated display name from `<iso>.aegis.toml`, or\nnull when the sidecar is absent. Intentionally NOT omitted\nwhen null — consumers depend on a stable field set.",
           "type": [
             "string",
             "null"
           ]
         },
         "folder": {
-          "description": "Subfolder path relative to the data-partition mount, or `null` when the ISO sits at the root. `\"ubuntu-24.04\"` for a single level, `\"ubuntu/24.04\"` for nested (forward-slash separator regardless of host OS — the stick filesystem is exFAT, which normalizes to `/`). Added in v0.16.0 (#274 Phase 6a) as an additive optional field; v0.15.x consumers that ignore unknown keys see no behavior change, and the `name` field remains a basename for scripts that joined it directly.",
+          "description": "Subfolder path relative to the data-partition mount, or `null`\nwhen the ISO sits at the root. `\"ubuntu-24.04\"` for a single\nlevel, `\"ubuntu/24.04\"` for nested (forward-slash separator\nregardless of host OS — the stick filesystem is exFAT, which\nnormalizes to `/`). Added in v0.16.0 (#274 Phase 6a) as an\nadditive optional field; v0.15.x consumers that ignore\nunknown keys see no behavior change, and the `name` field\nremains a basename for scripts that joined it directly.",
           "type": [
             "string",
             "null"
@@ -121,16 +115,22 @@
           "type": "boolean"
         },
         "name": {
-          "description": "ISO basename (no directory component). Consumers that join `mount_path + name` will get the root-of-stick path, which is only valid when `folder` is null. For sticks with subfolder layouts (#274 Phase 6), join `mount_path + folder + name`. Kept as basename — separate from `folder` — so downstream automation that shelled out to `basename(1)` on the old flat layout keeps working.",
+          "description": "ISO basename (no directory component). Consumers that join\n`mount_path + name` will get the root-of-stick path, which is\nonly valid when `folder` is null. For sticks with subfolder\nlayouts (#274 Phase 6), join `mount_path + folder + name`.\nKept as basename — separate from `folder` — so downstream\nautomation that shelled out to `basename(1)` on the old flat\nlayout keeps working.",
           "type": "string"
         },
         "size_bytes": {
           "description": "ISO size in bytes.",
           "type": "integer",
           "format": "uint64",
-          "minimum": 0.0
+          "minimum": 0
         }
-      }
+      },
+      "required": [
+        "name",
+        "size_bytes",
+        "has_sha256",
+        "has_minisig"
+      ]
     }
   }
 }

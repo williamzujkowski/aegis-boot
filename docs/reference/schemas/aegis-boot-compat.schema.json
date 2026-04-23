@@ -1,64 +1,41 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "CompatReport",
-  "description": "Envelope emitted by `aegis-boot compat --json`. Untagged wrapper around 4 mutually-exclusive shapes: full catalog, single match, miss (query matched no DB entry), or my-machine-miss (DMI lookup couldn't resolve an identity).\n\nDispatch by field presence: * `entries` → [`CompatReport::Catalog`] * `entry` → [`CompatReport::Single`] * `report_url` + `error` (no entries/entry) → [`CompatReport::Miss`] * `error` without `report_url` → [`CompatReport::MyMachineMiss`]\n\nThe separate `CompatSubmitReport` carries the `--submit` flow's own shape and schema version.",
+  "description": "Envelope emitted by `aegis-boot compat --json`. Untagged\nwrapper around 4 mutually-exclusive shapes: full catalog,\nsingle match, miss (query matched no DB entry), or\nmy-machine-miss (DMI lookup couldn't resolve an identity).\n\nDispatch by field presence:\n* `entries` → [`CompatReport::Catalog`]\n* `entry` → [`CompatReport::Single`]\n* `report_url` + `error` (no entries/entry) → [`CompatReport::Miss`]\n* `error` without `report_url` → [`CompatReport::MyMachineMiss`]\n\nThe separate `CompatSubmitReport` carries the `--submit` flow's\nown shape and schema version.",
   "anyOf": [
     {
       "description": "Full catalog listing. Emitted with no query argument.",
-      "allOf": [
-        {
-          "$ref": "#/definitions/CompatCatalogReport"
-        }
-      ]
+      "$ref": "#/$defs/CompatCatalogReport"
     },
     {
-      "description": "Single match. Emitted when the query resolved exactly one DB entry.",
-      "allOf": [
-        {
-          "$ref": "#/definitions/CompatSingleReport"
-        }
-      ]
+      "description": "Single match. Emitted when the query resolved exactly one\nDB entry.",
+      "$ref": "#/$defs/CompatSingleReport"
     },
     {
-      "description": "Miss. Emitted when the query didn't match any DB entry (but the query was well-formed).",
-      "allOf": [
-        {
-          "$ref": "#/definitions/CompatMissReport"
-        }
-      ]
+      "description": "Miss. Emitted when the query didn't match any DB entry\n(but the query was well-formed).",
+      "$ref": "#/$defs/CompatMissReport"
     },
     {
-      "description": "My-machine miss. Emitted when `--my-machine` or `--submit` couldn't resolve DMI identity (non-Linux host, placeholder values). Exit code on the CLI side is 2 (host-environment issue) vs the Miss case's 1 (DB coverage gap).",
-      "allOf": [
-        {
-          "$ref": "#/definitions/CompatMyMachineMissReport"
-        }
-      ]
+      "description": "My-machine miss. Emitted when `--my-machine` or\n`--submit` couldn't resolve DMI identity (non-Linux host,\nplaceholder values). Exit code on the CLI side is 2\n(host-environment issue) vs the Miss case's 1 (DB coverage\ngap).",
+      "$ref": "#/$defs/CompatMyMachineMissReport"
     }
   ],
-  "definitions": {
+  "$defs": {
     "CompatCatalogReport": {
       "description": "Full-catalog variant of [`CompatReport`].",
       "type": "object",
-      "required": [
-        "count",
-        "entries",
-        "report_url",
-        "schema_version",
-        "tool_version"
-      ],
       "properties": {
         "count": {
           "description": "Number of entries in the DB. Equals `entries.len()`.",
           "type": "integer",
           "format": "uint32",
-          "minimum": 0.0
+          "minimum": 0
         },
         "entries": {
           "description": "All entries in DB declaration order.",
           "type": "array",
           "items": {
-            "$ref": "#/definitions/CompatEntry"
+            "$ref": "#/$defs/CompatEntry"
           }
         },
         "report_url": {
@@ -69,31 +46,27 @@
           "description": "Wire-format version. See [`COMPAT_SCHEMA_VERSION`].",
           "type": "integer",
           "format": "uint32",
-          "minimum": 0.0
+          "minimum": 0
         },
         "tool_version": {
           "description": "`aegis-boot` binary version that produced this envelope.",
           "type": "string"
         }
-      }
+      },
+      "required": [
+        "schema_version",
+        "tool_version",
+        "report_url",
+        "count",
+        "entries"
+      ]
     },
     "CompatEntry": {
-      "description": "One hardware-compatibility DB row. Mirrors `docs/HARDWARE_COMPAT.md`; every entry corresponds to a real operator report (or the QEMU reference environment).",
+      "description": "One hardware-compatibility DB row. Mirrors\n`docs/HARDWARE_COMPAT.md`; every entry corresponds to a real\noperator report (or the QEMU reference environment).",
       "type": "object",
-      "required": [
-        "boot_key",
-        "date",
-        "firmware",
-        "level",
-        "model",
-        "notes",
-        "reported_by",
-        "sb_state",
-        "vendor"
-      ],
       "properties": {
         "boot_key": {
-          "description": "Boot-menu key for this firmware (`\"F12\"`, `\"Esc\"`, etc.). `\"n/a\"` for reference / virtualized environments.",
+          "description": "Boot-menu key for this firmware (`\"F12\"`, `\"Esc\"`, etc.).\n`\"n/a\"` for reference / virtualized environments.",
           "type": "string"
         },
         "date": {
@@ -105,7 +78,7 @@
           "type": "string"
         },
         "level": {
-          "description": "Confidence level: `\"verified\"`, `\"partial\"`, or `\"reference\"`.",
+          "description": "Confidence level: `\"verified\"`, `\"partial\"`, or\n`\"reference\"`.",
           "type": "string"
         },
         "model": {
@@ -113,7 +86,7 @@
           "type": "string"
         },
         "notes": {
-          "description": "Free-text operator notes (quirks, BIOS tweaks, fast-boot caveats). May be empty for a clean boot.",
+          "description": "Free-text operator notes (quirks, BIOS tweaks,\nfast-boot caveats). May be empty for a clean boot.",
           "type": "array",
           "items": {
             "type": "string"
@@ -124,23 +97,29 @@
           "type": "string"
         },
         "sb_state": {
-          "description": "Secure Boot state at the time of the report (typically `\"enforcing\"` or `\"disabled\"`).",
+          "description": "Secure Boot state at the time of the report\n(typically `\"enforcing\"` or `\"disabled\"`).",
           "type": "string"
         },
         "vendor": {
           "description": "Vendor (e.g. `\"Lenovo\"`, `\"Framework\"`, `\"QEMU\"`).",
           "type": "string"
         }
-      }
+      },
+      "required": [
+        "vendor",
+        "model",
+        "firmware",
+        "sb_state",
+        "boot_key",
+        "level",
+        "reported_by",
+        "date",
+        "notes"
+      ]
     },
     "CompatMissReport": {
-      "description": "Miss variant of [`CompatReport`] — the query was well-formed but didn't match any DB entry. Carries `report_url` so the operator can file a new entry; deliberately omits `tool_version` to match the existing wire format.",
+      "description": "Miss variant of [`CompatReport`] — the query was well-formed but\ndidn't match any DB entry. Carries `report_url` so the operator\ncan file a new entry; deliberately omits `tool_version` to match\nthe existing wire format.",
       "type": "object",
-      "required": [
-        "error",
-        "report_url",
-        "schema_version"
-      ],
       "properties": {
         "error": {
           "description": "Human-readable error (`\"no platform matching '<query>'\"`).",
@@ -154,47 +133,42 @@
           "description": "Wire-format version. See [`COMPAT_SCHEMA_VERSION`].",
           "type": "integer",
           "format": "uint32",
-          "minimum": 0.0
+          "minimum": 0
         }
-      }
+      },
+      "required": [
+        "schema_version",
+        "report_url",
+        "error"
+      ]
     },
     "CompatMyMachineMissReport": {
-      "description": "My-machine-miss variant of [`CompatReport`] — `--my-machine` or `--submit` couldn't auto-fill the query from DMI. Minimal envelope (just `schema_version` + `error`) to match the existing wire format.",
+      "description": "My-machine-miss variant of [`CompatReport`] — `--my-machine` or\n`--submit` couldn't auto-fill the query from DMI. Minimal\nenvelope (just `schema_version` + `error`) to match the existing\nwire format.",
       "type": "object",
-      "required": [
-        "error",
-        "schema_version"
-      ],
       "properties": {
         "error": {
-          "description": "Human-readable error (`\"--my-machine: DMI fields unavailable (…)\"`).",
+          "description": "Human-readable error\n(`\"--my-machine: DMI fields unavailable (…)\"`).",
           "type": "string"
         },
         "schema_version": {
           "description": "Wire-format version. See [`COMPAT_SCHEMA_VERSION`].",
           "type": "integer",
           "format": "uint32",
-          "minimum": 0.0
+          "minimum": 0
         }
-      }
+      },
+      "required": [
+        "schema_version",
+        "error"
+      ]
     },
     "CompatSingleReport": {
       "description": "Single-entry variant of [`CompatReport`].",
       "type": "object",
-      "required": [
-        "entry",
-        "report_url",
-        "schema_version",
-        "tool_version"
-      ],
       "properties": {
         "entry": {
           "description": "The matched DB entry.",
-          "allOf": [
-            {
-              "$ref": "#/definitions/CompatEntry"
-            }
-          ]
+          "$ref": "#/$defs/CompatEntry"
         },
         "report_url": {
           "description": "URL operators visit to file a new hardware report.",
@@ -204,13 +178,19 @@
           "description": "Wire-format version. See [`COMPAT_SCHEMA_VERSION`].",
           "type": "integer",
           "format": "uint32",
-          "minimum": 0.0
+          "minimum": 0
         },
         "tool_version": {
           "description": "`aegis-boot` binary version that produced this envelope.",
           "type": "string"
         }
-      }
+      },
+      "required": [
+        "schema_version",
+        "tool_version",
+        "report_url",
+        "entry"
+      ]
     }
   }
 }

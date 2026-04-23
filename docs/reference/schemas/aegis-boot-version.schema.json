@@ -1,27 +1,27 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Version",
-  "description": "Envelope emitted by `aegis-boot --version --json`. Lets scripted consumers (install-one-liner assertions, Homebrew formula tests, ansible-verified installs) parse the version without regex on the human-readable string.",
+  "description": "Envelope emitted by `aegis-boot --version --json`. Lets scripted\nconsumers (install-one-liner assertions, Homebrew formula tests,\nansible-verified installs) parse the version without regex on\nthe human-readable string.",
   "type": "object",
-  "required": [
-    "schema_version",
-    "tool",
-    "version"
-  ],
   "properties": {
     "schema_version": {
       "description": "Wire-format version. See [`VERSION_SCHEMA_VERSION`].",
       "type": "integer",
       "format": "uint32",
-      "minimum": 0.0
+      "minimum": 0
     },
     "tool": {
-      "description": "Always `\"aegis-boot\"` for this CLI — field exists to make a future migration to a multi-tool repo (where the same envelope shape might be emitted by a sibling binary) a zero-schema-bump operation.",
+      "description": "Always `\"aegis-boot\"` for this CLI — field exists to make a\nfuture migration to a multi-tool repo (where the same\nenvelope shape might be emitted by a sibling binary) a\nzero-schema-bump operation.",
       "type": "string"
     },
     "version": {
-      "description": "Semver string matching the workspace version (`Cargo.toml` `[workspace.package].version`). Does NOT include a `v` prefix — `\"0.14.1\"`, not `\"v0.14.1\"`.",
+      "description": "Semver string matching the workspace version (`Cargo.toml`\n`[workspace.package].version`). Does NOT include a `v`\nprefix — `\"0.14.1\"`, not `\"v0.14.1\"`.",
       "type": "string"
     }
-  }
+  },
+  "required": [
+    "schema_version",
+    "tool",
+    "version"
+  ]
 }

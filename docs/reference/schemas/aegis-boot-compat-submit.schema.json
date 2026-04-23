@@ -1,19 +1,11 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "CompatSubmitReport",
-  "description": "Envelope emitted by `aegis-boot compat --submit --json` — the draft-a-hardware-report flow. Collects DMI identity + builds a pre-filled GitHub issue URL the operator can open to file a report. Independent schema from [`CompatReport`] because the consumer contracts diverge: lookup drives scripted decisions, submit drives an operator workflow.",
+  "description": "Envelope emitted by `aegis-boot compat --submit --json` — the\ndraft-a-hardware-report flow. Collects DMI identity + builds a\npre-filled GitHub issue URL the operator can open to file a\nreport. Independent schema from [`CompatReport`] because the\nconsumer contracts diverge: lookup drives scripted decisions,\nsubmit drives an operator workflow.",
   "type": "object",
-  "required": [
-    "firmware",
-    "model",
-    "schema_version",
-    "submit_url",
-    "tool",
-    "vendor"
-  ],
   "properties": {
     "firmware": {
-      "description": "DMI BIOS label (vendor + version + date). Empty if unavailable.",
+      "description": "DMI BIOS label (vendor + version + date). Empty if\nunavailable.",
       "type": "string"
     },
     "model": {
@@ -24,19 +16,27 @@
       "description": "Wire-format version. See [`COMPAT_SUBMIT_SCHEMA_VERSION`].",
       "type": "integer",
       "format": "uint32",
-      "minimum": 0.0
+      "minimum": 0
     },
     "submit_url": {
-      "description": "Pre-filled GitHub issue URL with `vendor`, `model`, `firmware`, and `aegis-version` query-string parameters set from DMI.",
+      "description": "Pre-filled GitHub issue URL with `vendor`, `model`,\n`firmware`, and `aegis-version` query-string parameters\nset from DMI.",
       "type": "string"
     },
     "tool": {
-      "description": "Always `\"aegis-boot\"`. Deliberately named `tool` (not `tool_version`) to match the existing wire format; this envelope carries the draft template, not a version pin.",
+      "description": "Always `\"aegis-boot\"`. Deliberately named `tool` (not\n`tool_version`) to match the existing wire format; this\nenvelope carries the draft template, not a version pin.",
       "type": "string"
     },
     "vendor": {
       "description": "DMI `sys_vendor`. Empty string if unavailable.",
       "type": "string"
     }
-  }
+  },
+  "required": [
+    "schema_version",
+    "tool",
+    "submit_url",
+    "vendor",
+    "model",
+    "firmware"
+  ]
 }

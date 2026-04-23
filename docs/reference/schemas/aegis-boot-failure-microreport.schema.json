@@ -1,30 +1,19 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "FailureMicroreport",
-  "description": "Tier-A anonymous failure microreport — written by `rescue-tui` / initramfs to `AEGIS_ISOS/aegis-boot-logs/<ts>-<hash>.json` when a classifiable boot failure occurs, so the operator can later include the log in an `aegis-boot bug-report` bundle (#342 Phase 2).\n\n**Anonymous by construction.** Every field is either an aegis-boot version, a loosely-bucketed machine-family hint, or an opaque content hash. No hostname, no DMI serial, no full error text. Matches [ABRT's uReport] (<https://fedoraproject.org/wiki/Features/SimplifiedCrashReporting>) pattern: safe to ship without operator review, useful for failure-class correlation across a fleet.\n\nTier B (full structured log, consent-gated) lands in a later phase with a distinct `schema_version` track.",
+  "description": "Tier-A anonymous failure microreport — written by `rescue-tui`\n/ initramfs to `AEGIS_ISOS/aegis-boot-logs/<ts>-<hash>.json`\nwhen a classifiable boot failure occurs, so the operator can\nlater include the log in an `aegis-boot bug-report` bundle\n(#342 Phase 2).\n\n**Anonymous by construction.** Every field is either an\naegis-boot version, a loosely-bucketed machine-family hint, or\nan opaque content hash. No hostname, no DMI serial, no full\nerror text. Matches [ABRT's uReport]\n(<https://fedoraproject.org/wiki/Features/SimplifiedCrashReporting>)\npattern: safe to ship without operator review, useful for\nfailure-class correlation across a fleet.\n\nTier B (full structured log, consent-gated) lands in a later\nphase with a distinct `schema_version` track.",
   "type": "object",
-  "required": [
-    "aegis_boot_version",
-    "bios_year",
-    "boot_step_reached",
-    "collected_at",
-    "failure_class",
-    "failure_hash",
-    "schema_version",
-    "tier",
-    "vendor_family"
-  ],
   "properties": {
     "aegis_boot_version": {
       "description": "`aegis-boot` version string that produced this log.",
       "type": "string"
     },
     "bios_year": {
-      "description": "Four-digit year extracted from the DMI `bios_date` (e.g. `\"2024\"`). Year-granularity is coarse enough to preserve anonymity on any laptop model older than a few months.",
+      "description": "Four-digit year extracted from the DMI `bios_date` (e.g.\n`\"2024\"`). Year-granularity is coarse enough to preserve\nanonymity on any laptop model older than a few months.",
       "type": "string"
     },
     "boot_step_reached": {
-      "description": "Classified boot stage the failure occurred at. One of: `\"pre_kernel\"`, `\"kernel_init\"`, `\"initramfs\"`, `\"rescue_tui\"`, `\"kexec_handoff\"`.",
+      "description": "Classified boot stage the failure occurred at. One of:\n`\"pre_kernel\"`, `\"kernel_init\"`, `\"initramfs\"`,\n`\"rescue_tui\"`, `\"kexec_handoff\"`.",
       "type": "string"
     },
     "collected_at": {
@@ -32,26 +21,37 @@
       "type": "string"
     },
     "failure_class": {
-      "description": "Classified failure code. String (not enum) so new classifications can be added without a `schema_version` bump. Consumer convention: treat unknown codes as `\"unclassified\"`.",
+      "description": "Classified failure code. String (not enum) so new\nclassifications can be added without a `schema_version`\nbump. Consumer convention: treat unknown codes as\n`\"unclassified\"`.",
       "type": "string"
     },
     "failure_hash": {
-      "description": "Opaque hash (`sha256:<64-hex>`) of the full raw error text. Lets a maintainer match two field reports as \"same failure\" without either operator sharing the raw text.",
+      "description": "Opaque hash (`sha256:<64-hex>`) of the full raw error text.\nLets a maintainer match two field reports as \"same failure\"\nwithout either operator sharing the raw text.",
       "type": "string"
     },
     "schema_version": {
       "description": "Wire-format version. See [`FAILURE_MICROREPORT_SCHEMA_VERSION`].",
       "type": "integer",
       "format": "uint32",
-      "minimum": 0.0
+      "minimum": 0
     },
     "tier": {
-      "description": "Tier marker. Always `\"A\"` in this envelope; reserved for `\"B\"` when the consent-gated full-log tier ships.",
+      "description": "Tier marker. Always `\"A\"` in this envelope; reserved for\n`\"B\"` when the consent-gated full-log tier ships.",
       "type": "string"
     },
     "vendor_family": {
-      "description": "Lowercased first token of the DMI `sys_vendor` field (e.g. `\"framework\"`, `\"lenovo\"`, `\"dell\"`). Vendor-granularity only — enough to correlate per-vendor bugs without identifying the operator.",
+      "description": "Lowercased first token of the DMI `sys_vendor` field (e.g.\n`\"framework\"`, `\"lenovo\"`, `\"dell\"`). Vendor-granularity\nonly — enough to correlate per-vendor bugs without\nidentifying the operator.",
       "type": "string"
     }
-  }
+  },
+  "required": [
+    "schema_version",
+    "tier",
+    "collected_at",
+    "aegis_boot_version",
+    "vendor_family",
+    "bios_year",
+    "boot_step_reached",
+    "failure_class",
+    "failure_hash"
+  ]
 }
