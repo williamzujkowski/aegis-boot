@@ -32,7 +32,11 @@
 //!    If the prompt fires anyway (operator policy, GPO override),
 //!    surface it as a specific error rather than hang.
 
-#![cfg_attr(not(target_os = "windows"), allow(dead_code))]
+// Scaffolding for the #419 Windows adapter — everything here is
+// pure-fn builders + a subprocess wrapper awaiting CLI wiring in a
+// later phase. Dead-code detection on the Windows compile target
+// would otherwise gate our CI. See #447's matching note.
+#![allow(dead_code)]
 
 use crate::windows_direct_install::partition::PartitionBuildError;
 
