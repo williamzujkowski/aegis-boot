@@ -492,16 +492,16 @@ impl IsoEnvironment for OsIsoEnvironment {
                         &mount_point.to_string_lossy(),
                     ])
                     .output();
-                if let Ok(mo) = mount_out {
-                    if mo.status.success() {
-                        debug!(
-                            "Mounted {} via losetup {} -> {:?}",
-                            iso_path.display(),
-                            loop_dev,
-                            mount_point
-                        );
-                        return Ok(mount_point);
-                    }
+                if let Ok(mo) = mount_out
+                    && mo.status.success()
+                {
+                    debug!(
+                        "Mounted {} via losetup {} -> {:?}",
+                        iso_path.display(),
+                        loop_dev,
+                        mount_point
+                    );
+                    return Ok(mount_point);
                 }
                 // losetup succeeded but mount failed — detach.
                 let _ = Command::new("losetup").args(["-d", &loop_dev]).output();
@@ -687,15 +687,18 @@ impl<E: IsoEnvironment> IsoParser<E> {
                 // Skip certain directories
                 let name = entry.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
-                if !name.starts_with('.') && name != "proc" && name != "sys" && name != "dev" {
-                    if let Ok(mut sub_isos) = self.find_iso_files(entry_path) {
-                        isos.append(&mut sub_isos);
-                    }
+                if !name.starts_with('.')
+                    && name != "proc"
+                    && name != "sys"
+                    && name != "dev"
+                    && let Ok(mut sub_isos) = self.find_iso_files(entry_path)
+                {
+                    isos.append(&mut sub_isos);
                 }
-            } else if let Some(ext) = entry.extension().and_then(|s| s.to_str()) {
-                if ext.eq_ignore_ascii_case("iso") {
-                    isos.push(entry.clone());
-                }
+            } else if let Some(ext) = entry.extension().and_then(|s| s.to_str())
+                && ext.eq_ignore_ascii_case("iso")
+            {
+                isos.push(entry.clone());
             }
         }
 

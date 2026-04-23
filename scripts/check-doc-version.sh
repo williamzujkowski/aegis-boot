@@ -11,7 +11,7 @@
 # the check.
 #
 # Why per-file patterns (not a broad repo-wide grep): a naive regex
-# like `v?\d+\.\d+\.\d+` flags Rust toolchain version (1.85.0),
+# like `v?\d+\.\d+\.\d+` flags Rust toolchain version (1.88.0),
 # Ubuntu ISO versions (24.04.2), kernel versions (6.17.0), historical
 # aegis-boot references ("--version v0.12.0"), and forward-looking
 # milestones ("gates v1.0.0"). All false positives.

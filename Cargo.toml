@@ -19,7 +19,7 @@ exclude = ["crates/iso-parser/fuzz"]
 # user-facing doc files and fails if any version literal diverges.
 version = "0.16.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/aegis-boot/aegis-boot"
 

@@ -193,7 +193,7 @@ Full developer loop: [docs/LOCAL_TESTING.md](./docs/LOCAL_TESTING.md).
 
 ## Build environment
 
-- Rust 1.85.0 (pinned in `Dockerfile.locked`, enforced via `rust-version` in every `Cargo.toml`)
+- Rust 1.88.0 (pinned in `Dockerfile.locked`, enforced via `rust-version` in every `Cargo.toml`)
 - Ubuntu 22.04 base (Docker) or a Nix flake
 - No EDK II / UEFI toolchain — we use shim + signed distro kernels instead
 

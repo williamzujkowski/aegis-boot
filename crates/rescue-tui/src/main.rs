@@ -250,7 +250,12 @@ fn run(roots: &[PathBuf]) -> Result<u8, Box<dyn std::error::Error>> {
 fn event_loop<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     state: &mut AppState,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    // Required by ratatui 0.30: Backend::Error is no longer 'static by
+    // default, but we box it into a trait-object error that needs to be.
+    <B as ratatui::backend::Backend>::Error: 'static,
+{
     // Active verify-now worker (#89). None when no verification is in
     // flight; Some(rx) while the worker thread is streaming progress.
     let mut active_verify: Option<Receiver<VerifyMsg>> = None;

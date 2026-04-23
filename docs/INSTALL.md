@@ -24,7 +24,7 @@ curl -sSL https://raw.githubusercontent.com/aegis-boot/aegis-boot/main/scripts/i
 brew tap aegis-boot/aegis-boot https://github.com/aegis-boot/aegis-boot
 brew install aegis-boot
 
-# Option C — build from source (any platform with Rust 1.85+)
+# Option C — build from source (any platform with Rust 1.88+)
 cargo install --git https://github.com/aegis-boot/aegis-boot --bin aegis-boot --path crates/aegis-cli
 ```
 

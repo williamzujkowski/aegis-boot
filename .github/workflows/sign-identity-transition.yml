@@ -46,7 +46,7 @@ jobs:
           echo "Must type 'SIGN' in the workflow_dispatch input to proceed." >&2
           exit 1
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
