@@ -64,6 +64,7 @@ mod update_apply;
 mod userfacing;
 mod verify;
 mod verify_stick;
+mod windows_direct_install;
 
 use std::env;
 use std::process::ExitCode;
