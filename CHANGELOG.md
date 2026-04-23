@@ -68,8 +68,19 @@ Backend trait `<B as Backend>::Error` lost its default `'static` bound. Added `w
 - **[#429](https://github.com/aegis-boot/aegis-boot/pull/429)** — direct-install now also writes the host-side attestation manifest so `aegis-boot update`'s eligibility check can find direct-install-flashed sticks (was blocking Phase 2b end-to-end).
 - **[#431](https://github.com/aegis-boot/aegis-boot/pull/431)** — `resolve_host_chain` reports the hash of the *combined* initrd (distro + aegis initramfs) instead of the distro initrd alone. Closes the false-positive-CHANGED-on-`/initrd.img` diff (#430) that would have caused the executor to destroy the combined form.
 - **[#434](https://github.com/aegis-boot/aegis-boot/pull/434)** — CLI wiring (`apply_rotation`) materializes host-side sources into tempfiles (combined initrd via `combine_initrd`, grub.cfg via `render_grub_cfg`), hands them to `execute_rotation`. Fixed an `mtools`-path-prefix bug found during real-hardware testing (executor was passing bare `/vmlinuz` where mtools wants `::/vmlinuz`; mcopy was silently falling back to the host filesystem).
+- **[#437](https://github.com/aegis-boot/aegis-boot/pull/437)** — post-rotate sha256 readback verification. After `mren <esp_path>.new → <esp_path>` completes, re-hash the rotated file and assert it matches the planner's `fresh_sha256`. Closes a silent-corruption gap (mtools / exFAT / flash hiccup could have left bytes that don't match what was signed).
+- **[#438](https://github.com/aegis-boot/aegis-boot/pull/438)** — grub.cfg diff no longer UNKNOWN. `resolve_rendered_grub_cfg` materializes grub.cfg via `render_grub_cfg` into a tempfile + hashes it, same pattern #431 used for initrd. All 6 canonical ESP slots now resolve on Linux; rotation executor can rotate grub.cfg if operator customizes it.
+- **[#439](https://github.com/aegis-boot/aegis-boot/pull/439)** — `aegis-boot update --rollback` CLI verb. Restores `.bak` files from a prior `--apply` run via the existing `execute_rollback` state machine. Independent from `--experimental-apply` gating (rollback is a recovery verb, not a new write). Real-hardware verified: apply → rollback → verify round-trip works; no-.bak case prints operator-friendly guidance.
 
 All Linux-only per `cfg(target_os = "linux")` — `direct_install` is Linux-specific; cross-platform rotation ships under #367 Phase D (see Win11 findings below).
+
+### New command — `aegis-boot verify --stick` ([#432](https://github.com/aegis-boot/aegis-boot/issues/432) / [#436](https://github.com/aegis-boot/aegis-boot/pull/436))
+
+Ships the Option-B integrity check from the #430 design discussion: "has my stick silently diverged from the bytes we signed into its attestation manifest?" Complements `update`'s freshness semantic ("does my stick need new bits?").
+
+For each `EspFileEntry` in the host-side attestation manifest, reads the stick's copy via `mtype`, compares to the recorded hash, reports per-file verdict: `OK` / `DRIFT` / `UNREADABLE`.
+
+Exit codes: 0 all match, 1 any drift or unreadable, 2 resolver error. JSON mode (`--json`) emits structured output with summary + per-file verdicts. Covers grub.cfg (which update's diff previously couldn't reach before #438).
 
 ### Real-hardware Phase-2b validation
 
