@@ -59,12 +59,38 @@ Backend trait `<B as Backend>::Error` lost its default `'static` bound. Added `w
 - **Actions hygiene:** `cachix/install-nix-action` v27 → v31; `sign-identity-transition.yml` checkout@v4 → v5 for consistency.
 - **Node 20 deprecation** tracked in [#409](https://github.com/aegis-boot/aegis-boot/issues/409) — GitHub auto-forces Node 24 on 2026-06-02. No action needed until then; plan to opt-in test early May 2026 via `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true`.
 
-### #181 Phase 2b progress — in-place update executor (not yet CLI-wired)
+### #181 Phase 2b — in-place update executor + CLI wiring shipped end-to-end
 
-Two landed PRs complete the state-machine half of Phase 2b (destructive in-place update executor). The CLI flip + OVMF E2E ship together in a follow-up so the gate-that-lets-destructive-writes-out demands proof-of-boot after update.
+`aegis-boot update <device> --apply --experimental-apply` now **actually rotates the signed chain** on an eligible stick (was planner-only dry-print before). Verified end-to-end on real USB hardware: flashed stick → injected drift → rotated → confirmed restored bits + `.bak` preservation + AEGIS_ISOS byte-for-byte unchanged.
 
 - **[#425](https://github.com/aegis-boot/aegis-boot/pull/425)** — mtools `mren` + `mdel` argv builders. 4 unit tests cover argv shape + `--` injection so paths starting with `-` can't be misread as flags.
-- **[#426](https://github.com/aegis-boot/aegis-boot/pull/426)** — `RotationSources` + `execute_rotation` + `execute_rollback`. State machine consumes Phase 2a's planner output: mcopy src → `.new`, mark Staged; mren original → `.bak`; mren `.new` → original; mark Rotated. Rollback walker executes `rollback_plan` actions best-effort (collects per-action errors rather than short-circuiting). All Linux-only per `cfg(target_os = "linux")` — `direct_install` is Linux-specific; cross-platform rotation ships under #367 Phase D.
+- **[#426](https://github.com/aegis-boot/aegis-boot/pull/426)** — `RotationSources` + `execute_rotation` + `execute_rollback`. State machine: mcopy src → `.new`, mark Staged; mren original → `.bak`; mren `.new` → original; mark Rotated. Rollback walker executes `rollback_plan` actions best-effort.
+- **[#429](https://github.com/aegis-boot/aegis-boot/pull/429)** — direct-install now also writes the host-side attestation manifest so `aegis-boot update`'s eligibility check can find direct-install-flashed sticks (was blocking Phase 2b end-to-end).
+- **[#431](https://github.com/aegis-boot/aegis-boot/pull/431)** — `resolve_host_chain` reports the hash of the *combined* initrd (distro + aegis initramfs) instead of the distro initrd alone. Closes the false-positive-CHANGED-on-`/initrd.img` diff (#430) that would have caused the executor to destroy the combined form.
+- **[#434](https://github.com/aegis-boot/aegis-boot/pull/434)** — CLI wiring (`apply_rotation`) materializes host-side sources into tempfiles (combined initrd via `combine_initrd`, grub.cfg via `render_grub_cfg`), hands them to `execute_rotation`. Fixed an `mtools`-path-prefix bug found during real-hardware testing (executor was passing bare `/vmlinuz` where mtools wants `::/vmlinuz`; mcopy was silently falling back to the host filesystem).
+
+All Linux-only per `cfg(target_os = "linux")` — `direct_install` is Linux-specific; cross-platform rotation ships under #367 Phase D (see Win11 findings below).
+
+### Real-hardware Phase-2b validation
+
+Session on 2026-04-22/23 against the local SanDisk Cruzer 29.8 GB + Framework Laptop:
+- Corrupted first 16 bytes of `/vmlinuz` on the stick
+- `aegis-boot update /dev/sda` correctly reported `CHANGED /vmlinuz`
+- `aegis-boot update /dev/sda --apply --experimental-apply` → `Rotation complete: 1 file(s) rotated in place`
+- Post-rotation sha256: `/vmlinuz` = correct `39cc3d97…`, `/vmlinuz.BAK` = drifted `bc65565d…`
+- Re-run of update: `Summary: 0 would change, 4 unchanged, 2 inconclusive`
+- AEGIS_ISOS partition bytes identical before and after
+
+### Windows 11 cross-platform prototyping ([#419](https://github.com/aegis-boot/aegis-boot/issues/419))
+
+Spun up a libvirt Win11 VM with WinRM + scratch qcow2 and prototyped the Windows direct-install path against `\\.\PhysicalDrive1`. Key findings filed on #419:
+
+1. **Windows `Initialize-Disk -PartitionStyle GPT` auto-inserts a Microsoft Reserved Partition.** Linux's `sgdisk` doesn't. For byte-parity between Linux- and Windows-flashed sticks, use `diskpart` (explicit partition layout, no implicit MSR) rather than `Initialize-Disk` + `New-Partition`.
+2. **`New-Partition` / `Format-Volume` (PowerShell cmdlets) work end-to-end** — ESP type GUID recognized, exFAT native on Win11, no drive-letter auto-assign for ESP. Modern-PS path is a viable Phase-2 option for formatting.
+3. **Raw write to `\\.\PhysicalDrive1` via `[System.IO.FileStream]` works** — wrote 4096 bytes + readback-verified under exclusive-share lock. Maps cleanly to `windows-rs` `CreateFileW` + `WriteFile` for the Rust implementation.
+4. **Still unexercised:** UAC split-token elevation detection, BitLocker lock failure semantics, `FILE_FLAG_NO_BUFFERING` direct-I/O (`[System.IO.FileStream]` defaults to buffered — production Rust path wants `CreateFileW` direct).
+
+Together these findings scope #419 into clean phases (diskpart-for-partition, Format-Volume-for-fs, windows-rs-for-raw-write, elevation+BitLocker detection). Implementation is a follow-up session.
 
 ### Real-hardware validation — ADR 0003 load + save paths
 
