@@ -82,6 +82,11 @@ For each `EspFileEntry` in the host-side attestation manifest, reads the stick's
 
 Exit codes: 0 all match, 1 any drift or unreadable, 2 resolver error. JSON mode (`--json`) emits structured output with summary + per-file verdicts. Covers grub.cfg (which update's diff previously couldn't reach before #438).
 
+### #181 Phase 4 — operator UX polish
+
+- **[#441](https://github.com/aegis-boot/aegis-boot/pull/441)** — attestation manifest auto-refreshes after `update --apply`. On success, reads the host-side manifest, updates `esp_files[]` entries for rotated slots with their new sha256 + size, bumps `sequence`, normalizes `tool_version`, writes back to both the host-side attestations dir AND mcopies over `::/aegis-boot-manifest.json` on the ESP. Without this, `verify --stick` would always show drift after every rotation — closed the last consistency gap between update + verify.
+- **[#442](https://github.com/aegis-boot/aegis-boot/pull/442)** — `aegis-boot doctor --stick` surfaces `manifest sequence` + `tool_version` as a new stick-check row. Operators can see "has this stick been updated and with what version" at a glance.
+
 ### Real-hardware Phase-2b validation
 
 Session on 2026-04-22/23 against the local SanDisk Cruzer 29.8 GB + Framework Laptop:
