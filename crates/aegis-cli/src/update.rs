@@ -356,7 +356,16 @@ fn resolve_host_chain() -> Vec<HostChainEntry> {
         Some(v) => PathBuf::from(format!("/boot/initrd.img-{v}")),
         None => PathBuf::from("/boot/initrd.img-*"),
     };
+    #[cfg(target_os = "linux")]
     out.push(resolve_combined_initrd(&distro_initrd_path));
+    #[cfg(not(target_os = "linux"))]
+    out.push(HostChainEntry {
+        role: "initrd",
+        path: distro_initrd_path,
+        sha256: Err("combined-initrd synthesis is Linux-only; cross-platform \
+                     flash rotation ships under #367 Phase D"
+            .to_string()),
+    });
     out
 }
 
@@ -375,8 +384,23 @@ fn resolve_host_chain() -> Vec<HostChainEntry> {
 /// next-step message rather than silently falling back to the distro
 /// hash (that's the bug we're fixing). Operators see "run
 /// scripts/build-initramfs.sh first" instead of a quiet wrong answer.
+#[cfg(target_os = "linux")]
 fn resolve_combined_initrd(distro_initrd_path: &Path) -> HostChainEntry {
-    let aegis_initrd_path = PathBuf::from("out/initramfs.cpio.gz");
+    // Production cwd is where the operator ran `aegis-boot update` —
+    // same cwd contract as `flash --direct-install --out-dir ./out`.
+    // Tests use `resolve_combined_initrd_at` with explicit paths to
+    // stay isolation-safe (concurrent tests can't race on cwd).
+    resolve_combined_initrd_at(distro_initrd_path, &PathBuf::from("out/initramfs.cpio.gz"))
+}
+
+/// Explicit-paths helper behind [`resolve_combined_initrd`]. Separated
+/// so unit tests can pin both inputs without touching the process cwd
+/// (parallel cargo test runs were racing on `set_current_dir`).
+#[cfg(target_os = "linux")]
+fn resolve_combined_initrd_at(
+    distro_initrd_path: &Path,
+    aegis_initrd_path: &Path,
+) -> HostChainEntry {
     // Synthetic display label — the combined initrd is built at query
     // time into a tempfile that's gone by the time we return. Anyone
     // trying to mcopy from this PathBuf sees a clear non-path token and
@@ -418,7 +442,7 @@ fn resolve_combined_initrd(distro_initrd_path: &Path) -> HostChainEntry {
     };
     let tmp_path = tmp.path().to_path_buf();
     if let Err(e) =
-        crate::direct_install::combine_initrd(distro_initrd_path, &aegis_initrd_path, &tmp_path)
+        crate::direct_install::combine_initrd(distro_initrd_path, aegis_initrd_path, &tmp_path)
     {
         return HostChainEntry {
             role: "initrd",
@@ -1577,23 +1601,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn resolve_combined_initrd_hashes_distro_plus_aegis() {
         // Happy path: both inputs present, hash matches manual combine.
+        // Uses the `_at` helper with explicit paths so concurrent test
+        // runs don't race on set_current_dir.
         let tmp = tempfile::tempdir().unwrap();
         let distro = tmp.path().join("boot-initrd.img");
-        let aegis_out_dir = tmp.path().join("out");
-        std::fs::create_dir_all(&aegis_out_dir).unwrap();
-        let aegis = aegis_out_dir.join("initramfs.cpio.gz");
+        let aegis = tmp.path().join("initramfs.cpio.gz");
         std::fs::write(&distro, b"DISTRO-INITRD-BYTES").unwrap();
         std::fs::write(&aegis, b"AEGIS-INITRAMFS-BYTES").unwrap();
 
-        // cd into tmp so the resolver's relative "out/initramfs.cpio.gz"
-        // path resolves under our fixture tree, not the real repo.
-        let saved_cwd = std::env::current_dir().unwrap();
-        std::env::set_current_dir(&tmp).unwrap();
-        let entry = resolve_combined_initrd(&distro);
-        std::env::set_current_dir(&saved_cwd).unwrap();
+        let entry = resolve_combined_initrd_at(&distro, &aegis);
 
         let hash = entry
             .sha256
@@ -1618,17 +1638,16 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn resolve_combined_initrd_returns_err_when_aegis_initramfs_missing() {
         let tmp = tempfile::tempdir().unwrap();
         let distro = tmp.path().join("boot-initrd.img");
         std::fs::write(&distro, b"DISTRO-ONLY").unwrap();
-        // NOTE: out/initramfs.cpio.gz is *not* created.
+        // Deliberately point at a non-existent aegis initramfs file.
+        let aegis = tmp.path().join("never-created.cpio.gz");
 
-        let saved_cwd = std::env::current_dir().unwrap();
-        std::env::set_current_dir(&tmp).unwrap();
-        let entry = resolve_combined_initrd(&distro);
-        std::env::set_current_dir(&saved_cwd).unwrap();
+        let entry = resolve_combined_initrd_at(&distro, &aegis);
 
         let err = entry.sha256.expect_err("missing aegis initramfs → Err");
         assert!(
@@ -1637,11 +1656,13 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn resolve_combined_initrd_returns_err_when_distro_initrd_missing() {
         let tmp = tempfile::tempdir().unwrap();
         let missing_distro = tmp.path().join("no-such-initrd");
-        let entry = resolve_combined_initrd(&missing_distro);
+        let aegis = tmp.path().join("any.cpio.gz");
+        let entry = resolve_combined_initrd_at(&missing_distro, &aegis);
         let err = entry.sha256.expect_err("missing distro initrd → Err");
         assert!(
             err.contains("distro initrd"),
