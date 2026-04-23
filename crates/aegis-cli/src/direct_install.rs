@@ -313,6 +313,50 @@ pub(crate) fn build_mmd_argv(image_or_dev: &str, dirs: &[&str]) -> Vec<String> {
     argv
 }
 
+/// Build the argv for `mren` — renames a file or directory on a FAT
+/// image. Used by the `aegis-boot update` executor (#181 Phase 2b) to
+/// rotate files through `.new` → committed and `<original>` → `.bak`
+/// slots atomically from the operator's perspective.
+///
+/// `--` separates flag parsing from positional args so paths beginning
+/// with `-` can't be misread as options.
+///
+/// Consumer ships in #181 Phase 2b; unit-tested now so the executor
+/// PR is mechanical ("call these builders from the rotation loop").
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn build_mren_argv(image_or_dev: &str, from: &str, to: &str) -> Vec<String> {
+    vec![
+        "mren".to_string(),
+        "-i".to_string(),
+        image_or_dev.to_string(),
+        "--".to_string(),
+        from.to_string(),
+        to.to_string(),
+    ]
+}
+
+/// Build the argv for `mdel` — deletes a file on a FAT image. Used by
+/// the `aegis-boot update` executor (#181 Phase 2b) rollback path to
+/// clean up a `.new` staged file when a rotation is aborted before its
+/// rename-over.
+///
+/// `-v` (verbose) surfaces per-file action lines useful for operator
+/// diagnostics; stays silent on success otherwise. `--` ends option
+/// parsing before the positional target.
+///
+/// Consumer ships in #181 Phase 2b.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn build_mdel_argv(image_or_dev: &str, esp_path: &str) -> Vec<String> {
+    vec![
+        "mdel".to_string(),
+        "-i".to_string(),
+        image_or_dev.to_string(),
+        "-v".to_string(),
+        "--".to_string(),
+        esp_path.to_string(),
+    ]
+}
+
 /// Stage the signed chain onto partition 1 of the target stick.
 ///
 /// Calls `mmd` once to create `::/EFI ::/EFI/BOOT ::/EFI/ubuntu`, then
@@ -730,6 +774,57 @@ menuentry \"aegis-boot rescue (verbose — first-boot debug)\" {
         std::fs::write(&aegis, b"aegis").expect("write aegis");
         let err = combine_initrd(&distro, &aegis, &out).expect_err("should fail");
         assert!(err.contains("does-not-exist.img"), "err: {err}");
+    }
+
+    #[test]
+    fn build_mren_argv_starts_with_mren_and_has_image_flag() {
+        let argv = build_mren_argv(
+            "/dev/sda1",
+            "::/EFI/BOOT/grubx64.efi",
+            "::/EFI/BOOT/grubx64.efi.bak",
+        );
+        assert_eq!(argv.first().map(String::as_str), Some("mren"));
+        let i = argv
+            .iter()
+            .position(|a| a == "-i")
+            .expect("-i flag present");
+        assert_eq!(argv.get(i + 1).map(String::as_str), Some("/dev/sda1"));
+    }
+
+    #[test]
+    fn build_mren_argv_ends_with_positional_paths_after_dashdash() {
+        // `--` must separate flags from the two positional args so a
+        // path beginning with `-` can't be misread as a flag by mtools.
+        let argv = build_mren_argv("/dev/sda1", "::/-weird", "::/-weird.bak");
+        let dash_idx = argv.iter().position(|a| a == "--").expect("-- present");
+        assert_eq!(
+            argv.get(dash_idx + 1).map(String::as_str),
+            Some("::/-weird")
+        );
+        assert_eq!(
+            argv.get(dash_idx + 2).map(String::as_str),
+            Some("::/-weird.bak")
+        );
+    }
+
+    #[test]
+    fn build_mdel_argv_starts_with_mdel_and_has_verbose() {
+        let argv = build_mdel_argv("/dev/sda1", "::/EFI/BOOT/grubx64.efi.new");
+        assert_eq!(argv.first().map(String::as_str), Some("mdel"));
+        assert!(
+            argv.iter().any(|a| a == "-v"),
+            "mdel should be verbose for operator diagnostics: {argv:?}"
+        );
+    }
+
+    #[test]
+    fn build_mdel_argv_isolates_path_behind_dashdash() {
+        let argv = build_mdel_argv("/dev/sda1", "::/-weird.new");
+        let dash_idx = argv.iter().position(|a| a == "--").expect("-- present");
+        assert_eq!(
+            argv.get(dash_idx + 1).map(String::as_str),
+            Some("::/-weird.new")
+        );
     }
 
     #[test]
