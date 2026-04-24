@@ -38,11 +38,9 @@ class AegisBoot < Formula
     on_arm do
       # macOS arm64 binary ships with every release (#365 Phase A1).
       # The sha256 below is bumped per-release by the bump-brew-formula
-      # job in release.yml; 64 zeros = placeholder that passes
-      # `brew audit` syntactically but would fail the download hash
-      # check until the real sha lands.
+      # job in release.yml.
       url "https://github.com/aegis-boot/aegis-boot/releases/download/v0.17.0/aegis-boot-aarch64-apple-darwin"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      sha256 "ceea2b35d966bfe73387f3bf86f61e2a93f320d17430e61ba747dbc5ddd415a1"
     end
   end
 

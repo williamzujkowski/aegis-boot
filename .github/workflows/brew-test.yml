@@ -48,7 +48,12 @@ permissions:
 jobs:
   brew-test:
     name: brew audit + install + test
-    runs-on: ubuntu-22.04
+    # macos-14 runner — native arm64 matches the Formula's only
+    # published bottle (macOS Apple Silicon). Linux runners (old
+    # ubuntu-22.04 choice) can't audit a macOS-only formula because
+    # Homebrew's `brew audit` loads all spec-bearing blocks and our
+    # formula has no on_linux url after the brew-shrink vote.
+    runs-on: macos-14
     timeout-minutes: 15
 
     steps:
