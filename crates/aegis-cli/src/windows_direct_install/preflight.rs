@@ -10,13 +10,13 @@
 //!
 //! Checks:
 //!
-//! 1. **Elevation** — `IsUserAnAdmin`-equivalent via PowerShell's
+//! 1. **Elevation** — `IsUserAnAdmin`-equivalent via `PowerShell`'s
 //!    `WindowsPrincipal.IsInRole(Administrators)`. The three code
 //!    paths we ship (`diskpart`, `Format-Volume`, raw-disk `WriteFile`)
 //!    all fail without admin; surfacing the condition up-front avoids
 //!    noisy mid-flash errors.
-//! 2. **`BitLocker` detection** — if the target drive is BitLocker-
-//!    protected, `FSCTL_LOCK_VOLUME` will fail with ERROR_ACCESS_DENIED
+//! 2. **`BitLocker` detection** — if the target drive is `BitLocker`-
+//!    protected, `FSCTL_LOCK_VOLUME` will fail with `ERROR_ACCESS_DENIED`
 //!    and we'd leak a confusing error. Detect + surface a clear
 //!    "decrypt first" remedy.
 //! 3. **Target identity display** — before anything destructive,
@@ -34,7 +34,7 @@
 // partition/format submodules.
 #![allow(dead_code)]
 
-/// Build the PowerShell one-liner that prints `"True"` if the
+/// Build the `PowerShell` one-liner that prints `"True"` if the
 /// current process is running with Administrators-group
 /// membership active in the token, `"False"` otherwise.
 ///
@@ -54,7 +54,7 @@ pub(crate) fn build_is_admin_ps_command() -> String {
 }
 
 /// Parse the output of [`build_is_admin_ps_command`] into a bool.
-/// PowerShell emits `True\r\n` or `False\r\n`; anything else
+/// `PowerShell` emits `True\r\n` or `False\r\n`; anything else
 /// (caller mismatched the command, shell error, locale oddity) is
 /// treated as not-admin because fail-closed is the right default
 /// for a destructive-capability check.
@@ -73,7 +73,7 @@ pub(crate) fn elevation_required_message() -> &'static str {
      and re-run the same command."
 }
 
-/// Build the PowerShell command that queries BitLocker status for a
+/// Build the `PowerShell` command that queries `BitLocker` status for a
 /// given `\\.\PhysicalDriveN` via `manage-bde -status`. Returns the
 /// stdout of manage-bde for caller-side parsing.
 ///
@@ -88,12 +88,10 @@ pub(crate) fn build_bitlocker_status_ps_command(physical_drive: u32) -> String {
     // `manage-bde -status \\.\PhysicalDriveN` returns "Fully
     // Decrypted" for unprotected drives. `2>&1` folds stderr so
     // failure messages are visible to the parser.
-    format!(
-        "& manage-bde.exe -status \\\\.\\PhysicalDrive{physical_drive} 2>&1 | Out-String"
-    )
+    format!("& manage-bde.exe -status \\\\.\\PhysicalDrive{physical_drive} 2>&1 | Out-String")
 }
 
-/// Classified BitLocker state for a target drive. Only the
+/// Classified `BitLocker` state for a target drive. Only the
 /// unambiguous cases are accepted; anything else falls back to
 /// `Unknown`, which the caller treats as "assume protected, refuse
 /// to write."
@@ -123,11 +121,13 @@ pub(crate) fn classify_bitlocker_status(stdout: &str) -> BitLockerStatus {
 
     for line in stdout.lines() {
         let trimmed = line.trim();
-        // Volume marker — manage-bde emits one per protected/
-        // unprotected volume on the drive. Count them to tell the
-        // difference between "empty output / parse error" and
-        // "multi-volume drive all-decrypted."
-        if trimmed.starts_with("Volume ") || trimmed.starts_with("Disk volumes") {
+        // Volume marker — manage-bde emits "Volume X: [Label]" per
+        // protected/unprotected volume on the drive. Count them to
+        // tell the difference between "empty output / parse error"
+        // and "multi-volume drive all-decrypted." Skip the preamble
+        // "Disk volumes that can be protected with..." which is a
+        // section header, not a per-volume entry.
+        if trimmed.starts_with("Volume ") && trimmed.contains(':') {
             volume_count += 1;
         }
         // Conversion Status line looks like:
@@ -149,16 +149,14 @@ pub(crate) fn classify_bitlocker_status(stdout: &str) -> BitLockerStatus {
     // disk to count as safe. Any other state (Decrypting, Encrypting,
     // Fully Encrypted, Encryption Paused) means we can't safely
     // FSCTL_LOCK_VOLUME + write.
-    if fully_decrypted_count > 0
-        && fully_decrypted_count >= volume_count.max(1)
-    {
+    if fully_decrypted_count > 0 && fully_decrypted_count >= volume_count.max(1) {
         BitLockerStatus::FullyDecrypted
     } else {
         BitLockerStatus::Protected
     }
 }
 
-/// Remedy text printed when BitLocker detection says protected.
+/// Remedy text printed when `BitLocker` detection says protected.
 pub(crate) fn bitlocker_protected_message(physical_drive: u32) -> String {
     format!(
         "aegis-boot flash: target drive \\\\.\\PhysicalDrive{physical_drive} is \
@@ -264,7 +262,9 @@ mod tests {
         // must return false. Don't give attackers a partial-match
         // to worm through (e.g. a truncated error message that
         // happens to contain "True" somewhere).
-        assert!(!parse_is_admin_output("The operation completed. True: false"));
+        assert!(!parse_is_admin_output(
+            "The operation completed. True: false"
+        ));
     }
 
     #[test]
@@ -354,7 +354,10 @@ mod tests {
         let msg = bitlocker_protected_message(5);
         assert!(msg.contains("PhysicalDrive5"), "got: {msg}");
         assert!(msg.contains("manage-bde.exe -off"), "got: {msg}");
-        assert!(msg.contains("Fully Decrypted"), "remedy must mention the exact status to look for: {msg}");
+        assert!(
+            msg.contains("Fully Decrypted"),
+            "remedy must mention the exact status to look for: {msg}"
+        );
     }
 
     #[test]

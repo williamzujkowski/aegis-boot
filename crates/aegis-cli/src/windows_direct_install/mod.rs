@@ -17,3 +17,4 @@
 
 pub(crate) mod format;
 pub(crate) mod partition;
+pub(crate) mod preflight;
