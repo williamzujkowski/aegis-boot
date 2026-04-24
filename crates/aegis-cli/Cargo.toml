@@ -84,6 +84,23 @@ indicatif = { version = "0.18", default-features = false }
 # sticks; operator-supplied keys, key lifecycle lives in Phase 3.
 minisign = { version = "0.9", default-features = false }
 
+# Windows-only: direct-install raw-disk I/O (#419 Phase 3 / #449).
+# Feature list is the minimum subset the raw_write module needs —
+# CreateFileW + DeviceIoControl + WriteFile + CloseHandle. Deliberately
+# unused by the pure-fn scaffold in this PR; the follow-up wiring PR
+# turns on the unsafe syscall sites behind a narrow
+# `#[allow(unsafe_code)]` and consumes these features. Keeping the
+# dep here from the start means the Windows cross-compile CI job
+# already validates the version pin + feature list — no surprise-
+# feature-flip in the wiring PR.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
+] }
+
 [dev-dependencies]
 tempfile = "3.14"
 

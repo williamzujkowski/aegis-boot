@@ -18,3 +18,4 @@
 pub(crate) mod format;
 pub(crate) mod partition;
 pub(crate) mod preflight;
+pub(crate) mod raw_write;
