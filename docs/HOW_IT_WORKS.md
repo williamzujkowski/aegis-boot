@@ -92,6 +92,7 @@ cargo run -p rescue-tui --bin tiers-docgen
 
 - **It does not modify your laptop's firmware.** No MOK enrollment, no PK/KEK/db changes. Plug the stick in, boot, eject — your firmware is untouched.
 - **It does not force-validate ISOs.** Drop any ISO on, the menu shows it. The hash sidecar is optional. The menu will warn loudly when an ISO has no verification metadata, but the trust call is yours.
+- **It does not boot Windows installer ISOs.** Windows uses the NT boot loader, which is incompatible with `kexec_file_load`. `rescue-tui` detects these and shows a redirect to [Rufus](https://rufus.ie), which handles Windows sticks directly. Point aegis-boot at Linux ISOs; use Rufus for Windows.
 - **It does not ship a kernel-side hardening kit.** Secure Boot is the only protection; if a kernel CVE appears post-flash, your stick is still vulnerable until you re-flash with a newer build.
 - **It does not auto-update.** Stick contents are immutable except by you. Use `aegis-boot update <device>` for in-place signed-chain rotation when a new shim/grub/kernel ships.
 

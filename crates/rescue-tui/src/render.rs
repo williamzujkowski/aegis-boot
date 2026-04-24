@@ -910,20 +910,33 @@ fn info_pane_iso_lines<'a>(
     // Tier-specific note. For tier-4/5/6 (which can be reached here if
     // a tier-6 hash mismatch is detected on an otherwise-parseable
     // ISO), render a wrapped reason block.
+    //
+    // Windows ISOs get a dedicated actionable-redirect panel per the
+    // L1 design in docs/design/windows-iso-boot.md — a tier-5
+    // dead-end is a support-ticket generator, so we point operators
+    // at Rufus (the tool that actually solves their problem) and at
+    // the Linux ISOs already on this stick.
     if !verdict.is_bootable() {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "Reason:",
-            Style::default()
-                .fg(state.theme.error)
-                .add_modifier(Modifier::BOLD),
-        )));
-        extend_wrapped(&mut lines, &verdict.reason(), content_width);
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "Boot is disabled for this ISO.",
-            Style::default().add_modifier(Modifier::DIM),
-        )));
+        if matches!(iso.distribution, iso_probe::Distribution::Windows)
+            && iso.quirks.contains(&iso_probe::Quirk::NotKexecBootable)
+        {
+            lines.push(Line::from(""));
+            lines.extend(windows_redirect_lines(state, content_width));
+        } else {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Reason:",
+                Style::default()
+                    .fg(state.theme.error)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            extend_wrapped(&mut lines, &verdict.reason(), content_width);
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Boot is disabled for this ISO.",
+                Style::default().add_modifier(Modifier::DIM),
+            )));
+        }
     } else if matches!(
         verdict,
         TrustVerdict::BareUnverified | TrustVerdict::KeyNotTrusted
@@ -992,6 +1005,81 @@ fn info_pane_failed_lines<'a>(
         "boot layout. Boot is disabled.",
         Style::default().add_modifier(Modifier::DIM),
     )));
+    lines
+}
+
+/// L1 Windows-ISO prose panel per
+/// `docs/design/windows-iso-boot.md § Revised recommendation`.
+///
+/// Rendered in place of the generic tier-5 reason block whenever the
+/// selected ISO is a Windows installer. Points the operator at Rufus
+/// (the tool that actually solves their problem) and lists the
+/// bootable Linux ISOs already on this stick.
+///
+/// Mission alignment: aegis-boot helps operators migrate *off*
+/// Windows, so the "primary" alternative is Linux, and Rufus handles
+/// the "I still need Windows" case without forcing aegis-boot to
+/// grow a Windows-PE boot path.
+fn windows_redirect_lines<'a>(state: &AppState, content_width: usize) -> Vec<Line<'a>> {
+    let mut lines: Vec<Line<'a>> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        "Windows 11 installer detected — aegis-boot doesn't boot Windows by design.",
+        Style::default()
+            .fg(state.theme.error)
+            .add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "To install Windows 11, use Rufus:",
+        Style::default().add_modifier(Modifier::BOLD),
+    )));
+    for bullet in [
+        "  1. Copy your Win11 ISO off this stick",
+        "  2. Get Rufus from https://rufus.ie",
+        "  3. Flash the ISO to a different USB stick",
+    ] {
+        extend_wrapped(&mut lines, bullet, content_width);
+    }
+    lines.push(Line::from(""));
+
+    // Linux-ISO listing from the same AppState the rest of the UI
+    // drives off. Filter to bootable, non-Windows rows so a second
+    // unparsable Windows ISO on the stick doesn't end up in the
+    // "try Linux instead" bullet list.
+    let bootable_linux: Vec<&iso_probe::DiscoveredIso> = state
+        .isos
+        .iter()
+        .filter(|candidate| {
+            !matches!(candidate.distribution, iso_probe::Distribution::Windows)
+                && !candidate
+                    .quirks
+                    .contains(&iso_probe::Quirk::NotKexecBootable)
+        })
+        .collect();
+
+    if bootable_linux.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "To try Linux instead:",
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+        extend_wrapped(
+            &mut lines,
+            "  drop a Linux ISO into this stick's AEGIS_ISOS/ partition and re-plug.",
+            content_width,
+        );
+    } else {
+        lines.push(Line::from(Span::styled(
+            "To try Linux instead, these are on this stick:",
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+        for candidate in bootable_linux {
+            extend_wrapped(
+                &mut lines,
+                &format!("  - {}", filename_str(&candidate.iso_path)),
+                content_width,
+            );
+        }
+    }
     lines
 }
 
@@ -1484,6 +1572,7 @@ impl DistributionLabel for iso_probe::DiscoveredIso {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::ViewEntry;
     use iso_probe::{Distribution, Quirk};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -2056,7 +2145,70 @@ mod tests {
         iso.distribution = Distribution::Windows;
         let s = render_to_string(&AppState::new(vec![iso]));
         assert!(s.contains("BOOT BLOCKED"), "tier-5 label missing");
-        assert!(s.contains("Boot is disabled"));
+        // L1 panel replaces the generic "Boot is disabled" prose with
+        // an actionable Rufus-redirect for Windows ISOs. The verdict
+        // label remains BOOT BLOCKED (drives color + is_bootable gate);
+        // only the info-pane body swaps.
+        assert!(
+            s.contains("Windows 11 installer detected"),
+            "Windows redirect header missing: {s}"
+        );
+        assert!(
+            s.contains("https://rufus.ie"),
+            "Rufus URL missing from redirect panel: {s}"
+        );
+    }
+
+    #[test]
+    fn render_coverage_tier5_windows_lists_bootable_linux_isos() {
+        // When a Linux ISO is also on the stick, the redirect panel
+        // surfaces it by filename — the operator shouldn't have to
+        // re-scan the list pane to find their non-Windows options.
+        let mut win = fake_iso("win11");
+        win.quirks = vec![Quirk::NotKexecBootable];
+        win.distribution = Distribution::Windows;
+        win.iso_path = PathBuf::from("/isos/Win11_23H2.iso");
+
+        let mut linux = fake_iso("ubuntu");
+        linux.distribution = Distribution::Debian;
+        linux.iso_path = PathBuf::from("/isos/ubuntu-24.04.iso");
+
+        let mut state = AppState::new(vec![win, linux]);
+        // `Screen::List { selected }` is a position in the sorted
+        // visible_entries() list, not a direct state.isos index.
+        // With sort=name, "ubuntu" sorts before "win11" so row 0 is
+        // Ubuntu; pin the Windows row explicitly so info-pane
+        // renders its redirect panel.
+        let win_row = state
+            .visible_entries()
+            .iter()
+            .position(|e| matches!(e, ViewEntry::Iso(i) if matches!(state.isos[*i].distribution, Distribution::Windows)))
+            .unwrap_or(0);
+        state.screen = Screen::List { selected: win_row };
+        let s = render_to_string(&state);
+        assert!(
+            s.contains("these are on this stick"),
+            "bootable-linux heading missing: {s}"
+        );
+        assert!(
+            s.contains("ubuntu-24.04.iso"),
+            "bootable linux ISO filename missing: {s}"
+        );
+    }
+
+    #[test]
+    fn render_coverage_tier5_windows_fallback_when_no_linux_isos() {
+        // With no non-Windows ISOs on the stick, the panel prompts
+        // the operator to drop one into AEGIS_ISOS/ rather than
+        // listing an empty bullet set.
+        let mut win = fake_iso("win11");
+        win.quirks = vec![Quirk::NotKexecBootable];
+        win.distribution = Distribution::Windows;
+        let s = render_to_string(&AppState::new(vec![win]));
+        assert!(
+            s.contains("AEGIS_ISOS"),
+            "fallback panel must name the AEGIS_ISOS/ partition: {s}"
+        );
     }
 
     #[test]
