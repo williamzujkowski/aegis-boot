@@ -1,0 +1,29 @@
+[package]
+name = "aegis-trust"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ADR 0002 runtime trust anchor for aegis-boot — epoch-aware minisign verification + monotonic seen-epoch state"
+readme = "README.md"
+
+# Files packaged for `cargo publish`. `keys/` and the workspace
+# `Cargo.toml` live outside the crate dir, so include paths via
+# `include =` don't apply — `build.rs` resolves them via workspace
+# discovery at compile time. See `build.rs` for the path chain.
+include = ["src/**/*", "build.rs", "README.md", "Cargo.toml"]
+
+[lib]
+
+[dependencies]
+minisign = { version = "0.9", default-features = false }
+serde = { workspace = true }
+serde_json = "1.0"
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.14"
+
+[lints]
+workspace = true
