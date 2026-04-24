@@ -57,7 +57,19 @@ chmod +x aegis-boot-aarch64-apple-darwin
   ```
   Or right-click → Open once in Finder. After first launch, Gatekeeper remembers the approval.
 
-What works on macOS today: `aegis-boot list`, `aegis-boot doctor`, drive detection, and `aegis-boot flash --image PATH` (against a pre-built `.img` fetched via `aegis-boot fetch-image`). Image *building* still requires Linux — see the Quickstart table in [README.md](../README.md).
+What works on macOS today: `aegis-boot list`, `aegis-boot doctor`, drive detection, `aegis-boot flash --image PATH` (against a pre-built `.img` fetched via `aegis-boot fetch-image`), and — as of [#418](https://github.com/aegis-boot/aegis-boot/issues/418) — **`aegis-boot flash --direct-install`** for natively partitioning + staging a signed chain onto a USB stick without needing a Linux host. Image *building* still requires Linux — see the Quickstart table in [README.md](../README.md).
+
+**`flash --direct-install` on macOS:**
+
+```bash
+# Find your USB target (note the `diskN` identifier):
+diskutil list
+
+# Flash it (accepts `disk5`, `/dev/disk5`, or `/dev/rdisk5`):
+aegis-boot flash --direct-install disk5 --out-dir ./out
+```
+
+The macOS path uses native `diskutil partitionDisk` → auto-mount at `/Volumes/AEGIS_ESP` → plain `cp` of the 6 signed-chain files → `/bin/sync` → `diskutil unmount`. Same on-disk layout as the Linux `sgdisk`+`mtools` flow; verified byte-for-byte by the `direct-install-e2e` matrix. Refuses `disk0` (host boot drive), non-whole-disk identifiers, non-removable non-external drives, and targets smaller than 1 GiB — each with a distinct operator-facing NEXT ACTION line.
 
 macOS x86_64 (Intel) pre-built binaries remain deferred — see [#365](https://github.com/aegis-boot/aegis-boot/issues/365).
 

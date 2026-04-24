@@ -4,6 +4,19 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 
 ## [Unreleased]
 
+### macOS `--direct-install` adapter (closes #418)
+
+Native `aegis-boot flash --direct-install disk5` now works on macOS. Six PRs across five phases build the pure-fn + cfg-gated subprocess layer on top of `diskutil` (partition + mount + unmount), plain `cp` + `/bin/sync` (ESP staging), and parsed `diskutil info` output (preflight safety gate). Sibling of the Windows direct-install adapter from #419 — same four-stage pipeline shape, minus the BitLocker stage and minus a separate format stage (`diskutil partitionDisk` formats in the same call).
+
+- **Phase 1 — partition-plan builder** (#529). Pure-fn `build_diskutil_plan(device_id) → DiskutilPartitionPlan`. Refuses `disk0` + non-whole-disk + non-numeric identifiers before any subprocess runs. ESP size tracks `constants::ESP_SIZE_MB` so a cross-platform bump stays one-line.
+- **Phase 2 — `diskutil` subprocess wrapper** (#530). `#[cfg(target_os = "macos")] partition_via_diskutil(plan)`. ~40 LOC of thin shell-out with stderr propagation. The CI `x86_64-apple-darwin` cross-compile check catches type errors on every PR.
+- **Phase 3 — ESP staging via `diskutil mount` + `cp` + `/bin/sync`** (#531). Typed `CopyPlan` pinned by `EspFile` so a future verify pass can round-trip role → dest. Refuses mount points outside `/Volumes/` as an extra defense-in-depth layer (even though `diskutil partitionDisk` auto-mounts the new ESP at `/Volumes/AEGIS_ESP`).
+- **Phase 4a — preflight module** (#532). Plain-text `diskutil info` parser (no `plist` crate dep — ~1 MiB avoided) → `DiskInfo` record → `classify()` safety gate: refuse `disk0`, refuse non-whole-disk, refuse internal non-removable drives, refuse < 1 GiB targets. Three committed sample outputs pin the parser against a future `diskutil` format change.
+- **Phase 4b — pipeline composer** (#533). Trait-based mockable runner (`PhaseRunner`) chains the four stages (preflight → partition → stage-ESP → unmount) with per-stage timing + abort cascade. 10 unit tests using `MockPhaseRunner` exercise the stage ordering + abort behavior without needing a macOS VM.
+- **Phase 4c — CLI dispatcher + `flash.rs` wiring** (#534). New `aegis-boot flash --direct-install <disk5>` surface on macOS. Device argument accepts bare `disk5`, `/dev/disk5`, or `/dev/rdisk5`. Removed the prior "only Linux + Windows supported" refusal at `flash.rs`. Reuses `windows_direct_install::source_resolution` (platform-neutral — no cfg gates) so the 6-file signed-chain resolution is shared across platforms.
+
+**Known gap**: the `#[cfg(target_os = "macos")]` subprocess wrappers haven't been runtime-tested. Every pure-fn side around them has unit coverage, and CI cross-compile validates they compile — the first real invocation will be a maintainer E2E on a real USB. Tracked as the pending work on #420 (macos-14 CI smoke gate).
+
 ### ADR 0002 trust anchor + runtime signed-chain downloader (closes #417, #421)
 
 Landed the full ADR 0002 key-management chain in six PRs: a new `aegis-trust` crate, `doctor` surface, a programmatic epoch-history table, the `BundleManifest` wire contract, the verify + cache modules, and the `aegis-boot fetch-trust-chain` subcommand that ties it all together. Cross-platform direct-install now has the trust primitive it needs before it can flash.
