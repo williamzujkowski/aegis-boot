@@ -396,9 +396,27 @@ where
         }
 
         match (&state.screen, key.code) {
-            // Vim navigation aliases for arrow keys (#85).
-            (Screen::List { .. }, KeyCode::Up | KeyCode::Char('k')) => state.move_selection(-1),
-            (Screen::List { .. }, KeyCode::Down | KeyCode::Char('j')) => state.move_selection(1),
+            // Tab toggles focus between the list pane and the info pane
+            // on the List screen only. Shift+Tab is treated the same
+            // way — we only have two panes so there's no forward/back
+            // distinction to preserve. (#458)
+            (Screen::List { .. }, KeyCode::Tab | KeyCode::BackTab) => state.toggle_pane(),
+            // Vim navigation aliases for arrow keys (#85). Routed to
+            // whichever pane currently holds focus (#458).
+            (Screen::List { .. }, KeyCode::Up | KeyCode::Char('k')) => {
+                if state.pane == state::Pane::Info {
+                    state.move_info_scroll(-1);
+                } else {
+                    state.move_selection(-1);
+                }
+            }
+            (Screen::List { .. }, KeyCode::Down | KeyCode::Char('j')) => {
+                if state.pane == state::Pane::Info {
+                    state.move_info_scroll(1);
+                } else {
+                    state.move_selection(1);
+                }
+            }
             // `g`/`G` are the vim aliases; `Home`/`End` are the layout-
             // agnostic equivalents — crossterm maps them identically
             // under AZERTY, Dvorak, and any other layout, whereas the

@@ -140,6 +140,14 @@ pub struct AppState {
     /// (#85 Tier 2 last child.) #457 will replace this banner with
     /// per-ISO tier-4 rows sourced from `DiscoveryReport::failed`.
     pub skipped_iso_count: usize,
+    /// Which pane holds keyboard focus on the List screen. Defaults to
+    /// [`Pane::List`]; toggled with `Tab`. (#458)
+    pub pane: Pane,
+    /// Vertical scroll offset for the info pane (tier-specific detail
+    /// view). Increments when `↑`/`↓` are pressed while `pane` is
+    /// [`Pane::Info`]. Resets to 0 when the list selection changes —
+    /// per-ISO scrollback would be confusing. (#458 / #459)
+    pub info_scroll: u16,
 }
 
 /// Sort order applied to the List view. Cycled with the `s` key.
@@ -192,6 +200,29 @@ impl SortOrder {
             Self::Name => "name",
             Self::SizeDesc => "size↓",
             Self::Distro => "distro",
+        }
+    }
+}
+
+/// Which pane holds keyboard focus on the List screen. List selection
+/// moves with ↑↓ when focus is `List`; the info-pane scroll offset
+/// moves with ↑↓ when focus is `Info`. `Tab` toggles. (#458)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Pane {
+    /// Left pane — ISO list. Default focus at startup.
+    #[default]
+    List,
+    /// Right pane — info/detail view for the selected ISO.
+    Info,
+}
+
+impl Pane {
+    /// Swap between `List` and `Info`. Used by the `Tab` key handler.
+    #[must_use]
+    pub fn toggle(self) -> Self {
+        match self {
+            Self::List => Self::Info,
+            Self::Info => Self::List,
         }
     }
 }
@@ -327,6 +358,8 @@ impl AppState {
             sort_order: SortOrder::Name,
             scanned_roots: Vec::new(),
             skipped_iso_count: 0,
+            pane: Pane::default(),
+            info_scroll: 0,
         }
     }
 
@@ -637,6 +670,10 @@ impl AppState {
     /// Advance the visible cursor up (negative) or down (positive),
     /// saturating at the visible-list bounds. Cursor indexes the full
     /// entries list (ISOs + rescue shell), not just ISOs (#85, #90).
+    ///
+    /// Also resets `info_scroll` to 0 whenever the cursor actually
+    /// moves — per-ISO scrollback in the info pane would be
+    /// confusing (#458).
     pub fn move_selection(&mut self, delta: i32) {
         let view_len = self.visible_entries().len();
         let Screen::List { selected } = &mut self.screen else {
@@ -646,12 +683,37 @@ impl AppState {
             return;
         }
         let max = view_len - 1;
+        let before = *selected;
         if delta < 0 {
             let step = delta.unsigned_abs() as usize;
             *selected = selected.saturating_sub(step);
         } else {
             let step = usize::try_from(delta).unwrap_or(0);
             *selected = selected.saturating_add(step).min(max);
+        }
+        if *selected != before {
+            self.info_scroll = 0;
+        }
+    }
+
+    /// Swap the keyboard-focus pane (List ↔ Info). No-op outside the
+    /// List screen. (#458)
+    pub fn toggle_pane(&mut self) {
+        if matches!(self.screen, Screen::List { .. }) {
+            self.pane = self.pane.toggle();
+        }
+    }
+
+    /// Scroll the info pane up (negative) or down (positive),
+    /// saturating at zero. Upper bound is enforced at render time
+    /// (the pane knows its own height + content length). (#458)
+    pub fn move_info_scroll(&mut self, delta: i32) {
+        if delta < 0 {
+            let step = u16::try_from(delta.unsigned_abs()).unwrap_or(u16::MAX);
+            self.info_scroll = self.info_scroll.saturating_sub(step);
+        } else {
+            let step = u16::try_from(delta).unwrap_or(u16::MAX);
+            self.info_scroll = self.info_scroll.saturating_add(step);
         }
     }
 
@@ -1775,5 +1837,71 @@ mod tests {
         let s = quirks_summary(&iso);
         assert!(s.contains("unsigned-kernel"));
         assert!(s.contains("bios-only"));
+    }
+
+    // ---- #458 — dual-pane focus + info-scroll -----------------------
+
+    #[test]
+    fn default_pane_is_list() {
+        let s = AppState::new(vec![fake_iso("a")]);
+        assert_eq!(s.pane, Pane::List);
+    }
+
+    #[test]
+    fn toggle_pane_swaps_focus_on_list_screen() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        assert_eq!(s.pane, Pane::List);
+        s.toggle_pane();
+        assert_eq!(s.pane, Pane::Info);
+        s.toggle_pane();
+        assert_eq!(s.pane, Pane::List);
+    }
+
+    #[test]
+    fn toggle_pane_noop_outside_list_screen() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.screen = Screen::Confirm { selected: 0 };
+        s.toggle_pane();
+        assert_eq!(
+            s.pane,
+            Pane::List,
+            "pane must not change when not on List screen"
+        );
+    }
+
+    #[test]
+    fn move_info_scroll_increments_and_saturates_at_zero() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        assert_eq!(s.info_scroll, 0);
+        s.move_info_scroll(3);
+        assert_eq!(s.info_scroll, 3);
+        s.move_info_scroll(-5);
+        assert_eq!(s.info_scroll, 0, "saturates at zero");
+    }
+
+    #[test]
+    fn move_selection_resets_info_scroll() {
+        // Per-ISO scroll state would confuse operators; resetting on
+        // selection change matches gitui's pattern.
+        let mut s = AppState::new(vec![fake_iso("a"), fake_iso("b")]);
+        s.info_scroll = 7;
+        s.move_selection(1);
+        assert_eq!(s.info_scroll, 0);
+    }
+
+    #[test]
+    fn move_selection_noop_does_not_reset_info_scroll() {
+        // When the cursor hits a saturation boundary, info_scroll
+        // should not be reset — it wasn't a real navigation.
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.info_scroll = 5;
+        s.move_selection(-1); // already at 0, can't go further up
+        assert_eq!(s.info_scroll, 5);
+    }
+
+    #[test]
+    fn pane_toggle_method_returns_opposite() {
+        assert_eq!(Pane::List.toggle(), Pane::Info);
+        assert_eq!(Pane::Info.toggle(), Pane::List);
     }
 }

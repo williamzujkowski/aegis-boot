@@ -11,7 +11,7 @@ use ratatui::{
     widgets::{Block, Borders, Gauge, List, ListItem, ListState, Paragraph, Wrap},
 };
 
-use crate::state::{AppState, Screen, SecureBootStatus, quirks_summary};
+use crate::state::{AppState, Pane, Screen, SecureBootStatus, quirks_summary};
 use crate::theme::Theme;
 use crate::verdict::TrustVerdict;
 
@@ -638,12 +638,20 @@ fn split_list_chrome(frame: &mut Frame<'_>, area: Rect, state: &AppState) -> (Re
 
 fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usize) {
     use crate::state::ViewEntry;
-    if state.isos.is_empty() {
+    if state.isos.is_empty() && state.failed_isos.is_empty() {
         draw_empty_list(frame, area, state);
         return;
     }
 
-    let (info_area, list_area) = split_list_chrome(frame, area, state);
+    // Chrome: (filter/sort hint line) on top, (main body) below. The
+    // main body is now a 40/60 horizontal split between the ISO list
+    // (left) and the info pane (right). (#458)
+    let (info_line_area, body_area) = split_list_chrome(frame, area, state);
+    let panes = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .split(body_area);
+    let (list_area, info_pane_area) = (panes[0], panes[1]);
 
     // Design-review #102: filter-mode visual was too subtle (trailing
     // `_` the only indicator). Now: when editing, render a reversed-
@@ -668,21 +676,21 @@ fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usiz
                 state.sort_order.summary()
             )),
         ]);
-        frame.render_widget(Paragraph::new(styled), info_area);
+        frame.render_widget(Paragraph::new(styled), info_line_area);
     } else {
         let info_line = if state.filter.is_empty() {
             format!(
-                " sort: {}   (/ filter, s cycle sort)",
+                " sort: {}   (/ filter, s cycle sort, Tab focus)",
                 state.sort_order.summary()
             )
         } else {
             format!(
-                " filter: \"{}\"   sort: {}   (/ edit, s cycle sort)",
+                " filter: \"{}\"   sort: {}   (/ edit, Tab focus)",
                 state.filter,
                 state.sort_order.summary()
             )
         };
-        frame.render_widget(Paragraph::new(info_line), info_area);
+        frame.render_widget(Paragraph::new(info_line), info_line_area);
     }
 
     // Full entries view includes the rescue-shell synthetic row at
@@ -722,15 +730,135 @@ fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usiz
             state.isos.len()
         )
     };
+    // Focus styling — the active pane's border brightens; the inactive
+    // pane dims. List-pane highlight is only visible when the list
+    // itself holds focus (otherwise the reverse-video row looks like
+    // a bug from the operator's POV). (#458, gitui pattern.)
+    let list_focused = state.pane == Pane::List;
+    let list_block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(pane_border_style(list_focused, &state.theme));
+    let list_highlight = if list_focused {
+        Style::default().add_modifier(Modifier::REVERSED)
+    } else {
+        Style::default().add_modifier(Modifier::DIM)
+    };
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(title))
-        .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .block(list_block)
+        .highlight_style(list_highlight)
         .highlight_symbol("> ");
 
     let mut list_state = ListState::default();
     let cursor = selected.min(entries.len().saturating_sub(1));
     list_state.select(Some(cursor));
     frame.render_stateful_widget(list, list_area, &mut list_state);
+
+    // Info pane — tier-aware summary of the currently-selected row.
+    // This is the #458 scaffold: verdict + filename + one-line reason.
+    // #459 extends with the full per-tier metadata (sha256, signer,
+    // kernel/initrd, cmdline, quirks, …).
+    draw_info_pane(
+        frame,
+        info_pane_area,
+        state,
+        selected,
+        state.pane == Pane::Info,
+    );
+}
+
+/// Border style for a pane based on focus state. Focused panes use
+/// theme.success (bright) so the eye immediately lands on the active
+/// input target. Unfocused panes use `Color::DarkGray` so they
+/// recede — but stay visible enough that the layout is still
+/// readable. (#458)
+fn pane_border_style(focused: bool, theme: &Theme) -> Style {
+    if focused {
+        Style::default().fg(theme.success)
+    } else {
+        Style::default().fg(ratatui::style::Color::DarkGray)
+    }
+}
+
+/// Render the info pane. #458 ships the scaffold — verdict, filename,
+/// one-line reason. #459 replaces this with the full per-tier content
+/// specified in the design doc.
+fn draw_info_pane(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &AppState,
+    selected: usize,
+    focused: bool,
+) {
+    use crate::state::ViewEntry;
+    let entries = state.visible_entries();
+    let cursor = selected.min(entries.len().saturating_sub(1));
+    let title = if focused {
+        " info (focused) "
+    } else {
+        " info "
+    };
+    let border = pane_border_style(focused, &state.theme);
+
+    let lines: Vec<Line> = match entries.get(cursor) {
+        Some(ViewEntry::Iso(idx)) => match state.isos.get(*idx) {
+            Some(iso) => {
+                let verdict = TrustVerdict::from_discovered(iso, state.secure_boot);
+                vec![
+                    Line::from(vec![
+                        Span::styled("Verdict:  ", Style::default().add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            verdict.label(),
+                            Style::default()
+                                .fg(verdict.color(&state.theme))
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("File:     ", Style::default().add_modifier(Modifier::BOLD)),
+                        Span::raw(
+                            iso.iso_path
+                                .file_name()
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_default(),
+                        ),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("Reason:   ", Style::default().add_modifier(Modifier::BOLD)),
+                        Span::raw(verdict.reason()),
+                    ]),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "(full per-tier content lands in #459)",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                ]
+            }
+            None => vec![Line::from("(no ISO at selected index)")],
+        },
+        Some(ViewEntry::RescueShell) => vec![
+            Line::from(vec![
+                Span::styled("Verdict:  ", Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw("SHELL (busybox)"),
+            ]),
+            Line::from(vec![
+                Span::styled("Action:   ", Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw("exits rescue-tui to a busybox shell"),
+            ]),
+        ],
+        None => vec![Line::from("(empty)")],
+    };
+
+    let paragraph = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .border_style(border),
+        )
+        .wrap(Wrap { trim: false })
+        .scroll((state.info_scroll, 0));
+    frame.render_widget(paragraph, area);
 }
 
 // Intentionally over the 100-line threshold: the Confirm screen is the
@@ -1242,7 +1370,21 @@ mod tests {
     }
 
     fn render_to_string(state: &AppState) -> String {
-        let backend = TestBackend::new(80, 20);
+        // Bumped from 80x20 → 120x30 with the dual-pane layout (#458) —
+        // the 40/60 split leaves ~48 cols for the list pane including
+        // borders, which is still tight for long labels + distro +
+        // quirks. 120 cols is a typical modern terminal and matches
+        // what real operators see in rescue-tui.
+        render_to_string_sized(state, 120, 30)
+    }
+
+    /// Render variant that lets individual tests exercise smaller or
+    /// larger terminal geometries. Default is [`render_to_string`]'s
+    /// 120x30. The minimum reasonable rescue-tui width is 80 cols
+    /// (pre-#458 default); tests that assert on the truncated /
+    /// minimum layout should use this helper explicitly.
+    fn render_to_string_sized(state: &AppState, cols: u16, rows: u16) -> String {
+        let backend = TestBackend::new(cols, rows);
         let mut terminal = Terminal::new(backend).unwrap_or_else(|e| panic!("terminal: {e}"));
         terminal
             .draw(|f| draw(f, state))
@@ -1421,6 +1563,63 @@ mod tests {
         let state = AppState::new(vec![iso]);
         let s = render_to_string(&state);
         assert!(s.contains("unsigned-kernel"));
+    }
+
+    // ---- #458 — dual-pane layout --------------------------------------
+
+    #[test]
+    fn list_screen_renders_info_pane_with_verdict() {
+        // The info pane (right side of the 40/60 split) must surface
+        // the currently-selected row's verdict label so the operator
+        // sees what tier they're about to act on.
+        let iso = fake_iso("ubuntu-live");
+        let state = AppState::new(vec![iso]);
+        let s = render_to_string(&state);
+        assert!(s.contains("Verdict:"));
+        // fake_iso has no sidecar/sig → tier 2 (BareUnverified).
+        assert!(s.contains("UNVERIFIED"), "expected Tier 2 label in: {s}");
+    }
+
+    #[test]
+    fn list_screen_renders_info_pane_with_filename() {
+        let iso = fake_iso("ubuntu-live");
+        let state = AppState::new(vec![iso]);
+        let s = render_to_string(&state);
+        assert!(s.contains("File:"), "info pane must label File: ");
+        // fake_iso's iso_path ends in the label — it's constructed
+        // that way in the test harness (ubuntu-live.iso).
+        assert!(s.contains("ubuntu-live"));
+    }
+
+    #[test]
+    fn info_pane_label_reflects_focus_state() {
+        let iso = fake_iso("a");
+        let mut state = AppState::new(vec![iso]);
+        // Default: List focused, info pane title is " info ".
+        let unfocused = render_to_string(&state);
+        assert!(
+            unfocused.contains(" info "),
+            "unfocused title missing: {unfocused}"
+        );
+        // Tab moves focus → info pane title becomes " info (focused) ".
+        state.toggle_pane();
+        let focused = render_to_string(&state);
+        assert!(
+            focused.contains("info (focused)"),
+            "focused title missing: {focused}"
+        );
+    }
+
+    #[test]
+    fn empty_list_bypasses_dual_pane_and_shows_empty_screen() {
+        // No ISOs and no failures → empty screen path, not dual pane.
+        let state = AppState::new(Vec::new());
+        let s = render_to_string(&state);
+        // draw_empty_list renders a single-pane message.
+        assert!(
+            !s.contains("Verdict:"),
+            "empty state should not show info pane verdict: {s}"
+        );
     }
 
     #[test]
