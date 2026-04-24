@@ -20,3 +20,4 @@ pub(crate) mod partition;
 pub(crate) mod pipeline;
 pub(crate) mod preflight;
 pub(crate) mod raw_write;
+pub(crate) mod source_resolution;

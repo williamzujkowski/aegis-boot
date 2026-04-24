@@ -4,6 +4,10 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 
 ## [Unreleased]
 
+### Windows signed-chain source resolver (#497 piece 2)
+
+New `windows_direct_install::source_resolution` module resolves the six ESP chain files from an operator-controlled `out_dir` with per-file env var overrides (`AEGIS_SHIM_SRC`, `AEGIS_GRUB_SRC`, `AEGIS_MM_SRC`, `AEGIS_GRUB_CFG`, `AEGIS_KERNEL_SRC`, `AEGIS_INITRD_SRC`). Default filenames match the names `scripts/mkusb.sh` writes into `out/` so a developer who built the chain on Linux can run direct-install on Windows against the same directory without renaming. Missing-file errors collect every missing file (not fail-fast) so an operator who staged 4 of 6 sees all remaining names in one shot. 10 unit tests on the pure-fn surface (host-agnostic — no Windows needed).
+
 ### Windows direct-install pipeline composer (#483)
 
 New `windows_direct_install::pipeline` module composes the four Phase-module stages of [epic #419](https://github.com/aegis-boot/aegis-boot/issues/419) — preflight (elevation + BitLocker) → partition (diskpart) → format ESP + `AEGIS_ISOS` → `stage_esp` — into a single `run(runner, plan)` entrypoint with per-stage timing receipts and abort-on-first-failure cascade.
