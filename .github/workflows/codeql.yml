@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# CodeQL semantic analysis (#488 / #485 supply-chain hygiene bundle).
+#
+# Complements the existing semgrep p/rust + p/security-audit passes
+# — semgrep catches pattern-based findings (explicit regex/AST
+# rules), CodeQL catches data-flow taint analysis across function
+# boundaries. The overlap is real but not total; projects that run
+# both catch issues either tool misses alone.
+#
+# Findings surface in Security → Code scanning alongside semgrep +
+# Scorecard SARIF outputs.
+#
+# Rust support in CodeQL is still in beta as of 2026. If the queries
+# become noisy we tighten them via a .github/codeql/codeql-config.yml
+# file (not needed for the default rollout).
+
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Tuesdays 07:00 UTC = 03:00 ET — staggered from Scorecard's Monday
+    # run so the two analyses don't starve each other for runners.
+    - cron: "0 7 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-22.04
+    permissions:
+      security-events: write
+      packages: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # `actions` catches Actions-workflow misconfigurations
+        # (unused secrets, pinning issues, etc.) independently of
+        # Rust-source analysis.
+        #
+        # Rust support in CodeQL is still public-preview. If Rust
+        # queries flake, the `actions` matrix entry still produces
+        # useful analysis. Monitor + tighten via a codeql-config.yml
+        # if Rust findings become noisy.
+        language: [rust, actions]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # security-extended + security-and-quality give us the full
+          # CWE-mapped ruleset. Default is 'security' only.
+          queries: security-extended
+
+      # Rust needs a build step so CodeQL can extract the IR. Pinned
+      # to MSRV (matches the rest of CI) so the extractor sees the
+      # same tree the release binary is built from.
+      - name: Install Rust
+        if: matrix.language == 'rust'
+        run: rustup toolchain install 1.88.0 --profile minimal && rustup override set 1.88.0
+
+      - uses: Swatinem/rust-cache@v2
+        if: matrix.language == 'rust'
+
+      - name: Build workspace (Rust only)
+        if: matrix.language == 'rust'
+        run: cargo build --workspace --locked
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

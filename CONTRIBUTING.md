@@ -91,6 +91,8 @@ Every PR runs the following — each is also runnable locally. Running them befo
 | Typo gate (#485) | `typos` (install via `cargo install typos-cli --locked`) | [`.typos.toml`](./.typos.toml) |
 | OpenSSF Scorecard (#485) | GitHub-only, weekly | `.github/workflows/scorecard.yml` |
 | Dependabot auto-bumps (#485) | GitHub-only, weekly + on advisory | `.github/dependabot.yml` |
+| Unused-dep gate (#486) | `cargo install cargo-machete --locked && cargo machete` | `.github/workflows/machete.yml` |
+| CodeQL data-flow analysis (#488) | GitHub-only, weekly + PR | `.github/workflows/codeql.yml` |
 
 `./scripts/dev-test.sh` bundles most of these into a single "run-before-push" command.
 

@@ -33,7 +33,6 @@ schema = ["dep:schemars"]
 [dependencies]
 serde = { workspace = true }
 serde_json = "1.0"
-thiserror = { workspace = true }
 # schemars picks the latest stable. 0.8 is the long-established
 # release with a settled API + a broad reverse-dependency ecosystem.
 schemars = { version = "1", optional = true, default-features = false, features = ["derive"] }

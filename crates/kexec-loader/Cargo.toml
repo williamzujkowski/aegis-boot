@@ -16,7 +16,6 @@ categories = ["os::linux-apis", "api-bindings"]
 
 [dependencies]
 thiserror.workspace = true
-tracing.workspace = true
 libc.workspace = true
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
