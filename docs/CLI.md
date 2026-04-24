@@ -171,17 +171,27 @@ Inspect attestation: aegis-boot list
 
 ## `aegis-boot flash`
 
-Writes a freshly built `aegis-boot.img` to a USB stick.
+Writes a freshly built `aegis-boot.img` to a USB stick. Two backends: the default `mkusb.sh + dd` path (Linux) and `--direct-install` (Linux + Windows, ~30 sec vs ~4 min on USB 2.0).
 
 ### Usage
 
 ```bash
+# Linux — mkusb.sh + dd default
 sudo aegis-boot flash             # auto-detect removable drives
 sudo aegis-boot flash /dev/sdc    # explicit device
-sudo aegis-boot flash --help
+
+# Linux — in-place partition + format + stage (faster)
+sudo aegis-boot flash /dev/sdc --direct-install
+
+# Windows (#419 epic, closed 2026-04-24) — must run elevated
+aegis-boot flash --direct-install 1 --out-dir ./out --yes
+aegis-boot flash --direct-install PhysicalDrive1 --out-dir ./out --yes
+
+# Help
+aegis-boot flash --help
 ```
 
-### What it does
+### What it does (Linux, default `mkusb.sh + dd`)
 
 1. **Drive detection** — scans `/sys/block/sd*` for devices with `removable=1`. Skips NVMe, loop, and any system drive that isn't flagged removable. Reads model + size from sysfs.
 2. **Selection prompt** — shows numbered list, asks `[Y/n]` if exactly one drive, `[1-N]` otherwise. Pressing Enter on the single-drive prompt accepts.
@@ -190,16 +200,59 @@ sudo aegis-boot flash --help
 5. **Write** — invokes `sudo dd if=out/aegis-boot.img of=/dev/sdX bs=4M oflag=direct conv=fsync status=progress`.
 6. **Sync + partprobe** — flushes caches, asks the kernel to re-read the partition table.
 
+### What it does (Linux, `--direct-install`)
+
+Skips the `dd` image write. Partitions the stick (`sgdisk` → ESP + AEGIS_ISOS), formats (`mkfs.fat` + `mkfs.exfat`), renders `grub.cfg`, and copies the 6 signed-chain files directly via `mtools`. Writes the attestation manifest at the end. Requires `sgdisk`, `mkfs.fat`, `mkfs.exfat`, `mmd`, `mcopy` on PATH.
+
+### What it does (Windows, `--direct-install`)
+
+Composes the four `windows_direct_install::*` phase modules (per #419 epic):
+
+1. **Preflight** — `is_running_as_admin()` + `check_bitlocker_status(drive)`. Aborts before any destructive action if elevation is missing or the target is BitLocker-protected.
+2. **Partition** — pipes a `select disk N → clean → convert gpt → create partition efi + fat32 + create partition primary + exfat` script to `diskpart`.
+3. **Format** — PowerShell `Format-Volume` for FAT32 (ESP) + exFAT (AEGIS_ISOS). Verifies each partition's GPT type GUID before formatting.
+4. **Stage ESP** — `CreateFileW` + `FSCTL_LOCK_VOLUME` + sector-aligned `WriteFile` via `windows-rs` for raw-disk access, then `FindFirstVolumeW` + `IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS` to resolve the ESP volume GUID and drop the 6 signed-chain files through the FAT32 FS driver.
+
+The operator supplies:
+- `<drive>` (integer, `PhysicalDrive1`, or `\\.\PhysicalDrive1`)
+- `--out-dir PATH` (directory holding the 6 signed-chain files; default `./out`)
+- `--yes` (mandatory — destructive-action guard)
+
+Per-file env var overrides let an operator point at a non-standard chain layout:
+
+- `AEGIS_SHIM_SRC` — path to `shimx64.efi.signed`
+- `AEGIS_GRUB_SRC` — path to `grubx64.efi.signed`
+- `AEGIS_MM_SRC` — path to `mmx64.efi.signed`
+- `AEGIS_GRUB_CFG` — path to `grub.cfg`
+- `AEGIS_KERNEL_SRC` — path to `vmlinuz`
+- `AEGIS_INITRD_SRC` — path to `initramfs.cpio.gz`
+
+If `<drive>` is omitted, the dispatcher prints the list of flashable physical drives (filter: not disk 0, not `IsBoot`, not `IsSystem`, not read-only, ≥1 GiB) and exits with a remediation hint. No interactive prompt — WinRM / remote SSH sessions often have closed stdin, and a silent prompt-hang is worse than a clear message.
+
+Success prints a per-stage timing receipt:
+
+```
+Direct-install complete.
+  preflight:elevation    0.1s
+  preflight:bitlocker    0.3s
+  partition:diskpart     2.7s
+  format:esp             1.8s
+  format:aegis_isos      1.2s
+  stage_esp              4.1s
+  total                  10.2s
+```
+
 ### Exit codes
 
 - `0` — success
-- `1` — drive not found, build failed, or `dd` failed
-- `2` — usage error (unknown subcommand)
+- `1` — drive not found, build failed, `dd` failed, or a direct-install stage failed
+- `2` — usage error (unknown subcommand, `<drive>` missing, `<drive>` unparsable, `--yes` missing)
 
 ### Requirements
 
-- Repo root present (the binary `find_repo_root()`s for `Cargo.toml + crates/`). For now the CLI assumes the repo is on disk; standalone packaging is tracked separately.
-- `bash`, `sudo`, `dd`, `partprobe`, plus all the build prereqs in [BUILDING.md](../BUILDING.md).
+- Repo root present (the binary `find_repo_root()`s for `Cargo.toml + crates/`) — only needed for the legacy `mkusb.sh + dd` path. `--direct-install` runs anywhere the operator has the 6 signed-chain files.
+- **Linux:** `bash`, `sudo`, `dd`, `partprobe`, plus all the build prereqs in [BUILDING.md](../BUILDING.md). For `--direct-install`: `sgdisk`, `mkfs.fat`, `mkfs.exfat`, `mmd`, `mcopy` on PATH.
+- **Windows:** `diskpart.exe` + PowerShell ≥5.1 (both ship with every Windows install). Administrator elevation required — the preflight stage refuses without it.
 
 ---
 
