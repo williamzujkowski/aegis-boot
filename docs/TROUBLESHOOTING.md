@@ -173,7 +173,7 @@ Set `AEGIS_THEME=high-contrast` (kernel cmdline: `aegis.theme=high-contrast`). U
 
 ### Red/green verdicts are indistinguishable (color vision)
 
-Set `AEGIS_THEME=okabe-ito` (aliases `cb` / `colorblind`). Swaps the verdict trio to the Okabe-Ito colorblind-safe palette: bluish-green for success, orange for warning, vermillion for error. Distinguishable under deuteranopia and protanopia.
+Set `AEGIS_THEME=okabe-ito` (aliases `cb` / `colorblind`). Swaps the verdict trio to the Okabe-Ito colorblind-safe palette: bluish-green for success, orange for warning, vermilion for error. Distinguishable under deuteranopia and protanopia.
 
 ### Serial console or screen reader strips color
 

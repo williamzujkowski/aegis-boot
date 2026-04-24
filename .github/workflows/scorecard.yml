@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# OpenSSF Scorecard (#485 supply-chain hygiene bundle).
+#
+# Runs the Scorecard analyzer weekly + on push-to-main. Each check
+# covers a canonical supply-chain concern:
+#
+#   - Binary-Artifacts / Dangerous-Workflow / Token-Permissions
+#   - Branch-Protection / Code-Review / Signed-Releases
+#   - Dependency-Update-Tool / SAST / Packaging / Pinned-Dependencies
+#   - Fuzzing / Security-Policy / Vulnerabilities / License
+#
+# Results upload as SARIF to the GitHub Security tab + publish to the
+# public Scorecard API so downstream consumers can verify posture
+# without running the checks themselves.
+#
+# Badge markdown (add to README once the first run completes):
+#   [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/aegis-boot/aegis-boot/badge)](https://securityscorecards.dev/viewer/?uri=github.com/aegis-boot/aegis-boot)
+
+name: OpenSSF Scorecard
+
+on:
+  # Re-run on every merge to main so regressions (branch-protection
+  # getting relaxed, a workflow gaining write perms it doesn't need,
+  # etc.) surface quickly.
+  push:
+    branches: [main]
+  # Weekly schedule catches things that drift without a commit:
+  # dependabot configs getting disabled, stale security-policy, etc.
+  schedule:
+    - cron: "0 7 * * 1" # Mondays 07:00 UTC = 03:00 ET
+  workflow_dispatch:
+
+# Scorecard needs id-token for keyless upload to the public API,
+# security-events for SARIF upload to code-scanning. Everything else
+# stays read-only — the workflow itself shouldn't push.
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-22.04
+    permissions:
+      security-events: write
+      id-token: write
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Run Scorecard
+        uses: ossf/scorecard-action@v2.4.2
+        with:
+          results_file: scorecard-results.sarif
+          results_format: sarif
+          # publish_results=true pushes to the public Scorecard API so
+          # the badge URL works. Only fires on push-to-main /
+          # scheduled runs, not PRs (public results on a PR branch
+          # would leak non-merged config).
+          publish_results: true
+
+      # Keep the raw SARIF as a workflow artifact — useful for local
+      # drilldown when a check regresses.
+      - name: Upload artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: scorecard-sarif
+          path: scorecard-results.sarif
+          retention-days: 30
+
+      # Surface findings in the GitHub Security tab alongside semgrep
+      # SARIF (same code-scanning pane). Each Scorecard check becomes
+      # an entry there when it's non-passing.
+      - name: Upload to code-scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: scorecard-results.sarif

@@ -58,7 +58,7 @@ impl Theme {
 
     /// Okabe-Ito colorblind-safe palette — no red-on-green status pairs
     /// that trip deuteranopia/protanopia. Green → bluish-green (#009E73),
-    /// warning → orange (#E69F00), error → vermillion (#D55E00). See
+    /// warning → orange (#E69F00), error → vermilion (#D55E00). See
     /// jfly.uni-koeln.de/color. (#93)
     #[must_use]
     pub const fn okabe_ito() -> Self {
@@ -70,7 +70,7 @@ impl Theme {
     }
 
     /// aegis brand palette (#76). Matches assets/brand/BRAND.md — steel
-    /// blue primary, emerald success, amber warning, vermillion error.
+    /// blue primary, emerald success, amber warning, vermilion error.
     /// All five tested against deuteranopia/protanopia and distinct
     /// from Ubuntu/Fedora/Arch distro palettes.
     #[must_use]
@@ -152,7 +152,7 @@ mod tests {
     fn okabe_ito_uses_colorblind_safe_rgb() {
         use ratatui::style::Color;
         let t = Theme::okabe_ito();
-        // Bluish-green, orange, vermillion — the three non-primary
+        // Bluish-green, orange, vermilion — the three non-primary
         // Okabe-Ito colors that remain distinguishable under
         // deuteranopia / protanopia.
         assert_eq!(t.success, Color::Rgb(0x00, 0x9E, 0x73));

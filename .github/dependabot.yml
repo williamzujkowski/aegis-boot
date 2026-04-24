@@ -1,0 +1,101 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# Dependabot config for aegis-boot (#485 supply-chain hygiene bundle).
+#
+# Cadence: weekly for routine updates, immediate for security advisories.
+# Windows Defender / GitHub infrastructure dispatches advisory-triggered
+# PRs automatically regardless of the schedule below.
+#
+# Scope:
+#   - cargo       — the Rust workspace Cargo.toml (transitively covers
+#                   all 7 crates via workspace inheritance).
+#   - github-actions — versions pinned in .github/workflows/*.yml.
+#                      Catches supply-chain hits on action authors.
+#   - docker      — Dockerfile.sandbox + Dockerfile.locked.
+#
+# Why not cargo-fuzz's Cargo.toml directly: dependabot doesn't descend
+# into non-workspace members that aren't declared in workspace.members.
+# The fuzz targets pin their own libfuzzer versions and don't pull in
+# application code.
+#
+# Review rotation: williamzujkowski reviews everything until a second
+# maintainer joins. Labels let triage filter dep-bump PRs distinct from
+# feature PRs.
+
+version: 2
+updates:
+  # Rust workspace — the primary dependency surface.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - rust
+    reviewers:
+      - williamzujkowski
+    commit-message:
+      prefix: "deps"
+      include: scope
+    # Conservative strategy: don't auto-widen caret ranges; upgrade
+    # minor+patch but major-version bumps need human review for API
+    # break fallout. See #411 for the pattern used on ratatui, schemars,
+    # toml, sha2 major bumps.
+    versioning-strategy: increase-if-necessary
+    # Group patch-level updates so we get one "chore: patch bumps" PR
+    # per week instead of N separate PRs. Majors + minors stay
+    # individual so each gets its own review.
+    groups:
+      patch-level:
+        update-types:
+          - patch
+    # Ignore entries for deps we pin deliberately (version-locked for
+    # reproducibility or compat). Revisit quarterly.
+    ignore:
+      # crossterm 0.29 pinned to match ratatui 0.30's transitive dep.
+      # Let ratatui drive the bump; a solo crossterm upgrade would
+      # de-dup differently than the dep resolver expects.
+      - dependency-name: crossterm
+        versions: [">=0.30"]
+
+  # GitHub Actions — mitigates the "action author gets compromised"
+  # supply-chain risk that killed tj-actions/changed-files in 2024.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - github-actions
+    reviewers:
+      - williamzujkowski
+    commit-message:
+      prefix: "ci"
+
+  # Docker — the sandbox + locked images the build pipeline uses.
+  # Pinned-digest bumps matter for reproducibility: the Dockerfile's
+  # `FROM …@sha256:…` line moves only when dependabot says a
+  # newer-digest refresh exists.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 2
+    labels:
+      - dependencies
+      - docker
+    reviewers:
+      - williamzujkowski
+    commit-message:
+      prefix: "docker"

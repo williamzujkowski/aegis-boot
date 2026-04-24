@@ -22,6 +22,7 @@ A signed UEFI Secure Boot rescue environment that lets operators pick any ISO fr
 [![License](https://img.shields.io/github/license/aegis-boot/aegis-boot)](LICENSE-APACHE)
 [![Latest Release](https://img.shields.io/github/v/release/aegis-boot/aegis-boot)](https://github.com/aegis-boot/aegis-boot/releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/aegis-boot/aegis-boot/ci.yml?label=ci)](https://github.com/aegis-boot/aegis-boot/actions)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/aegis-boot/aegis-boot/badge)](https://securityscorecards.dev/viewer/?uri=github.com/aegis-boot/aegis-boot)
 
 </div>
 

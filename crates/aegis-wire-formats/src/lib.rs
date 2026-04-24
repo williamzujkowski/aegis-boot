@@ -567,7 +567,7 @@ pub struct AttestListSuccess {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct AttestListError {
-    /// Host filesystem path of the unparseable file.
+    /// Host filesystem path of the unparsable file.
     pub manifest_path: String,
     /// Human-readable error message from the parser.
     pub error: String,

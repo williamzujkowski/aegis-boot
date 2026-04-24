@@ -611,7 +611,7 @@ First real-USB shakedown on a SanDisk Cruzer 32GB via QEMU USB-passthrough with 
 - **`assets/brand/`** — master SVG + monochrome variant of the shield-with-keyhole logo; ASCII renders (full 10-line README hero + compact 3-line TUI); `palette.css` with oklch + hex; `BRAND.md` usage guidelines.
 - **README hero block** — shield ASCII + tagline + license/release/CI badges.
 - **Tagline:** *Signed boot. Any ISO. Your keys.*
-- **`aegis` theme** — fifth named palette alongside default / monochrome / high-contrast / okabe-ito. Steel-blue primary (`#3B82F6`), emerald success, amber warning, vermillion error. Verified under deuteranopia/protanopia; distinct from Ubuntu/Fedora/Arch distro palettes.
+- **`aegis` theme** — fifth named palette alongside default / monochrome / high-contrast / okabe-ito. Steel-blue primary (`#3B82F6`), emerald success, amber warning, vermilion error. Verified under deuteranopia/protanopia; distinct from Ubuntu/Fedora/Arch distro palettes.
 - **TUI header** gains the `◆` shield mark in brand primary plus the tagline in dim italic.
 
 ### Design-review fixes (#76 self-critique)

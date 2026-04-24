@@ -87,6 +87,10 @@ Every PR runs the following — each is also runnable locally. Running them befo
 | gitleaks secret scan | GitHub-only | `.gitleaks.toml` |
 | Miri UB detection (kexec-loader) | `cargo +nightly miri test -p kexec-loader` | `.github/workflows/miri-kexec-loader.yml` |
 | Real-hardware / OVMF boot smoke | GitHub-only | `.github/workflows/direct-install-e2e.yml`, `ovmf-secboot.yml` |
+| Trust-tier + keybinding doc drift | `cargo run -p rescue-tui --bin tiers-docgen -- --check` | `crates/rescue-tui/src/verdict.rs`, `crates/rescue-tui/src/keybindings.rs` |
+| Typo gate (#485) | `typos` (install via `cargo install typos-cli --locked`) | [`.typos.toml`](./.typos.toml) |
+| OpenSSF Scorecard (#485) | GitHub-only, weekly | `.github/workflows/scorecard.yml` |
+| Dependabot auto-bumps (#485) | GitHub-only, weekly + on advisory | `.github/dependabot.yml` |
 
 `./scripts/dev-test.sh` bundles most of these into a single "run-before-push" command.
 

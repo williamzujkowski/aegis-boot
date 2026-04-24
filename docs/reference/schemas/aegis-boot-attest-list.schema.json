@@ -62,7 +62,7 @@
           "type": "string"
         },
         "manifest_path": {
-          "description": "Host filesystem path of the unparseable file.",
+          "description": "Host filesystem path of the unparsable file.",
           "type": "string"
         }
       },

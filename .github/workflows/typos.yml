@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# Typo gate (#485 supply-chain hygiene bundle).
+#
+# Runs `typos` on every PR + push-to-main. Config lives in .typos.toml
+# at the repo root — see that file for the project-specific allowlist
+# of false positives (product names, GUID fragments, French loanwords).
+#
+# Local workflow: install via `cargo install typos-cli --locked`, run
+# `typos` in the repo root. `typos -w` writes fixes in place for the
+# unambiguous cases.
+
+name: Typos
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  typos:
+    name: typos
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      # crate-ci/typos-action is the upstream-maintained wrapper around
+      # the typos CLI. Pinned version = 1.45.1 to match the typos-cli
+      # version developers are expected to install locally. Bump both
+      # together via Dependabot.
+      - name: Run typos
+        uses: crate-ci/typos@v1.45.1
