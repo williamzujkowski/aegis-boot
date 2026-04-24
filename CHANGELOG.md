@@ -4,6 +4,10 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 
 ## [Unreleased]
 
+### Windows drive enumeration (#497 piece 3)
+
+New `windows_direct_install::drive_enumeration` module wraps `Get-Disk | ConvertTo-Json` so the CLI can list flashable physical drives, filtered to safe candidates (not disk 0, not `IsBoot`, not `IsSystem`, not read-only, ≥1 GiB). Pure-fn JSON parser + filter are unit-tested on Linux via canned output; the subprocess wrapper is Windows-gated. 14 tests cover the Win11-VM canned output shape, BOM-prefix tolerance, missing-optional-field tolerance, every filter predicate, stable ordering, human-readable size formatting, and `BusType` integer-enum mapping.
+
 ### Windows signed-chain source resolver (#497 piece 2)
 
 New `windows_direct_install::source_resolution` module resolves the six ESP chain files from an operator-controlled `out_dir` with per-file env var overrides (`AEGIS_SHIM_SRC`, `AEGIS_GRUB_SRC`, `AEGIS_MM_SRC`, `AEGIS_GRUB_CFG`, `AEGIS_KERNEL_SRC`, `AEGIS_INITRD_SRC`). Default filenames match the names `scripts/mkusb.sh` writes into `out/` so a developer who built the chain on Linux can run direct-install on Windows against the same directory without renaming. Missing-file errors collect every missing file (not fail-fast) so an operator who staged 4 of 6 sees all remaining names in one shot. 10 unit tests on the pure-fn surface (host-agnostic — no Windows needed).

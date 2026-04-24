@@ -15,6 +15,7 @@
 //! diskpart_script`) compile + test on any host so the logic stays
 //! reviewable from Linux.
 
+pub(crate) mod drive_enumeration;
 pub(crate) mod format;
 pub(crate) mod partition;
 pub(crate) mod pipeline;
