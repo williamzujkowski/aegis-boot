@@ -521,12 +521,27 @@ fn is_valid_sha256_hex(s: &str) -> bool {
 /// filename includes a sha256 prefix when one was supplied so distinct
 /// pinned images don't collide.
 fn default_cache_path(url: &str, expected_sha256: Option<&str>) -> Result<PathBuf, u8> {
+    // Lookup order: XDG_CACHE_HOME (POSIX dev convention) → HOME →
+    // LOCALAPPDATA (Windows cache convention) → USERPROFILE. The
+    // LOCALAPPDATA path is where Windows apps are supposed to put
+    // cache data per Microsoft's conventions; USERPROFILE is the
+    // last-resort fallback for old Windows versions / constrained
+    // runner environments where LOCALAPPDATA isn't exported.
     let cache_home = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
         .or_else(|| {
             std::env::var_os("HOME").map(|h| {
                 let mut p = PathBuf::from(h);
                 p.push(".cache");
+                p
+            })
+        })
+        .or_else(|| std::env::var_os("LOCALAPPDATA").map(PathBuf::from))
+        .or_else(|| {
+            std::env::var_os("USERPROFILE").map(|u| {
+                let mut p = PathBuf::from(u);
+                p.push("AppData");
+                p.push("Local");
                 p
             })
         })

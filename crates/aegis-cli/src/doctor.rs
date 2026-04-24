@@ -1378,15 +1378,21 @@ mod tests {
 
     #[test]
     fn check_command_present_with_pkg_finds_existing_binary() {
-        // `ls` is present on every supported platform's PATH — use
-        // it as a known-good probe to verify the Pass path of the
-        // pkg-aware variant.
+        // Known-good probe per platform — `ls` is universal on
+        // POSIX; `cmd` is present on every Windows install (including
+        // server runners). Using a platform-specific binary avoids
+        // `ls` not resolving via `where` on Windows (#502).
+        let probe = if cfg!(target_os = "windows") {
+            "cmd"
+        } else {
+            "ls"
+        };
         let mut r = Report::new();
-        check_command_present_with_pkg(&mut r, "ls", "coreutils", "canary");
+        check_command_present_with_pkg(&mut r, probe, "coreutils", "canary");
         assert_eq!(r.rows.len(), 1);
         assert!(
             matches!(r.rows[0].0, Verdict::Pass),
-            "expected Pass for `ls`, got {:?}",
+            "expected Pass for `{probe}`, got {:?}",
             r.rows[0].0
         );
         assert!(r.rows[0].2.contains("canary"));

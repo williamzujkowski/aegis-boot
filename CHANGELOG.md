@@ -4,6 +4,14 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 
 ## [Unreleased]
 
+### Cross-platform test fixes + Windows cache-dir fallback (#502)
+
+Three tests were previously Linux-biased; #502 makes them run cleanly on Windows and broadens the #501 full-suite gate to all 593 aegis-bootctl tests:
+
+- `bug_report::tests::read_stick_logs_parses_valid_and_skips_malformed` — filename had `:` in it (ISO-8601 timestamp), which NTFS forbids. Renamed to dashes; the in-file JSON still carries the colon form.
+- `doctor::tests::check_command_present_with_pkg_finds_existing_binary` — probed for `ls` in PATH; now uses `cmd` on Windows, `ls` elsewhere.
+- `fetch_image::default_cache_path` tests — depended on POSIX `XDG_CACHE_HOME` / `HOME`. The function now also respects `LOCALAPPDATA` + `USERPROFILE` fallbacks (Windows-standard cache conventions), which fixes the tests AND makes the real tool behave correctly on Windows end-user installs.
+
 ### Windows-2022 CI gate (#420 stub)
 
 New `windows-cargo-check.yml` workflow runs `cargo check -p aegis-bootctl --all-targets` + `cargo test -p aegis-bootctl --locked` on a `windows-2022` GitHub-hosted runner. Catches MSVC-vs-GNU drift the cross-compile-from-Linux gate misses + exercises the 70+ new aegis-cli tests (pipeline, source_resolution, drive_enumeration, flash_dispatcher) on a real Windows host. Clippy runs with `continue-on-error` until the pre-existing Windows-gated-code backlog clears. First piece of the full #420 multi-OS matrix.
