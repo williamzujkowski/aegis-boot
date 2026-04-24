@@ -87,6 +87,72 @@ jobs:
       - name: Run rescue-tui tests
         run: cargo test -p rescue-tui --locked
 
+  macos-smoke:
+    # Partial coverage for issue #420. The Linux CI job already runs
+    # `cargo check --target x86_64-apple-darwin` against every PR —
+    # but that's a cross-compile. This job spins up an actual macos-14
+    # runner and does a native build + test, closing the "the
+    # cfg-gated macOS subprocess wrappers have never been compiled
+    # or linked on real macOS" gap.
+    #
+    # Does NOT do the full direct-install e2e (partition a USB, flash
+    # the signed chain, verify the ESP). That's the remaining open
+    # portion of #420 — needs a sparseimage-backed loopback target +
+    # OVMF-equivalent boot test, which is meaningfully more work than
+    # this smoke gate. Tracked there.
+    name: macOS native smoke (macos-14)
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
+      - name: Install Rust toolchain (pinned)
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain 1.88.0 --profile minimal --component rustfmt,clippy
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
+      - name: Format + lint aegis-cli on native macOS
+        run: |
+          cargo fmt --check
+          cargo clippy -p aegis-bootctl --all-targets -- -D warnings
+      - name: Native build + unit tests
+        # Exercises the cfg(target_os = "macos") subprocess wrappers
+        # at compile + link time under real libSystem. The tests
+        # themselves are pure-fn — no diskutil subprocess runs — so
+        # this is compile coverage, not runtime coverage.
+        run: |
+          cargo build -p aegis-bootctl --locked
+          cargo test -p aegis-bootctl --locked
+      - name: --direct-install CLI surface reachable
+        # Final sanity check: the macos_direct_install path through
+        # flash.rs compiles in cfg(target_os = "macos") mode and
+        # --help works end-to-end. No destructive action — --help
+        # short-circuits before preflight.
+        run: |
+          ./target/debug/aegis-boot flash --help
+          # The parent `flash --help` mentions --direct-install;
+          # the macOS-specific dispatcher surfaces its own usage
+          # message via MissingDeviceArg when the flag lands with
+          # no device. That's exercised here as a pure CLI-surface
+          # test (no destructive syscalls — source resolution
+          # fails first on the missing ./out directory).
+          set +e
+          output=$(./target/debug/aegis-boot flash --direct-install 2>&1)
+          rc=$?
+          echo "$output"
+          # Expect exit 2 (usage error) with the diskutil list hint.
+          if [ "$rc" -ne 2 ]; then
+            echo "expected exit 2 for missing device arg, got $rc" >&2
+            exit 1
+          fi
+          case "$output" in
+            *"diskutil list"*) ;;
+            *)
+              echo "expected guidance pointing at diskutil list" >&2
+              exit 1
+              ;;
+          esac
+
   fitness:
     name: aegis-fitness audit
     runs-on: ubuntu-22.04
