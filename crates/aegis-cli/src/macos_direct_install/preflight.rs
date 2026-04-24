@@ -75,7 +75,7 @@ pub(crate) struct DiskInfo {
 
 /// Why `diskutil info` output couldn't be parsed into a
 /// [`DiskInfo`]. Distinguishes "format drifted" (missing field)
-/// from "field was there but unparseable" so a future localization
+/// from "field was there but unparsable" so a future localization
 /// or `diskutil` upgrade can be narrowed quickly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DiskInfoParseError {
