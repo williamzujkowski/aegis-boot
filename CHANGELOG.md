@@ -4,6 +4,19 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 
 ## [Unreleased]
 
+### Windows direct-install raw-write wiring (#484, Phase 3 of #419)
+
+`windows_direct_install::raw_write::{write_bytes_to_physical_drive, stage_esp}` now call the real Win32 APIs, replacing the `"not yet wired"` stubs from [#449](https://github.com/aegis-boot/aegis-boot/issues/449).
+
+- `write_bytes_to_physical_drive` opens `\\.\PhysicalDriveN` with `GENERIC_READ | GENERIC_WRITE`, `FILE_SHARE_NONE`, `FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH`, queries the on-disk sector size via `IOCTL_DISK_GET_DRIVE_GEOMETRY_EX`, issues `FSCTL_LOCK_VOLUME` before the write, loops `WriteFile` on a 4 MiB page-aligned buffer (sector-aligned via `std::alloc` with 4 KiB layout), and finishes with `FSCTL_DISMOUNT_VOLUME` so Windows re-reads the partition table.
+- `stage_esp` enumerates volumes via `FindFirstVolumeW` + `IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS` to find the one backed by the target physical drive, then uses buffered FAT32 FS-driver I/O to copy each of the 6 signed-chain files under `\\?\Volume{GUID}\EFI\BOOT\…`.
+- RAII wrappers (`OwnedHandle`, `AlignedBuffer`) ensure `CloseHandle` + `dealloc` fire on every exit path, so a write-loop error doesn't leak an exclusive handle (which would leave the volume locked until the process exits).
+- Each `unsafe` block carries its own narrow `#[allow(unsafe_code)]` with a documented safety invariant; the workspace-level `unsafe_code = "deny"` catches any unannotated slip.
+- New `Win32_Security` feature on the `windows = "0.58"` dep, required by `CreateFileW`'s `SECURITY_ATTRIBUTES` parameter even when passed as `None`.
+- Integration test `raw_write_roundtrip_on_scratch_disk` writes a 12 KiB pattern at offset 64 KiB and reads it back; opt-in via `AEGIS_BOOT_RAW_WRITE_TEST_DRIVE=<n>` env var so accidental execution can't destroy data. Validated on Win11 (QEMU SATA scratch disk) against `\\.\PhysicalDrive1`.
+
+Unblocks [#483](https://github.com/aegis-boot/aegis-boot/issues/483) (the CLI integration phase that composes partition + format + raw_write + preflight under `aegis-boot flash --direct-install`).
+
 ## [0.17.0] — 2026-04-24
 
 Headline themes: the rescue-tui UX overhaul from [epic #455](https://github.com/aegis-boot/aegis-boot/issues/455) (dual-pane layout, 6-tier trust model, every ISO on the stick is now visible with a descriptive verdict), ADR 0003 cross-reboot persistence shipped end-to-end, MSRV bumped to Rust 1.88, first-class NixOS install path via flake, and the entire major-dep-bump backlog from #411 cleared (indicatif, toml, schemars, sha2).
