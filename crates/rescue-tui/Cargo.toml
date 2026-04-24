@@ -18,6 +18,13 @@ path = "src/main.rs"
 name = "tiers-docgen"
 path = "src/bin/tiers_docgen.rs"
 
+# Dev aid: render rescue-tui fixtures to ANSI-escaped stdout for
+# visual review without building + booting a real aegis-boot stick.
+# Not installed, not part of the boot chain.
+[[bin]]
+name = "tui-screenshots"
+path = "src/bin/tui_screenshots.rs"
+
 [dependencies]
 aegis-wire-formats = { path = "../aegis-wire-formats", version = "0.16" }
 iso-probe = { path = "../iso-probe" }
