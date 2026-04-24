@@ -114,8 +114,7 @@ impl TrustVerdict {
             Self::KeyNotTrusted => {
                 "signature parses but key is not in AEGIS_TRUSTED_KEYS".to_string()
             }
-            Self::ParseFailed { reason } => reason.clone(),
-            Self::SecureBootBlocked { reason } => reason.clone(),
+            Self::ParseFailed { reason } | Self::SecureBootBlocked { reason } => reason.clone(),
             Self::HashMismatch {
                 expected,
                 actual,
@@ -149,9 +148,8 @@ impl TrustVerdict {
             Self::OperatorAttested => "[+]",
             Self::KeyNotTrusted => "[~]",
             Self::BareUnverified => "[ ]",
-            Self::ParseFailed { .. } => "[!]",
+            Self::ParseFailed { .. } | Self::HashMismatch { .. } => "[!]",
             Self::SecureBootBlocked { .. } => "[X]",
-            Self::HashMismatch { .. } => "[!]",
         }
     }
 
@@ -248,7 +246,7 @@ impl TrustVerdict {
 }
 
 /// Truncate a long hex digest to the first 12 chars with an ellipsis —
-/// keeps the HashMismatch reason line readable in narrow terminals.
+/// keeps the `HashMismatch` reason line readable in narrow terminals.
 fn short_hex(hex: &str) -> String {
     if hex.len() <= 14 {
         return hex.to_string();

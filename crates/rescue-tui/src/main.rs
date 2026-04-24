@@ -542,6 +542,13 @@ where
 /// for tracing — terminals usually ignore it with `TERM=dumb`). Every
 /// screen transition also emits an `ANN:` line to stderr so
 /// brltty/speakup can mirror it to braille/speech.
+///
+/// Intentionally a single large state-machine function — the
+/// accessibility contract pairs each `ANN:` stderr line with the
+/// next stdin prompt, which is awkward to split across helpers
+/// without ending up with tighter coupling than the original prose.
+/// Opt out of the too-many-lines lint here, not refactor cosmetics.
+#[allow(clippy::too_many_lines)]
 fn run_text_mode(state: &mut AppState) -> Result<u8, Box<dyn std::error::Error>> {
     use std::io::Write;
     let mut out = std::io::stdout().lock();

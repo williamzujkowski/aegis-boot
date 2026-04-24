@@ -27,6 +27,8 @@
 //! [`TrustVerdict`]: crate::verdict::TrustVerdict
 //! [`KEYBINDINGS`]: crate::keybindings::KEYBINDINGS
 
+use std::fmt::Write as _;
+
 use crate::keybindings::{KEYBINDINGS, ScreenKind};
 use crate::verdict::TrustVerdict;
 
@@ -40,19 +42,20 @@ pub fn render_tier_table() -> String {
     out.push_str("| ---- | ------------------- | ----- | -------- | ------------------------------------------ |\n");
     for (i, v) in tier_variants().into_iter().enumerate() {
         let bootable = if v.is_bootable() { "yes" } else { "**no**" };
-        out.push_str(&format!(
-            "| {tier:<4} | {label:<19} | `{glyph}` | {bootable:<8} | {reason:<42} |\n",
+        let _ = writeln!(
+            out,
+            "| {tier:<4} | {label:<19} | `{glyph}` | {bootable:<8} | {reason:<42} |",
             tier = i + 1,
             label = v.label(),
             glyph = v.glyph(),
             bootable = bootable,
             reason = tier_short_meaning(&v)
-        ));
+        );
     }
     out
 }
 
-/// Canonical ordering of the 6 TrustVerdict variants (tier 1 → 6).
+/// Canonical ordering of the 6 `TrustVerdict` variants (tier 1 → 6).
 /// Constructed with placeholder payloads for variants that carry
 /// data — the docgen surface only looks at label/color/glyph/
 /// bootable so payload content doesn't affect the rendered table.
@@ -103,6 +106,7 @@ pub fn render_keybinding_table() -> String {
         } else {
             k.screens
                 .iter()
+                .copied()
                 .map(screen_short_name)
                 .collect::<Vec<_>>()
                 .join(", ")
@@ -113,20 +117,21 @@ pub fn render_keybinding_table() -> String {
             None => "any",
         };
         let filter = if k.while_filter_editing { "yes" } else { "no" };
-        out.push_str(&format!(
-            "| `{key}` | {screens} | {pane} | {filter} | {desc} |\n",
+        let _ = writeln!(
+            out,
+            "| `{key}` | {screens} | {pane} | {filter} | {desc} |",
             key = k.key,
             screens = screens,
             pane = pane,
             filter = filter,
             desc = k.description
-        ));
+        );
     }
     out
 }
 
-fn screen_short_name(s: &ScreenKind) -> String {
-    match s {
+fn screen_short_name(s: ScreenKind) -> String {
+    let name = match s {
         ScreenKind::List => "List",
         ScreenKind::Confirm => "Confirm",
         ScreenKind::EditCmdline => "EditCmdline",
@@ -136,8 +141,8 @@ fn screen_short_name(s: &ScreenKind) -> String {
         ScreenKind::Help => "Help",
         ScreenKind::ConfirmQuit => "ConfirmQuit",
         ScreenKind::Quitting => "Quitting",
-    }
-    .to_string()
+    };
+    name.to_string()
 }
 
 /// Marker pair used to delimit regenerable regions in doc files.

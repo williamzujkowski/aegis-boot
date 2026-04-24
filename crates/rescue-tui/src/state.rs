@@ -407,7 +407,7 @@ impl AppState {
     ///    filtered by the active substring filter.
     /// 2. Parse-failed ISOs (tier 4) in alphabetical order — always
     ///    surfaced so the operator sees every file on the stick. Also
-    ///    subject to the substring filter (matches against iso_path).
+    ///    subject to the substring filter (matches against `iso_path`).
     /// 3. The synthetic [`ViewEntry::RescueShell`] — always present so
     ///    operators have an escape hatch to a signed busybox shell.
     #[must_use]

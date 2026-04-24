@@ -620,27 +620,16 @@ fn split_list_chrome(frame: &mut Frame<'_>, area: Rect, state: &AppState) -> (Re
     }
 }
 
-fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usize) {
-    use crate::state::ViewEntry;
-    if state.isos.is_empty() && state.failed_isos.is_empty() {
-        draw_empty_list(frame, area, state);
-        return;
-    }
-
-    // Chrome: (filter/sort hint line) on top, (main body) below. The
-    // main body is now a 40/60 horizontal split between the ISO list
-    // (left) and the info pane (right). (#458)
-    let (info_line_area, body_area) = split_list_chrome(frame, area, state);
-    let panes = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-        .split(body_area);
-    let (list_area, info_pane_area) = (panes[0], panes[1]);
-
-    // Design-review #102: filter-mode visual was too subtle (trailing
-    // `_` the only indicator). Now: when editing, render a reversed-
-    // style banner with "FILTER:" prefix so it's unmistakable, plus a
-    // blinking caret span. Committed filter keeps the quieter style.
+/// Render the top-of-list-chrome info line (filter banner while
+/// editing, else the committed sort/filter hint). Extracted from
+/// [`draw_list`] so that function stays under the clippy
+/// too-many-lines gate.
+///
+/// Design-review #102: filter-mode visual was too subtle (trailing
+/// `_` the only indicator). When editing, a reversed-style banner
+/// with "FILTER:" prefix plus a blinking caret makes the mode
+/// unmistakable. Committed filter keeps the quieter style.
+fn render_list_info_line(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     if state.filter_editing {
         let styled = Line::from(vec![
             Span::styled(
@@ -660,7 +649,7 @@ fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usiz
                 state.sort_order.summary()
             )),
         ]);
-        frame.render_widget(Paragraph::new(styled), info_line_area);
+        frame.render_widget(Paragraph::new(styled), area);
     } else {
         let info_line = if state.filter.is_empty() {
             format!(
@@ -674,8 +663,28 @@ fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usiz
                 state.sort_order.summary()
             )
         };
-        frame.render_widget(Paragraph::new(info_line), info_line_area);
+        frame.render_widget(Paragraph::new(info_line), area);
     }
+}
+
+fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usize) {
+    use crate::state::ViewEntry;
+    if state.isos.is_empty() && state.failed_isos.is_empty() {
+        draw_empty_list(frame, area, state);
+        return;
+    }
+
+    // Chrome: (filter/sort hint line) on top, (main body) below. The
+    // main body is now a 40/60 horizontal split between the ISO list
+    // (left) and the info pane (right). (#458)
+    let (info_line_area, body_area) = split_list_chrome(frame, area, state);
+    let panes = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .split(body_area);
+    let (list_area, info_pane_area) = (panes[0], panes[1]);
+
+    render_list_info_line(frame, info_line_area, state);
 
     // Full entries view includes the rescue-shell synthetic row at
     // the end, even when the ISO list is empty (#90).
@@ -763,11 +772,10 @@ fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usiz
 /// selected. (#459)
 fn render_failed_iso_list_item<'a>(failed: &iso_probe::FailedIso) -> ListItem<'a> {
     let glyph = "[!]"; // tier-4 marker
-    let name = failed
-        .iso_path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| failed.iso_path.display().to_string());
+    let name = failed.iso_path.file_name().map_or_else(
+        || failed.iso_path.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    );
     // Short reason for the list row — full reason lives in the info pane.
     let short = {
         let r = &failed.reason;
@@ -889,8 +897,7 @@ fn info_pane_iso_lines<'a>(
         "Initrd:   ",
         iso.initrd
             .as_ref()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "(none)".to_string()),
+            .map_or_else(|| "(none)".to_string(), |p| p.display().to_string()),
     ));
     lines.push(labeled(
         "Cmdline:  ",
@@ -965,7 +972,7 @@ fn info_pane_iso_lines<'a>(
     lines
 }
 
-/// Helper: render the info-pane line set for a tier-4 (ParseFailed)
+/// Helper: render the info-pane line set for a tier-4 (`ParseFailed`)
 /// row. Routes through [`TrustVerdict::from_failed`] so the tier
 /// label, color, and reason come from the same canonical source the
 /// rest of the UI uses. (#459)
@@ -1084,7 +1091,7 @@ fn windows_redirect_lines<'a>(state: &AppState, content_width: usize) -> Vec<Lin
 }
 
 /// Build a `"Label: value"` info-pane line with the label in bold.
-fn labeled<'a>(label: &'a str, value: String) -> Line<'a> {
+fn labeled(label: &str, value: String) -> Line<'_> {
     Line::from(vec![
         Span::styled(label, Style::default().add_modifier(Modifier::BOLD)),
         Span::raw(value),
@@ -1092,9 +1099,10 @@ fn labeled<'a>(label: &'a str, value: String) -> Line<'a> {
 }
 
 fn filename_str(p: &std::path::Path) -> String {
-    p.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| p.display().to_string())
+    p.file_name().map_or_else(
+        || p.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    )
 }
 
 /// Short verification summary for the info pane's sha256 row. Avoids

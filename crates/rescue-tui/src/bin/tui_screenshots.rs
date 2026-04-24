@@ -28,9 +28,10 @@ use rescue_tui::render::draw;
 use rescue_tui::state::{AppState, Pane, Screen};
 
 type DynError = Box<dyn std::error::Error>;
+type Scenario = (&'static str, &'static str, Box<dyn Fn() -> AppState>);
 
 fn main() -> Result<(), DynError> {
-    let scenarios: Vec<(&str, &str, Box<dyn Fn() -> AppState>)> = vec![
+    let scenarios: Vec<Scenario> = vec![
         (
             "01-empty-list",
             "Empty stick — no ISOs, no failed parses. Rescue-shell entry still available.",
@@ -110,9 +111,10 @@ fn render_ansi(state: &AppState, cols: u16, rows: u16) -> String {
 }
 
 fn buffer_to_ansi(buf: &Buffer, cols: u16) -> String {
+    let cols_usize = usize::from(cols);
     let mut out = String::new();
     for (i, cell) in buf.content.iter().enumerate() {
-        if i > 0 && (i as u16).is_multiple_of(cols) {
+        if i > 0 && cols_usize > 0 && i.is_multiple_of(cols_usize) {
             out.push_str("\x1b[0m\n");
         }
         push_style(&mut out, cell.fg, cell.bg, cell.modifier);
@@ -163,7 +165,6 @@ fn fg_code(c: Color) -> String {
 
 fn bg_code(c: Color) -> String {
     match c {
-        Color::Reset => String::new(),
         Color::Rgb(r, g, b) => format!("\x1b[48;2;{r};{g};{b}m"),
         Color::Indexed(i) => format!("\x1b[48;5;{i}m"),
         _ => String::new(),

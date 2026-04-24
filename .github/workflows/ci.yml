@@ -66,6 +66,27 @@ jobs:
         # PowerShell-output parser is exercised via committed fixtures.
         run: cargo check -p aegis-bootctl --target x86_64-pc-windows-gnu --all-targets
 
+  rescue-tui:
+    # rescue-tui isn't part of the workspace-wide `Test` job because
+    # that job is scoped to `crates/iso-parser` (see working-directory
+    # + workspaces:). Without this dedicated job, rescue-tui's clippy
+    # baseline silently drifts between releases. Issue #519.
+    name: rescue-tui clippy
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.88.0 --profile minimal --component rustfmt,clippy
+          rustup override set 1.88.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
+      - name: Format + lint rescue-tui
+        run: |
+          cargo fmt --check
+          cargo clippy -p rescue-tui --all-targets -- -D warnings
+      - name: Run rescue-tui tests
+        run: cargo test -p rescue-tui --locked
+
   fitness:
     name: aegis-fitness audit
     runs-on: ubuntu-22.04
