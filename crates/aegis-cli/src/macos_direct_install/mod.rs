@@ -26,4 +26,5 @@
 
 pub(crate) mod esp_stage;
 pub(crate) mod partition;
+pub(crate) mod pipeline;
 pub(crate) mod preflight;
