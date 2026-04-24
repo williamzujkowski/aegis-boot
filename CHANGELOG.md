@@ -4,6 +4,14 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 
 ## [Unreleased]
 
+### Windows direct-install pipeline composer (#483)
+
+New `windows_direct_install::pipeline` module composes the four Phase-module stages of [epic #419](https://github.com/aegis-boot/aegis-boot/issues/419) — preflight (elevation + BitLocker) → partition (diskpart) → format ESP + `AEGIS_ISOS` → `stage_esp` — into a single `run(runner, plan)` entrypoint with per-stage timing receipts and abort-on-first-failure cascade.
+
+The phase dispatch is routed through a `PhaseRunner` trait so the composition logic is unit-testable on any host: 13 tests cover the happy path + every stage's abort behavior + receipt math, all executable via `cargo test --locked` on Linux. The default `WindowsPhaseRunner` wires each method straight through to the already-validated phase modules.
+
+Deliberately out of scope for #483 (tracked separately): drive enumeration, signed-chain source path resolution, attestation manifest writing, and `aegis-boot flash --direct-install` CLI dispatch on Windows. Those need their own design passes for the non-Linux host; this PR lands just the composer so the dispatch work has a stable target.
+
 ### Windows direct-install raw-write wiring (#484, Phase 3 of #419)
 
 `windows_direct_install::raw_write::{write_bytes_to_physical_drive, stage_esp}` now call the real Win32 APIs, replacing the `"not yet wired"` stubs from [#449](https://github.com/aegis-boot/aegis-boot/issues/449).
