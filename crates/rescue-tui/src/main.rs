@@ -10,6 +10,7 @@
 #![forbid(unsafe_code)]
 
 mod failure_log;
+mod keybindings;
 mod persistence;
 mod render;
 mod state;
