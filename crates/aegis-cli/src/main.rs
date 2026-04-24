@@ -54,6 +54,7 @@ mod flash;
 mod init;
 mod init_wizard;
 mod inventory;
+mod macos_direct_install;
 mod man;
 mod mounts;
 mod paths;
