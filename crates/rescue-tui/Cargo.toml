@@ -24,6 +24,11 @@ crossterm = "0.29"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "json"] }
 sha2 = "0.11"
 hex = "0.4"
+# Pre-wrap info-pane reason strings before handing to ratatui
+# Paragraph. `Paragraph::wrap` + `.scroll` has a known issue with
+# wrapped-line accounting (ratatui/ratatui#2342); using textwrap
+# gives us a stable `Vec<Line>` that scroll math handles correctly.
+textwrap = { version = "0.16", default-features = false, features = ["smawk"] }
 
 [dev-dependencies]
 tempfile = "3.14"

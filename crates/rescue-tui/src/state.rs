@@ -164,12 +164,16 @@ pub enum SortOrder {
 }
 
 /// An entry displayed on the List screen. Includes discovered ISOs
-/// (by real index) and synthetic entries like the always-present
-/// rescue shell (#90).
+/// (by real index), parse-failed ISOs (tier-4), and synthetic entries
+/// like the always-present rescue shell (#90, #459).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViewEntry {
     /// Real ISO at this index into [`AppState::isos`].
     Iso(usize),
+    /// Parse-failed `.iso` at this index into [`AppState::failed_isos`].
+    /// Rendered as a tier-4 row with a descriptive reason in the info
+    /// pane; boot disabled.
+    FailedIso(usize),
     /// Synthetic "drop to rescue shell" entry (#90). Selecting it
     /// exits rescue-tui with [`RESCUE_SHELL_EXIT_CODE`] so the
     /// initramfs `/init` can recognize the operator request and
@@ -396,12 +400,16 @@ impl AppState {
         self
     }
 
-    /// Ordered list of entries displayed on the List screen (#90).
-    /// Mix of [`ViewEntry::Iso`] (one per filter-matching ISO in sort
-    /// order) followed by the synthetic [`ViewEntry::RescueShell`] at
-    /// the end. The rescue-shell entry is always present — even when
-    /// no ISOs are discovered — so operators always have an escape
-    /// hatch to a signed busybox shell.
+    /// Ordered list of entries displayed on the List screen.
+    ///
+    /// Layout (#459):
+    /// 1. Successful ISOs (tier 1/2/3/5/6) in the active sort order,
+    ///    filtered by the active substring filter.
+    /// 2. Parse-failed ISOs (tier 4) in alphabetical order — always
+    ///    surfaced so the operator sees every file on the stick. Also
+    ///    subject to the substring filter (matches against iso_path).
+    /// 3. The synthetic [`ViewEntry::RescueShell`] — always present so
+    ///    operators have an escape hatch to a signed busybox shell.
     #[must_use]
     pub fn visible_entries(&self) -> Vec<ViewEntry> {
         let mut entries: Vec<ViewEntry> = self
@@ -409,6 +417,32 @@ impl AppState {
             .into_iter()
             .map(ViewEntry::Iso)
             .collect();
+        let needle = self.filter.to_ascii_lowercase();
+        let mut failed: Vec<(usize, String)> = self
+            .failed_isos
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| {
+                if needle.is_empty() {
+                    return true;
+                }
+                f.iso_path
+                    .to_string_lossy()
+                    .to_ascii_lowercase()
+                    .contains(&needle)
+            })
+            .map(|(i, f)| {
+                (
+                    i,
+                    f.iso_path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                )
+            })
+            .collect();
+        failed.sort_by(|a, b| a.1.cmp(&b.1));
+        entries.extend(failed.into_iter().map(|(i, _)| ViewEntry::FailedIso(i)));
         entries.push(ViewEntry::RescueShell);
         entries
     }

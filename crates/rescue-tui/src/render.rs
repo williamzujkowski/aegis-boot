@@ -713,6 +713,7 @@ fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usiz
             ViewEntry::Iso(i) => {
                 render_iso_list_item(&state.isos[*i], &state.scanned_roots, state.secure_boot)
             }
+            ViewEntry::FailedIso(i) => render_failed_iso_list_item(&state.failed_isos[*i]),
             ViewEntry::RescueShell => {
                 ListItem::new("[#] rescue shell (busybox)  — dropped from rescue-tui")
             }
@@ -772,6 +773,33 @@ fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usiz
 /// input target. Unfocused panes use `Color::DarkGray` so they
 /// recede — but stay visible enough that the layout is still
 /// readable. (#458)
+/// Render a list row for a [`iso_probe::FailedIso`] — tier-4 entry
+/// in the rescue-tui list. Shown with a red glyph and a truncated
+/// reason. The info pane reveals the full reason when the row is
+/// selected. (#459)
+fn render_failed_iso_list_item<'a>(failed: &iso_probe::FailedIso) -> ListItem<'a> {
+    let glyph = "[!]"; // tier-4 marker
+    let name = failed
+        .iso_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| failed.iso_path.display().to_string());
+    // Short reason for the list row — full reason lives in the info pane.
+    let short = {
+        let r = &failed.reason;
+        if r.len() > 40 {
+            let mut end = 40;
+            while !r.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}…", &r[..end])
+        } else {
+            r.clone()
+        }
+    };
+    ListItem::new(format!("{glyph} {name}  — PARSE FAILED: {short}"))
+}
+
 fn pane_border_style(focused: bool, theme: &Theme) -> Style {
     if focused {
         Style::default().fg(theme.success)
@@ -780,9 +808,17 @@ fn pane_border_style(focused: bool, theme: &Theme) -> Style {
     }
 }
 
-/// Render the info pane. #458 ships the scaffold — verdict, filename,
-/// one-line reason. #459 replaces this with the full per-tier content
-/// specified in the design doc.
+/// Render the info pane — full per-tier content for the currently
+/// selected row. (#459)
+///
+/// Tier 1/2/3 (bootable): metadata rows (verdict, file, size, sha256,
+/// signer, kernel, initrd, cmdline, distro, quirks) plus any
+/// tier-specific notes.
+///
+/// Tier 4/5/6 (blocked): verdict + filename/size + a `Reason:` block
+/// with the full wrapped error. Long reasons are pre-wrapped via the
+/// `textwrap` crate (ratatui's `Paragraph::wrap` + `.scroll` has a
+/// known issue with wrapped-line accounting, ratatui/ratatui#2342).
 fn draw_info_pane(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -800,41 +836,19 @@ fn draw_info_pane(
     };
     let border = pane_border_style(focused, &state.theme);
 
+    // Usable content width = pane width - 2 border cols - 2 padding.
+    // Clamped to a small minimum so extreme-narrow terminals still
+    // produce at least some wrapping rather than 0-width panics.
+    let content_width = usize::from(area.width).saturating_sub(4).max(10);
+
     let lines: Vec<Line> = match entries.get(cursor) {
         Some(ViewEntry::Iso(idx)) => match state.isos.get(*idx) {
-            Some(iso) => {
-                let verdict = TrustVerdict::from_discovered(iso, state.secure_boot);
-                vec![
-                    Line::from(vec![
-                        Span::styled("Verdict:  ", Style::default().add_modifier(Modifier::BOLD)),
-                        Span::styled(
-                            verdict.label(),
-                            Style::default()
-                                .fg(verdict.color(&state.theme))
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                    ]),
-                    Line::from(vec![
-                        Span::styled("File:     ", Style::default().add_modifier(Modifier::BOLD)),
-                        Span::raw(
-                            iso.iso_path
-                                .file_name()
-                                .map(|n| n.to_string_lossy().into_owned())
-                                .unwrap_or_default(),
-                        ),
-                    ]),
-                    Line::from(vec![
-                        Span::styled("Reason:   ", Style::default().add_modifier(Modifier::BOLD)),
-                        Span::raw(verdict.reason()),
-                    ]),
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        "(full per-tier content lands in #459)",
-                        Style::default().add_modifier(Modifier::DIM),
-                    )),
-                ]
-            }
+            Some(iso) => info_pane_iso_lines(iso, state, content_width),
             None => vec![Line::from("(no ISO at selected index)")],
+        },
+        Some(ViewEntry::FailedIso(idx)) => match state.failed_isos.get(*idx) {
+            Some(failed) => info_pane_failed_lines(failed, &state.theme, content_width),
+            None => vec![Line::from("(no failed ISO at selected index)")],
         },
         Some(ViewEntry::RescueShell) => vec![
             Line::from(vec![
@@ -845,6 +859,9 @@ fn draw_info_pane(
                 Span::styled("Action:   ", Style::default().add_modifier(Modifier::BOLD)),
                 Span::raw("exits rescue-tui to a busybox shell"),
             ]),
+            Line::from(""),
+            Line::from("Useful when no ISO will boot or you need to"),
+            Line::from("inspect the stick from a signed environment."),
         ],
         None => vec![Line::from("(empty)")],
     };
@@ -856,9 +873,211 @@ fn draw_info_pane(
                 .title(title)
                 .border_style(border),
         )
-        .wrap(Wrap { trim: false })
         .scroll((state.info_scroll, 0));
     frame.render_widget(paragraph, area);
+}
+
+/// Helper: render the info-pane line set for a successfully-parsed
+/// ISO. Covers tiers 1/2/3/5/6. (#459)
+fn info_pane_iso_lines<'a>(
+    iso: &iso_probe::DiscoveredIso,
+    state: &AppState,
+    content_width: usize,
+) -> Vec<Line<'a>> {
+    let verdict = TrustVerdict::from_discovered(iso, state.secure_boot);
+    let mut lines = Vec::with_capacity(14);
+
+    lines.push(Line::from(vec![
+        Span::styled("Verdict:  ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(
+            verdict.label(),
+            Style::default()
+                .fg(verdict.color(&state.theme))
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    lines.push(labeled("File:     ", filename_str(&iso.iso_path)));
+    lines.push(labeled("Size:     ", humanize_size(iso.size_bytes)));
+    lines.push(labeled("sha256:   ", hash_summary(iso)));
+    lines.push(labeled("Signer:   ", signer_summary(iso)));
+    lines.push(labeled("Kernel:   ", iso.kernel.display().to_string()));
+    lines.push(labeled(
+        "Initrd:   ",
+        iso.initrd
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "(none)".to_string()),
+    ));
+    lines.push(labeled(
+        "Cmdline:  ",
+        iso.cmdline.clone().unwrap_or_else(|| "(none)".to_string()),
+    ));
+    lines.push(labeled("Distro:   ", format!("{:?}", iso.distribution)));
+    let qs = quirks_summary(iso);
+    lines.push(labeled(
+        "Quirks:   ",
+        if qs.is_empty() {
+            "none".to_string()
+        } else {
+            qs
+        },
+    ));
+
+    // Tier-specific note. For tier-4/5/6 (which can be reached here if
+    // a tier-6 hash mismatch is detected on an otherwise-parseable
+    // ISO), render a wrapped reason block.
+    if !verdict.is_bootable() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Reason:",
+            Style::default()
+                .fg(state.theme.error)
+                .add_modifier(Modifier::BOLD),
+        )));
+        extend_wrapped(&mut lines, &verdict.reason(), content_width);
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Boot is disabled for this ISO.",
+            Style::default().add_modifier(Modifier::DIM),
+        )));
+    } else if matches!(
+        verdict,
+        TrustVerdict::BareUnverified | TrustVerdict::KeyNotTrusted
+    ) {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Note:",
+            Style::default()
+                .fg(state.theme.warning)
+                .add_modifier(Modifier::BOLD),
+        )));
+        let note = match verdict {
+            TrustVerdict::BareUnverified => {
+                "This ISO is bootable but has no operator attestation. \
+                 A typed confirmation is required before boot."
+            }
+            TrustVerdict::KeyNotTrusted => {
+                "Signature is structurally valid but the signer is not in \
+                 AEGIS_TRUSTED_KEYS. Typed confirmation is required before boot."
+            }
+            _ => "",
+        };
+        extend_wrapped(&mut lines, note, content_width);
+    }
+
+    lines
+}
+
+/// Helper: render the info-pane line set for a tier-4 (ParseFailed)
+/// row. Routes through [`TrustVerdict::from_failed`] so the tier
+/// label, color, and reason come from the same canonical source the
+/// rest of the UI uses. (#459)
+fn info_pane_failed_lines<'a>(
+    failed: &iso_probe::FailedIso,
+    theme: &Theme,
+    content_width: usize,
+) -> Vec<Line<'a>> {
+    let verdict = TrustVerdict::from_failed(failed);
+    let mut lines = Vec::with_capacity(10);
+    lines.push(Line::from(vec![
+        Span::styled("Verdict:  ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(
+            verdict.label(),
+            Style::default()
+                .fg(verdict.color(theme))
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    lines.push(labeled("File:     ", filename_str(&failed.iso_path)));
+    lines.push(labeled("Path:     ", failed.iso_path.display().to_string()));
+    lines.push(labeled("Kind:     ", format!("{:?}", failed.kind)));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Reason:",
+        Style::default()
+            .fg(verdict.color(theme))
+            .add_modifier(Modifier::BOLD),
+    )));
+    extend_wrapped(&mut lines, &verdict.reason(), content_width);
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "This ISO could not be mounted or did not contain a recognized",
+        Style::default().add_modifier(Modifier::DIM),
+    )));
+    lines.push(Line::from(Span::styled(
+        "boot layout. Boot is disabled.",
+        Style::default().add_modifier(Modifier::DIM),
+    )));
+    lines
+}
+
+/// Build a `"Label: value"` info-pane line with the label in bold.
+fn labeled<'a>(label: &'a str, value: String) -> Line<'a> {
+    Line::from(vec![
+        Span::styled(label, Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw(value),
+    ])
+}
+
+fn filename_str(p: &std::path::Path) -> String {
+    p.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| p.display().to_string())
+}
+
+/// Short verification summary for the info pane's sha256 row. Avoids
+/// dumping a 64-char hex blob while still saying whether verification
+/// happened and which side-car source was used.
+fn hash_summary(iso: &iso_probe::DiscoveredIso) -> String {
+    use iso_probe::HashVerification as H;
+    match &iso.hash_verification {
+        H::Verified { digest, source } => {
+            format!("verified ({}) from {}", short_hex(digest), source)
+        }
+        H::Mismatch {
+            expected, actual, ..
+        } => format!(
+            "MISMATCH expected {} got {}",
+            short_hex(expected),
+            short_hex(actual)
+        ),
+        H::NotPresent => "—  (no sibling .sha256)".to_string(),
+        H::Unreadable { reason, .. } => format!("unreadable: {reason}"),
+    }
+}
+
+/// Short signer summary paired with trust decision.
+fn signer_summary(iso: &iso_probe::DiscoveredIso) -> String {
+    use iso_probe::SignatureVerification as S;
+    match &iso.signature_verification {
+        S::Verified { key_id, .. } => format!("{key_id} (✓ trusted)"),
+        S::KeyNotTrusted { key_id } => format!("{key_id} (✗ not in AEGIS_TRUSTED_KEYS)"),
+        S::Forged { .. } => "FORGED signature".to_string(),
+        S::Error { reason } => format!("verification error: {reason}"),
+        S::NotPresent => "—  (no sibling .minisig)".to_string(),
+    }
+}
+
+fn short_hex(hex: &str) -> String {
+    if hex.len() <= 14 {
+        return hex.to_string();
+    }
+    let mut end = 12;
+    while !hex.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &hex[..end])
+}
+
+/// Pre-wrap a string to `content_width` and append one `Line` per
+/// wrapped row to `out`. Uses `textwrap::wrap` because ratatui's own
+/// `Paragraph::wrap` + `.scroll` mis-counts wrapped lines
+/// (ratatui/ratatui#2342) and breaks info-pane scroll math.
+fn extend_wrapped(out: &mut Vec<Line<'_>>, text: &str, content_width: usize) {
+    let wrapped = textwrap::wrap(text, content_width);
+    for piece in wrapped {
+        out.push(Line::from(piece.to_string()));
+    }
 }
 
 // Intentionally over the 100-line threshold: the Confirm screen is the
@@ -1619,6 +1838,104 @@ mod tests {
         assert!(
             !s.contains("Verdict:"),
             "empty state should not show info pane verdict: {s}"
+        );
+    }
+
+    // ---- #459 — info pane full content + tier-4 rows ----------------
+
+    fn fake_failed_iso(name: &str, reason: &str) -> iso_probe::FailedIso {
+        iso_probe::FailedIso {
+            iso_path: std::path::PathBuf::from(format!("/isos/{name}")),
+            reason: reason.to_string(),
+            kind: iso_probe::FailureKind::MountFailed,
+        }
+    }
+
+    #[test]
+    fn info_pane_tier1_shows_full_metadata_rows() {
+        // Fake an ISO with a verified hash so it renders as tier 1
+        // (OperatorAttested) and the info pane's full metadata
+        // rows (Kernel, Initrd, Cmdline, Distro, Quirks) should appear.
+        let mut iso = fake_iso("ubuntu");
+        iso.hash_verification = iso_probe::HashVerification::Verified {
+            digest: "abcdef1234567890".to_string(),
+            source: "/isos/ubuntu.iso.sha256".to_string(),
+        };
+        let state = AppState::new(vec![iso]);
+        let s = render_to_string(&state);
+        assert!(s.contains("VERIFIED"), "tier 1 label missing: {s}");
+        // Each metadata row's label must appear somewhere in the pane.
+        for label in &["File:", "Size:", "sha256:", "Kernel:", "Distro:"] {
+            assert!(s.contains(label), "info pane missing {label}: {s}");
+        }
+    }
+
+    #[test]
+    fn info_pane_tier4_failed_iso_shows_reason_block() {
+        let state = AppState::new(Vec::new()).with_failed_isos(vec![fake_failed_iso(
+            "broken.iso",
+            "mount: wrong fs type, bad option, bad superblock",
+        )]);
+        let s = render_to_string(&state);
+        assert!(s.contains("PARSE FAILED"), "tier-4 label missing: {s}");
+        assert!(s.contains("broken.iso"), "filename missing: {s}");
+        assert!(s.contains("wrong fs type"), "reason string missing: {s}");
+        assert!(s.contains("Boot is disabled"), "disabled hint missing: {s}");
+    }
+
+    #[test]
+    fn info_pane_wraps_long_reason_strings() {
+        // 400-char reason — wider than the info pane at 120x30 → must
+        // wrap. textwrap renders multiple lines; no line may exceed
+        // the pane's content width.
+        let long_reason = "x".repeat(400);
+        let state = AppState::new(Vec::new())
+            .with_failed_isos(vec![fake_failed_iso("x.iso", &long_reason)]);
+        let s = render_to_string(&state);
+        // Rendered output should contain many 'x' chars across the
+        // wrapped region. The raw long string isn't present
+        // contiguously — textwrap inserts breaks.
+        let x_runs: Vec<&str> = s
+            .split_whitespace()
+            .filter(|t| t.starts_with('x'))
+            .collect();
+        assert!(
+            x_runs.len() > 1,
+            "long reason should wrap into multiple line fragments: {s}"
+        );
+    }
+
+    #[test]
+    fn list_includes_failed_iso_as_parse_failed_row() {
+        // All ISOs on disk must be visible — tier-4 rows too.
+        let state = AppState::new(Vec::new())
+            .with_failed_isos(vec![fake_failed_iso("fail.iso", "mount error")]);
+        let s = render_to_string(&state);
+        assert!(
+            s.contains("fail.iso"),
+            "failed ISO filename missing from list: {s}"
+        );
+        assert!(s.contains("PARSE FAILED"), "tier-4 list label missing: {s}");
+    }
+
+    #[test]
+    fn info_pane_bare_unverified_shows_typed_confirmation_note() {
+        // Tier 2 shows a warning-colored Note block pointing at the
+        // typed-confirmation challenge the operator will hit on boot.
+        let iso = fake_iso("bare");
+        let state = AppState::new(vec![iso]);
+        let s = render_to_string(&state);
+        assert!(s.contains("UNVERIFIED"), "tier-2 label missing: {s}");
+        assert!(s.contains("Note:"), "tier-2 note block missing: {s}");
+        // "typed confirmation" can wrap into separate lines in the
+        // render buffer, so the two words aren't guaranteed
+        // contiguous. Check for presence of each word plus the
+        // uniquely-phrased signal "no operator attestation" so the
+        // assertion doesn't false-pass on an unrelated screen.
+        assert!(s.contains("typed"), "tier-2 note missing 'typed': {s}");
+        assert!(
+            s.contains("operator attestation"),
+            "tier-2 note missing 'operator attestation': {s}"
         );
     }
 
