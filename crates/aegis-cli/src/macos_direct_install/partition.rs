@@ -187,6 +187,42 @@ fn is_valid_whole_disk_id(s: &str) -> bool {
     rest.bytes().all(|b| b.is_ascii_digit())
 }
 
+/// Partition the target disk via `diskutil`, fed the argv produced
+/// by [`build_diskutil_plan`]. macOS-only — the \[`cfg`\] gate means
+/// Linux + Windows builds never pull in this function, but the
+/// `x86_64-apple-darwin` CI cross-compile step catches compile
+/// errors on every PR.
+///
+/// macOS's `diskutil` doesn't require root for external / removable
+/// drives (operator-session privilege is enough); if the target is
+/// internal or in use, `diskutil` itself surfaces the actionable
+/// error. The subprocess's stderr is propagated unchanged to the
+/// caller — we don't try to translate `diskutil`'s messages.
+///
+/// # Errors
+///
+/// Returns the subprocess exit code + stderr as a `String` on any
+/// non-zero exit or spawn failure. Sibling of
+/// [`crate::windows_direct_install::partition::partition_via_diskpart`].
+#[cfg(target_os = "macos")]
+pub(crate) fn partition_via_diskutil(plan: &DiskutilPartitionPlan) -> Result<(), String> {
+    use std::process::Command;
+
+    let out = Command::new("/usr/sbin/diskutil")
+        .args(&plan.argv)
+        .output()
+        .map_err(|e| format!("spawn /usr/sbin/diskutil: {e}"))?;
+
+    if !out.status.success() {
+        return Err(format!(
+            "diskutil exited {}: {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
