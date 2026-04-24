@@ -152,18 +152,96 @@ Not a serious candidate for aegis-boot's threat model.
 - **Install-to-stick vs install-to-disk boundary is subtle.** The Win11 installer, once running, will ask where to install. It's capable of installing *onto* the USB stick itself and destroying aegis-boot if the operator picks the wrong disk. UX mitigation: rescue-tui shows a confirm screen naming "your aegis-boot stick is on disk N; do not select it as the install target."
 - **Not minimum-RAM friendly.** Win11 installer itself wants 4 GiB; aegis-boot's rescue env wants ~1 GiB. Target 6 GiB total.
 
-## Recommendation
+## Recommendation (updated 2026-04-24 after maintainer review + consensus vote)
 
-**Option D.** It's the only candidate that:
+### Original recommendation — Option D — was REJECTED on size grounds
 
-- Requires no kernel forking or bootloader forking (supply-chain story preserved).
-- Leaves aegis-boot's signed chain intact (rescue-tui can still run the next boot).
-- Uses mainline UEFI + stock Linux userspace end-to-end.
-- Has a clean operator-facing UX ("This will reboot into Windows setup; the next reboot comes back to aegis-boot").
+Maintainer push-back on the initial Option D recommendation:
 
-Cost is a one-time partition-layout change in `scripts/mkusb.sh` + the Windows direct-install flash path (`windows_direct_install::partition::build_diskpart_script`) + a new `windows-bootprep` crate. Estimated 3-4 focused weeks for implementation + real-hardware E2E.
+> "1.5 GiB is 3x the previous size just for Windows support. I'd rather help folks move off of Windows 11 to Linux."
 
-## Implementation sketch (for the epic that would track this)
+The stick-layout change (+1.5 GiB) is disproportionate for a feature that conflicts with the project's philosophical mission. The signed-chain preservation argument isn't enough by itself.
+
+### Alternatives surveyed + consensus vote (2026-04-24)
+
+Two lighter options, plus three marginal variants:
+
+- **L1 — "Helpful refusal + Linux redirect":** rescue-tui tier-5 panel for Win11 ISOs gets actionable prose naming three alternatives (try the Linux ISOs already on the stick, use L2's CLI for a standalone Windows stick, fall back to Rufus). ~30 LOC. Zero stick growth. Zero signed-chain impact.
+- **L2 — "Second-stick CLI":** `aegis-boot flash --windows-target <iso> <stick>` wipes a different stick and makes it a standard Rufus-style Win11 installer, reusing the `windows_direct_install::{partition,format,raw_write}` pipeline from [#419](https://github.com/aegis-boot/aegis-boot/issues/419). Zero aegis-boot stick growth; operator needs 2 sticks. ~150 LOC (mostly reuse).
+- **L3 — "Grow AEGIS_ESP to 1 GiB, chainload in-place":** +600 MiB growth (vs +1.5 GiB for Option D). Mixes Windows + aegis-boot bits on the same ESP — attestation complexity grows. ~400 LOC.
+- **L4 — "Detect-only, no boot path":** Leave the BOOT BLOCKED status as-is. <5 LOC.
+- **L5 — "PE32 kexec via Hudson's `safeboot-loader`":** Maintain a forked kernel with PE32 kexec patches. No stick-layout change. Ongoing ~1 dev-week per kernel-version tax.
+
+### Vote result
+
+Ran 6-agent `consensus_vote` with `strategy: higher_order` on the alternatives. Result: **83 % approval of the overall proposal; L1 + L2 as the unanimous top-2 combination.**
+
+| Role | #1 pick | Reasoning summary |
+| --- | --- | --- |
+| Software Architect | L1 | Only option honoring every constraint; L2 as the escape hatch L1 points at. |
+| Security Engineer | L1 | Zero new attack surface; L3 co-mingling rejected as bootkit-persistence risk; L5 rejected as supply-chain audit liability. |
+| Developer Experience | L2 | Operators need a real success path; pair with L1 for the UI. |
+| AI/ML Engineer | L1 | 30 LOC minimal audit surface, mission-aligned. |
+| Product Manager | L1 | Tier-5 dead-end is a support-ticket generator; actionable prose is proper UX. |
+| Contrarian (rejected the proposal) | L2 | Flags legit concern: operators *do* need Windows PE for non-`fwupd` OEM firmware updates + BitLocker recovery in rescue scenarios. |
+
+### Revised recommendation: **L1 + L2, shipped together**
+
+- **L1 ships first** as a single-PR rescue-tui prose change — snapshot-testable, zero deps, trivially revertible.
+- **L2 ships behind L1** as a standalone `flash --windows-target` subcommand reusing the #419 pipeline. The CLI becomes the "[2] use a second stick" alternative L1's prose panel points at.
+
+Combined cost: ~180 LOC. Zero aegis-boot stick size change. Zero signed-chain perturbation. Aligned with the maintainer's "help operators move off Windows" mission: the default behavior nudges toward Linux, the escape hatch exists for operators who genuinely need it.
+
+### Contrarian's concern — recorded, not adopted
+
+The contrarian role flagged that rescue-tool users legitimately need Windows PE for:
+
+1. **Vendor firmware updates outside `fwupd`'s coverage** (some OEM BIOS updaters are Windows-only).
+2. **BitLocker-protected volume recovery** when the Linux rescue path can't unseal the TPM-sealed key.
+
+The L1 + L2 combination addresses (1) and (2) by letting operators flash a second stick as needed. The maintainer's position — that aegis-boot should not be the direct Windows boot path — is preserved.
+
+### Superseded: "Cost is a one-time partition-layout change..."
+
+The Option D implementation sketch below is retained for historical context. The L1 + L2 implementation sketch is in the epic tracking issue ([see References](#references)).
+
+## Implementation sketch for L1 + L2 (recommended)
+
+### L1 — rescue-tui prose panel (~30 LOC, 1 PR)
+
+- [ ] iso-probe quirks: rename `Quirk::NotKexecBootable` → `Quirk::RequiresAlternatePath` (or add the new variant) so rescue-tui can distinguish "this ISO type just can't be booted" from "boot this some other way". Windows keeps the quirk but gets a different rendering.
+- [ ] rescue-tui tier-5 render: for `Distribution::Windows`, replace "BOOT BLOCKED" prose with an actionable 3-bullet panel:
+  1. "aegis-boot won't boot Windows ISOs — that's by design. Here are your options:"
+  2. "Try Linux: [list of Linux ISOs found on this stick, or a catalog-slug hint if none]"
+  3. "Make a dedicated Windows installer stick: `aegis-boot flash --windows-target {iso} {new-stick}`"
+  4. "Or: use Rufus (`aegis-boot` is not a Rufus replacement)"
+- [ ] Snapshot test in `rescue-tui` asserting the panel renders for a canned Win11 iso-probe fixture.
+- [ ] Mention in `docs/HOW_IT_WORKS.md § Supported ISOs`.
+
+### L2 — `aegis-boot flash --windows-target` (~150 LOC, 1-2 PRs)
+
+- [ ] New CLI arg `--windows-target <stick>` on `aegis-boot flash`, mutually exclusive with `--direct-install` (aegis-boot flow) and `--image` (pre-built image flow).
+- [ ] New module `crates/aegis-cli/src/windows_target.rs` that:
+  - Accepts a Windows ISO path + a target-stick device path.
+  - Refuses disk 0 and the `aegis-boot`-formatted stick (detects `AEGIS_ESP` label on the target).
+  - Calls `windows_direct_install::partition::partition_via_diskpart` (Windows host) OR `sgdisk` (Linux host — we need a Linux-host equivalent since #419's diskpart is Windows-only).
+  - Formats partition 1 as FAT32 (big — 4 GiB+ to fit `install.wim`).
+  - Copies the Windows ISO contents (loop-mount + `cp -r`) to the FAT32 partition.
+  - Writes an attestation manifest noting the stick is a "Windows installer (not aegis-boot)".
+- [ ] Linux-host Windows-target path needs `sgdisk` + `mkfs.vfat` + `rsync`/`cp`. The `windows_direct_install::partition::partition_via_diskpart` logic ports cleanly — same layout, different tools.
+- [ ] Unit tests on the pure-fn argument parsing + same-stick-detection refusal.
+- [ ] Integration test: loop-mount a Win11 installer fixture + a scratch image file as the "target stick"; assert FAT32 layout matches what Rufus produces byte-for-byte on the boot-relevant files.
+- [ ] Documentation: new section in `docs/CLI.md § aegis-boot flash` covering `--windows-target`, pointing back at the rescue-tui panel for discoverability.
+
+### Out of scope for L1 + L2
+
+- Booting Windows ISOs from the aegis-boot stick itself (that was Option D — rejected).
+- Windows-on-ARM target (x86_64 only).
+- Windows-installer-flashing from a non-Linux host (Windows operator can use Rufus; macOS operator can use `dd` + the ISO contents, covered in docs).
+
+## Historical: Option D implementation sketch (not pursued)
+
+The 5-phase Option D sketch below is retained for context. If a future reviewer revisits the decision — for example, because L1 + L2 doesn't cover a rescue scenario we've failed to anticipate — this section is the starting point.
 
 ### Phase 1 — Stick layout + flash
 
