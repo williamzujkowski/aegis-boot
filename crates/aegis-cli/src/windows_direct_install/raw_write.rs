@@ -1184,7 +1184,10 @@ mod tests {
             .encode_wide()
             .chain(std::iter::once(0u16))
             .collect();
+        // Safety: wide is a NUL-terminated UTF-16 buffer owned for the
+        // duration of the call; all other args are Win32 constants.
         #[allow(unsafe_code)]
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
         let h: HANDLE = unsafe {
             CreateFileW(
                 PCWSTR(wide.as_ptr()),
@@ -1208,18 +1211,25 @@ mod tests {
         // Need an aligned buffer for direct I/O.
         let layout = std::alloc::Layout::from_size_align(read_size, 4096)
             .map_err(|e| format!("readback layout: {e}"))?;
+        // Safety: layout is valid with power-of-two alignment and
+        // non-zero size; null is checked below.
         #[allow(unsafe_code)]
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
         let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
         if ptr.is_null() {
+            // Safety: h was returned by CreateFileW above and is owned.
             #[allow(unsafe_code)]
+            // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
             unsafe {
                 let _ = CloseHandle(h);
             }
             return Err("readback: alloc failed".into());
         }
-        // Safety: ptr was returned by alloc_zeroed with layout above.
+        // Safety: ptr was returned by alloc_zeroed with layout above,
+        // non-null (checked), and exclusively owned.
         let buf: &mut [u8] = {
             #[allow(unsafe_code)]
+            // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
             unsafe {
                 std::slice::from_raw_parts_mut(ptr, read_size)
             }
@@ -1227,10 +1237,14 @@ mod tests {
 
         // Seek, read, close.
         let offset_i64 = i64::try_from(offset).map_err(|_| "offset > i64")?;
+        // Safety: h is a valid read-only raw-disk HANDLE.
         #[allow(unsafe_code)]
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
         let rc = unsafe { SetFilePointerEx(h, offset_i64, None, FILE_BEGIN) };
         if let Err(e) = rc {
+            // Safety: ptr + h are both still owned at this point.
             #[allow(unsafe_code)]
+            // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
             unsafe {
                 std::alloc::dealloc(ptr, layout);
                 let _ = CloseHandle(h);
@@ -1239,12 +1253,16 @@ mod tests {
         }
 
         let mut bytes_read: u32 = 0;
+        // Safety: buf points to read_size bytes; h is a valid read handle.
         #[allow(unsafe_code)]
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
         let rc = unsafe { ReadFile(h, Some(buf), Some(&mut bytes_read), None) };
 
         let out = buf[..len].to_vec();
 
+        // Safety: ptr + h ownership unchanged since creation; last use.
         #[allow(unsafe_code)]
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
         unsafe {
             std::alloc::dealloc(ptr, layout);
             let _ = CloseHandle(h);
