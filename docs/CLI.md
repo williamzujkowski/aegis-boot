@@ -246,7 +246,7 @@ Direct-install complete.
 
 - `0` — success
 - `1` — drive not found, build failed, `dd` failed, or a direct-install stage failed
-- `2` — usage error (unknown subcommand, `<drive>` missing, `<drive>` unparseable, `--yes` missing)
+- `2` — usage error (unknown subcommand, `<drive>` missing, `<drive>` unparsable, `--yes` missing)
 
 ### Requirements
 
