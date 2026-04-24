@@ -41,3 +41,11 @@ test-isos/
 # commit.
 crates/aegis-cli/CHANGELOG.md
 crates/aegis-cli/man/
+
+# Secret-key material — must never be committed. Public keys + epoch
+# metadata live in keys/ and are tracked; secret keys live in the
+# maintainer's password-store (outside the repo). See
+# docs/architecture/KEY_MANAGEMENT.md (ADR 0002).
+keys/*.key
+keys/*.key.*
+keys/maintainer-epoch-*.key

@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "epoch": 1,
+  "anchor": "sha256:139baf8e741e3159b7891870fd78f4be48663ea8eef2e960ad15199b078da66e",
+  "note": "Epoch 1 — initial maintainer-held minisign keypair. Generated 2026-04-24T14:09:30-04:00. Secret key + passphrase + proof-of-control canary are stored in maintainer's pass at aegis-boot/epoch-1/{secret-key,passphrase,canary-txt,canary-sig}. See docs/architecture/KEY_MANAGEMENT.md (ADR 0002)."
+}
