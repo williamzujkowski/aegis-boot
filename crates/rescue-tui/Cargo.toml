@@ -26,7 +26,7 @@ name = "tui-screenshots"
 path = "src/bin/tui_screenshots.rs"
 
 [dependencies]
-aegis-wire-formats = { path = "../aegis-wire-formats", version = "0.16" }
+aegis-wire-formats = { path = "../aegis-wire-formats", version = "0.17" }
 iso-probe = { path = "../iso-probe" }
 kexec-loader = { path = "../kexec-loader" }
 thiserror.workspace = true

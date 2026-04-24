@@ -57,11 +57,11 @@ docgen = []
 [dependencies]
 serde = { workspace = true }
 serde_json = "1.0"
-iso-probe = { path = "../iso-probe", version = "0.16" }
+iso-probe = { path = "../iso-probe", version = "0.17" }
 # Signed attestation manifest types extracted for Phase 4a of #286.
 # This crate is the Rust + JSON Schema source of truth for the
 # on-disk aegis-boot-manifest.json wire format.
-aegis-wire-formats = { path = "../aegis-wire-formats", version = "0.16" }
+aegis-wire-formats = { path = "../aegis-wire-formats", version = "0.17" }
 # Atomic random-name temp files for write_sidecar_via_sudo's
 # stage-then-copy path. Use the runtime dep (not the dev-dep) so the
 # staging path is not predictable — closes the TOCTOU window semgrep

@@ -4,7 +4,52 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 
 ## [Unreleased]
 
-All changes are post-v0.16.0, landing on main over 2026-04-22. Headline themes: ADR 0003 cross-reboot persistence shipped end-to-end, MSRV bumped to Rust 1.88, first-class NixOS install path via flake, and the entire major-dep-bump backlog from #411 cleared (indicatif, toml, schemars, sha2).
+## [0.17.0] — 2026-04-24
+
+Headline themes: the rescue-tui UX overhaul from [epic #455](https://github.com/aegis-boot/aegis-boot/issues/455) (dual-pane layout, 6-tier trust model, every ISO on the stick is now visible with a descriptive verdict), ADR 0003 cross-reboot persistence shipped end-to-end, MSRV bumped to Rust 1.88, first-class NixOS install path via flake, and the entire major-dep-bump backlog from #411 cleared (indicatif, toml, schemars, sha2).
+
+### rescue-tui UX overhaul — dual-pane + all-ISOs-visible (#455 epic, 7 PRs)
+
+Triggered by [#454](https://github.com/aegis-boot/aegis-boot/issues/454) (a tester reported drag-dropped ISOs were "not obvious" in the TUI). The new UI surfaces every `.iso` file on `AEGIS_ISOS` with a tier verdict instead of hiding un-verifiable ones behind a count banner.
+
+**Trust-tier model** — 6 named tiers replace the 4-color coarse verdict:
+
+| Tier | Verdict             | Bootable | Meaning                                    |
+| ---- | ------------------- | -------- | ------------------------------------------ |
+| 1    | OperatorAttested    | yes      | Hash or sig verified vs trusted source     |
+| 2    | BareUnverified      | yes\*    | No sidecar — typed-confirm required        |
+| 3    | KeyNotTrusted       | yes\*    | Sig parses, signer untrusted               |
+| 4    | ParseFailed         | **no**   | iso-parser couldn't extract kernel         |
+| 5    | SecureBootBlocked   | **no**   | Kernel rejected by platform keyring        |
+| 6    | HashMismatch        | **no**   | ISO bytes don't match declared hash        |
+
+Design principle: *Secure Boot stays strict; operator attestation relaxes gracefully.* An ISO that fails signature verification is never bootable; an ISO that lacks operator attestation is bootable with friction proportional to the missing signal.
+
+**Dual-pane layout** — gitui-style: 40% ISO list on the left, 60% info pane on the right. `Tab` toggles focus. Info pane shows per-tier metadata (file, size, sha256, signer, kernel, initrd, cmdline, distro, quirks) plus a pre-wrapped `Reason:` block for tier 4/5/6. Long error strings pre-wrapped via `textwrap` to work around ratatui/ratatui#2342 (Paragraph wrap+scroll accounting bug). Focus border brightens on the active pane, dims on the inactive pane. Context-sensitive footer legend filters by current screen + pane + filter-editing state.
+
+**Programmatic docs** — new `tiers-docgen` binary in rescue-tui renders the tier table and keybinding reference as Markdown from the canonical in-code sources (`TrustVerdict` enum + `KEYBINDINGS` registry). Marker-pair rewriting in `docs/HOW_IT_WORKS.md`, `docs/TOUR.md`, and `crates/rescue-tui/README.md`. CI's new `tiers-drift` job enforces drift-freedom (same pattern as `constants-drift` / `cli-drift` / `manifest-schema-drift`).
+
+**ANSI preview** — dev-only `tui-screenshots` binary renders 10 curated fixtures (empty list, all 6 tiers, focus states, filter editing, help overlay, confirm screen, trust challenge) to ANSI-escaped stdout. `cat docs/screenshots/rescue-tui-preview.ansi` in a color terminal for visual review without a build+boot cycle.
+
+**API changes** — `iso_probe::discover()` now returns `DiscoveryReport { isos: Vec<DiscoveredIso>, failed: Vec<FailedIso> }`. `ProbeError::NoIsosFound` is now reserved for "zero `.iso` files found on disk" — a stick full of broken ISOs returns `Ok(report)` with populated `failed` so rescue-tui can render tier-4 rows. Paired iso-parser API `scan_directory_with_failures` adds the `ScanReport` shape; legacy `scan_directory` stays as a thin wrapper for backwards compat.
+
+PRs landed: [#463](https://github.com/aegis-boot/aegis-boot/pull/463) (design doc), [#464](https://github.com/aegis-boot/aegis-boot/pull/464) (DiscoveryReport API), [#471](https://github.com/aegis-boot/aegis-boot/pull/471) (6 tiers), [#472](https://github.com/aegis-boot/aegis-boot/pull/472) (dual-pane scaffold), [#473](https://github.com/aegis-boot/aegis-boot/pull/473) (info-pane content + tier-4 rows), [#474](https://github.com/aegis-boot/aegis-boot/pull/474) (keybinding registry), [#475](https://github.com/aegis-boot/aegis-boot/pull/475) (render coverage suite — 19 tests), [#476](https://github.com/aegis-boot/aegis-boot/pull/476) (tiers-docgen + CI drift check), [#477](https://github.com/aegis-boot/aegis-boot/pull/477) (ANSI preview tool).
+
+### `aegis-boot add --scan` — retroactive sidecar generation (#479)
+
+Complement to the epic: operators who drag-and-dropped ISOs onto `AEGIS_ISOS` from their host OS can now upgrade those tier-2 (BareUnverified) entries to tier-1 (OperatorAttested) with one command:
+
+```bash
+sudo aegis-boot add --scan /dev/sda2
+sudo aegis-boot add --scan /mnt/aegis-isos
+sudo aegis-boot add --scan                  # auto-detect AEGIS_ISOS
+```
+
+Walks the mount via `scan_isos` (#274 Phase 6a), classifies each `.iso` by sidecar state, streams sha256, writes coreutils-compatible `<hex>  <filename>\n` sidecars atomically (tempfile-in-same-dir + persist). Never overwrites an existing sidecar — a hash mismatch is surfaced as a **tamper signal** instead of auto-corrected. Direct-write-first, `sudo cp` fallback only on `PermissionDenied` / `ReadOnlyFilesystem` so unit tests and already-root flows stay prompt-free. Per-ISO attestation entries. Minisig generation is out of scope (would require the operator's private signing key). New `pub fn iso_probe::compute_iso_sha256(path)` exposes the streaming hasher.
+
+PR: [#480](https://github.com/aegis-boot/aegis-boot/pull/480). 18 new tests, 512 total in aegis-bootctl.
+
+### ⚠️ Breaking change for external schema consumers
 
 ### ⚠️ Breaking change for external schema consumers
 
