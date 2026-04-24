@@ -26,7 +26,7 @@
 //!    Administrator. Caller must gate via
 //!    [`crate::windows_direct_install::preflight`] first.
 //! 3. **`FILE_SHARE_NONE`** — exclusive access. If Windows Defender
-//!    real-time scan or BitLocker has the disk open, fail with the
+//!    real-time scan or `BitLocker` has the disk open, fail with the
 //!    specific Win32 error translated by [`translate_win32_error`].
 //! 4. **`FSCTL_LOCK_VOLUME` before write** — returns
 //!    `ERROR_ACCESS_DENIED` on BitLocker-protected; surface that
@@ -125,7 +125,7 @@ pub(crate) struct EspStagingSources {
 }
 
 impl EspStagingSources {
-    /// Lookup a source path by [`EspFile`]. Used by stage_esp's
+    /// Lookup a source path by [`EspFile`]. Used by [`stage_esp`]'s
     /// iteration over [`EspFile::ALL`].
     pub(crate) fn path_for(&self, f: EspFile) -> &std::path::Path {
         match f {
@@ -141,7 +141,7 @@ impl EspStagingSources {
 
 /// Round `bytes` up to the next multiple of `sector_bytes`.
 /// `sector_bytes` must be a non-zero power of two (asserted by a
-/// debug assertion — callers get it from IOCTL_DISK_GET_DRIVE_GEOMETRY).
+/// debug assertion — callers get it from `IOCTL_DISK_GET_DRIVE_GEOMETRY`).
 /// Returns the rounded value; overflow on the final sector saturates
 /// to `u64::MAX`.
 pub(crate) fn round_up_to_sector(bytes: u64, sector_bytes: u32) -> u64 {
@@ -240,7 +240,7 @@ pub(crate) fn plan_write(
             sector_bytes,
         });
     }
-    let chunks = u64::try_from(aligned_total.div_ceil(chunk_bytes)).unwrap_or(u64::MAX);
+    let chunks = aligned_total.div_ceil(chunk_bytes);
     Ok(WritePlan {
         offset,
         aligned_total,

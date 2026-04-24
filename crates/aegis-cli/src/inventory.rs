@@ -162,6 +162,9 @@ pub fn run_add(args: &[String]) -> ExitCode {
 
 /// Inner runner returning a typed result so `aegis-boot init` can branch
 /// on success/failure. Same semantics as `run_add`.
+// CLI argument dispatch + two-mode branching (normal add vs `--scan`) —
+// extracting helpers would fragment the control flow for no clarity win.
+#[allow(clippy::too_many_lines)]
 pub(crate) fn try_run_add(args: &[String]) -> Result<(), u8> {
     if args.is_empty()
         || args.first().map(String::as_str) == Some("--help")
@@ -296,8 +299,8 @@ pub(crate) fn try_run_add(args: &[String]) -> Result<(), u8> {
 
 /// `aegis-boot add --scan <mount>` — walk `AEGIS_ISOS`, hash each
 /// bare ISO, and write `<iso>.sha256` sidecars so the rescue-tui
-/// upgrades them from tier 2 (BareUnverified) to tier 1
-/// (OperatorAttested). (#479)
+/// upgrades them from tier 2 (`BareUnverified`) to tier 1
+/// (`OperatorAttested`). (#479)
 ///
 /// Does NOT overwrite existing sha256 sidecars — a mismatch between
 /// an existing sidecar and the computed hash is surfaced as a
@@ -535,6 +538,8 @@ fn check_existing_sha256(iso_abs: &Path) -> ExistingSha256Check {
 /// [`copy_with_sudo`] so the sidecar either exists completely or
 /// not at all (no half-written file if we're interrupted).
 fn write_generated_sha256(iso_abs: &Path, rel_path: &str, _mount: &Mount) -> Result<(), String> {
+    use std::io::Write as _;
+
     let digest = iso_probe::compute_iso_sha256(iso_abs).map_err(|e| format!("hash: {e}"))?;
     let basename = iso_abs
         .file_name()
@@ -566,7 +571,6 @@ fn write_generated_sha256(iso_abs: &Path, rel_path: &str, _mount: &Mount) -> Res
     // Sudo fallback: stage to a private tempfile (that we can write
     // without elevation), then `sudo cp` into the mount. Matches the
     // pattern already used by `write_sidecar_via_sudo`.
-    use std::io::Write as _;
     let mut staging = tempfile::Builder::new()
         .prefix("aegis-sha256-")
         .suffix(".txt")
@@ -854,7 +858,7 @@ struct AddArgs {
     /// #479: `--scan` mode. When true, [`try_run_add`] bypasses the
     /// copy-one-ISO path and instead walks `AEGIS_ISOS` to generate
     /// missing `.sha256` sidecars for drag-and-dropped ISOs that
-    /// render as tier-2 (BareUnverified) in rescue-tui. The
+    /// render as tier-2 (`BareUnverified`) in rescue-tui. The
     /// positional argument (if any) is treated as the mount arg
     /// instead of an ISO path.
     scan: bool,
@@ -865,6 +869,10 @@ struct AddArgs {
 /// `--version`, `--category` flags (each accepting either `--flag VALUE`
 /// or `--flag=VALUE` form). Returns `Err(2)` for usage errors so the
 /// caller surfaces the standard "exit 2 = bad args" code.
+// Single-pass flag parser — each flag dispatches in the same while loop,
+// so splitting into helpers would turn a linear read into a chase through
+// five trivial private functions with identical shapes.
+#[allow(clippy::too_many_lines)]
 fn parse_add_args(args: &[String]) -> Result<AddArgs, u8> {
     let mut iso_path: Option<PathBuf> = None;
     let mut mount_arg: Option<String> = None;
@@ -2086,7 +2094,7 @@ mod tests {
     // ---- #479 --scan mode -------------------------------------------
 
     fn parse(args: &[&str]) -> Result<AddArgs, u8> {
-        let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let owned: Vec<String> = args.iter().map(|&s| String::from(s)).collect();
         parse_add_args(&owned)
     }
 
@@ -2227,13 +2235,14 @@ mod tests {
 
     #[test]
     fn scan_for_upgrades_skips_already_verified_isos() {
+        use sha2::{Digest, Sha256};
+
         let dir = tempfile::tempdir().unwrap();
         let iso = dir.path().join("ok.iso");
         let bytes = b"content";
         std::fs::write(&iso, bytes).unwrap();
 
         // Pre-seed a matching .sha256 sidecar (sha256 of "content").
-        use sha2::{Digest, Sha256};
         let hash = hex::encode(Sha256::digest(bytes));
         let sidecar = dir.path().join("ok.iso.sha256");
         std::fs::write(&sidecar, format!("{hash}  ok.iso\n")).unwrap();
