@@ -148,36 +148,45 @@ fn try_run(args: &[String]) -> Result<PathBuf, u8> {
     // Sigstore transparency-log lookup would fail anyway.
     if parsed.cosign_disabled {
         eprintln!("aegis-boot fetch-image: cosign verification skipped (--no-cosign)");
-    } else {
-        try_cosign_verify(&url, &out_path);
+    } else if let Err(detail) = try_cosign_verify(&url, &out_path) {
+        eprintln!("aegis-boot fetch-image: {detail}");
+        return Err(1);
     }
 
     Ok(out_path)
 }
 
 /// Attempt to download `<url>.sig` + `<url>.pem` and run
-/// `cosign verify-blob` against them. On verification **success**,
-/// emit a confirmation line and return. On the following conditions,
-/// surface a WARNING and proceed (graceful degrade — the sha256 layer
-/// is still active, if supplied):
+/// `cosign verify-blob` against them. Returns `Ok(())` on
+/// verification success OR on any graceful-degrade condition
+/// (cosign missing, signatures unpublished for this release).
+///
+/// The following conditions return `Ok(())` with a WARNING to
+/// stderr — the sha256 layer is still active, if supplied:
 ///
 ///   * `cosign` not on PATH — operator host lacks the binary
 ///   * curl fails to download `.sig` or `.pem` — typically HTTP 404
 ///     when the release pre-dates signature publishing
 ///
-/// On verification **failure** (signatures present but don't match the
-/// hardcoded identity or the image bytes), the image is deleted and
-/// we return early — same fail-closed contract as the sha256-mismatch
-/// path. The `out_path` argument is kept by reference because we want
-/// to be able to unlink it on mismatch.
-fn try_cosign_verify(url: &str, image_path: &Path) {
+/// Only a real `cosign verify-blob` **failure** (signatures present
+/// but don't match the hardcoded identity or the image bytes)
+/// returns `Err(...)`. The image + sidecars are deleted before the
+/// error surfaces — same fail-closed contract as the sha256
+/// mismatch path. The caller translates the error into a non-zero
+/// exit code.
+///
+/// Previously this fn called `std::process::exit(1)` directly on
+/// verification failure, which bypassed caller-side cleanup +
+/// made the failure path untestable without a subprocess. The
+/// rewrite to a `Result` closes both gaps (issue #538).
+fn try_cosign_verify(url: &str, image_path: &Path) -> Result<(), String> {
     if !cosign_on_path() {
         eprintln!(
             "aegis-boot fetch-image: WARNING — cosign not on PATH; skipping signature \
              verification. Install cosign (https://docs.sigstore.dev/cosign/system_config/installation/) \
              or pass --no-cosign to silence this warning."
         );
-        return;
+        return Ok(());
     }
 
     // Stage .sig + .pem into the same directory as the image so a
@@ -191,27 +200,27 @@ fn try_cosign_verify(url: &str, image_path: &Path) {
     let pem_url = format!("{url}.pem");
 
     if !try_download_signature(&sig_url, &sig_path, ".sig") {
-        return;
+        return Ok(());
     }
     if !try_download_signature(&pem_url, &pem_path, ".pem") {
-        return;
+        return Ok(());
     }
 
     match run_cosign_verify_blob(image_path, &sig_path, &pem_path) {
         Ok(()) => {
             eprintln!("aegis-boot fetch-image: cosign keyless signature verified ✓");
             eprintln!("  identity: {COSIGN_IDENTITY_REGEX}\n  issuer:   {COSIGN_OIDC_ISSUER}");
+            Ok(())
         }
         Err(reason) => {
-            eprintln!(
-                "aegis-boot fetch-image: cosign verification FAILED — {reason}\n  \
-                 The downloaded bytes could not be cryptographically attributed to \
-                 aegis-boot's release workflow. Deleting the file."
-            );
             let _ = std::fs::remove_file(image_path);
             let _ = std::fs::remove_file(&sig_path);
             let _ = std::fs::remove_file(&pem_path);
-            std::process::exit(1);
+            Err(format!(
+                "cosign verification FAILED — {reason}\n  \
+                 The downloaded bytes could not be cryptographically attributed to \
+                 aegis-boot's release workflow. The file has been deleted."
+            ))
         }
     }
 }
