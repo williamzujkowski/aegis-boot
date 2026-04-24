@@ -1044,7 +1044,7 @@ fn windows_redirect_lines<'a>(state: &AppState, content_width: usize) -> Vec<Lin
 
     // Linux-ISO listing from the same AppState the rest of the UI
     // drives off. Filter to bootable, non-Windows rows so a second
-    // unparseable Windows ISO on the stick doesn't end up in the
+    // unparsable Windows ISO on the stick doesn't end up in the
     // "try Linux instead" bullet list.
     let bootable_linux: Vec<&iso_probe::DiscoveredIso> = state
         .isos
