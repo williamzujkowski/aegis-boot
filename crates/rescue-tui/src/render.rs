@@ -11,6 +11,7 @@ use ratatui::{
     widgets::{Block, Borders, Gauge, List, ListItem, ListState, Paragraph, Wrap},
 };
 
+use crate::keybindings::{self, ScreenKind};
 use crate::state::{AppState, Pane, Screen, SecureBootStatus, quirks_summary};
 use crate::theme::Theme;
 use crate::verdict::TrustVerdict;
@@ -312,31 +313,14 @@ fn draw_header(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
 
 fn draw_footer(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     // Footer hints depend on the underlying screen, not the overlay.
+    // Registry-driven since #460 — the KEYBINDINGS table is the single
+    // source of truth for footer, help overlay, and docgen.
     let effective = match &state.screen {
         Screen::Help { prior } | Screen::ConfirmQuit { prior } => prior.as_ref(),
         other => other,
     };
-    let hint = if state.filter_editing {
-        " Filter: type to match  ·  [Enter] commit  ·  [Esc] clear"
-    } else {
-        match effective {
-            Screen::List { .. } => {
-                " [↑↓/jk] Move  [Enter] Boot  [/] Filter  [s] Sort  [v] Verify  [?] Help  [q] Quit"
-            }
-            Screen::Confirm { .. } => {
-                " [Enter] kexec  [e] cmdline  [v] Verify  [Esc/h] Back  [?] Help  [q] Quit"
-            }
-            Screen::EditCmdline { .. } => {
-                " [Enter] Save  [Esc] Cancel  [←/→] Move  [Backspace] Delete"
-            }
-            Screen::Error { .. } => {
-                " [F10] Save evidence to AEGIS_ISOS  ·  any key = back  ·  [q] Quit"
-            }
-            Screen::Verifying { .. } => " Verifying in background  ·  [Esc] Cancel",
-            Screen::TrustChallenge { .. } => " Type `boot` + Enter to proceed  ·  [Esc] Cancel",
-            Screen::Quitting | Screen::Help { .. } | Screen::ConfirmQuit { .. } => "",
-        }
-    };
+    let kind = ScreenKind::from_screen(effective);
+    let hint = keybindings::footer_line(kind, state.pane, state.filter_editing);
     frame.render_widget(Paragraph::new(hint), area);
 }
 
