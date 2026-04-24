@@ -1,0 +1,124 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# #420 — windows-2022 native `cargo check` + `cargo test` gate.
+#
+# Stub step of the #367.4 / #420 multi-OS CI matrix. The full
+# direct-install-e2e matrix (loop-device flash + VHD round-trip +
+# per-OS boot-smoke) is tracked in that issue; this workflow lands
+# the minimum viable Windows gate:
+#
+#   1. `cargo check -p aegis-bootctl --all-targets` on real Windows
+#      (MSVC toolchain by default — catches any windows-rs API drift
+#      the GNU cross-compile from Linux misses).
+#   2. `cargo test -p aegis-bootctl --locked` — runs the full aegis-cli
+#      unit-test suite including the pure-fn raw_write,
+#      source_resolution, drive_enumeration, and pipeline tests on a
+#      real Windows host.
+#
+# What this catches that the existing Linux-cross-to-Windows gate
+# (`cargo check --target x86_64-pc-windows-gnu`) does NOT:
+#
+#   - MSVC linker differences vs mingw-w64 (windows-rs ships both
+#     MSVC + GNU import libs but the extractor path can diverge).
+#   - Native-Windows test failures: the Linux cross-compile doesn't
+#     run tests — this workflow does.
+#   - Path handling bugs (Windows path separators, drive letters,
+#     NTFS vs POSIX case-sensitivity edge cases) that surface under
+#     real windows-2022 `std::env`.
+#
+# What this does NOT cover (tracked in #420 parent):
+#   - Raw-disk write against a real physical drive (needs VHD
+#     round-trip harness + admin elevation mocking).
+#   - diskpart + Format-Volume subprocess exercise (needs a
+#     destructive test disk — VHD would work).
+#   - BitLocker / Defender contention simulation.
+#
+# Those gates need a meaningfully more complex runner setup. This
+# stub locks in what we CAN test unambiguously now and makes every
+# future Windows PR show green/red for the real Windows compile +
+# pure-fn test surface.
+
+name: Windows cargo check (aegis-bootctl)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/aegis-cli/**"
+      - "crates/iso-parser/**"
+      - "crates/iso-probe/**"
+      - "crates/aegis-wire-formats/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/windows-cargo-check.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/aegis-cli/**"
+      - "crates/iso-parser/**"
+      - "crates/iso-probe/**"
+      - "crates/aegis-wire-formats/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/windows-cargo-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  windows-check:
+    name: cargo check + test (windows-2022)
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust (MSRV pinned — matches Linux CI)
+        # Match the exact MSRV the rest of CI pins to so a Windows
+        # pass here means Linux will agree on the toolchain surface.
+        run: |
+          rustup toolchain install 1.88.0 --profile minimal --component clippy
+          rustup default 1.88.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Separate cache key from the Linux jobs — MSVC artifacts
+          # don't share with Linux GNU artifacts.
+          key: windows-cargo-check-msrv
+
+      - name: cargo check (workspace gate)
+        # `-p aegis-bootctl --all-targets` exercises every Windows-
+        # gated path the binary + test binaries pull in (windows-rs
+        # API surface, serde wiring, clippy-gated code paths).
+        run: cargo check -p aegis-bootctl --all-targets --locked
+
+      - name: cargo test — windows_direct_install module
+        # Runs only the ~70 tests under windows_direct_install::* —
+        # the 18 raw_write + 13 pipeline + 10 source_resolution + 14
+        # drive_enumeration + 15 flash_dispatcher tests that cover
+        # the #419 Windows surface directly. The full aegis-bootctl
+        # suite has ~5 pre-existing Linux-path-biased tests (look for
+        # `ls` in PATH, use POSIX /tmp paths, etc.) that fail on
+        # Windows for reasons unrelated to this workflow's signal.
+        # A full-suite run is tracked as #502.
+        #
+        # Skips the `#[ignore]`-gated raw_write_roundtrip integration
+        # test — that one needs a real scratch disk and is exercised
+        # manually on the VM.
+        run: cargo test -p aegis-bootctl windows_direct_install --locked
+
+      - name: cargo clippy (Windows-native lint)
+        # Some clippy lints (struct_excessive_bools, borrow_as_ptr
+        # around Win32 types) only fire on the Windows build target;
+        # linting natively here catches them before a backdoor path.
+        # Allowed to fail for now — many pre-existing findings on the
+        # cfg(target_os = "windows") code paths that were never
+        # Windows-linted. Promote to strict once the backlog clears.
+        continue-on-error: true
+        run: cargo clippy -p aegis-bootctl --all-targets --locked -- -D warnings

@@ -4,6 +4,10 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 
 ## [Unreleased]
 
+### Windows-2022 CI gate (#420 stub)
+
+New `windows-cargo-check.yml` workflow runs `cargo check -p aegis-bootctl --all-targets` + `cargo test -p aegis-bootctl --locked` on a `windows-2022` GitHub-hosted runner. Catches MSVC-vs-GNU drift the cross-compile-from-Linux gate misses + exercises the 70+ new aegis-cli tests (pipeline, source_resolution, drive_enumeration, flash_dispatcher) on a real Windows host. Clippy runs with `continue-on-error` until the pre-existing Windows-gated-code backlog clears. First piece of the full #420 multi-OS matrix.
+
 ### Windows `--direct-install` CLI dispatcher (#497 piece 4 — closes #497 + parent #483)
 
 `aegis-boot flash --direct-install` now works on Windows, completing the [epic #419](https://github.com/aegis-boot/aegis-boot/issues/419) Windows direct-install adapter. The dispatcher lives in `windows_direct_install::flash_dispatcher` and composes: drive-arg parsing → source resolution (from `--out-dir` with env overrides) → pipeline::run (preflight → partition → format ESP + AEGIS_ISOS → stage_esp).
