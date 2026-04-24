@@ -280,6 +280,35 @@ aegis-boot add --help
 
 If no sidecar is found, the operator gets an explicit notice in the output, and `rescue-tui` will show GRAY verdict + require a typed `boot` confirmation at boot time. We never silently accept an unverified ISO.
 
+### `--scan` — retroactive sidecar generation (#479)
+
+When an operator drag-and-drops `.iso` files onto `AEGIS_ISOS` from their host OS, those ISOs show up in rescue-tui as tier 2 (BareUnverified) — bootable, but requiring a typed-confirmation challenge. Running:
+
+```bash
+sudo aegis-boot add --scan /dev/sda2        # device path
+sudo aegis-boot add --scan /mnt/aegis-isos  # mount path
+sudo aegis-boot add --scan                  # auto-detect AEGIS_ISOS
+```
+
+walks the mount for `.iso` files, streams sha256 for each bare ISO, and writes coreutils-compatible `<iso>.sha256` sidecars. Output:
+
+```
+Scanning /mnt/aegis-isos for ISOs without sidecars...
+  [✓] ubuntu-24.04-live-server.iso  (2.4 GiB) — sha256 written
+  [✓] alpine-standard-3.20.iso  (200 MiB) — sha256 written
+  [-] debian-12.iso — already verified; skipped
+  [!] my-custom.iso — existing .sha256 MISMATCH (expected a1b2…, actual 0123…); NOT overwritten
+  [~] ubuntu-24.04-live-server.iso — no .minisig (tier-1 requires operator's signing key; stays at tier-2+)
+Done: 2 upgraded, 1 already verified, 1 tamper-flagged, 2 missing minisig (of 4 ISOs).
+```
+
+**Safety invariants:**
+
+- **Never overwrites an existing sidecar.** A mismatch between the declared hash and the computed one is surfaced as a tamper signal — inspect the ISO before booting.
+- **Atomic writes.** Sidecars go through write-to-temp-then-rename so a half-written file never lands on the stick.
+- **No minisig generation.** Creating a minisig sidecar would require the operator's private signing key, which aegis-boot never touches. Tier-3 (KeyNotTrusted) ISOs stay at tier-3 until the operator signs them out-of-band.
+- **Per-ISO attestation.** Each newly-upgraded ISO gets an attestation entry under `~/.local/share/aegis-boot/attestations/` — same audit trail as a full `aegis-boot add`.
+
 ---
 
 ## Mount resolution rules

@@ -22,6 +22,8 @@ USAGE: aegis-boot add <iso-file-or-catalog-slug> [/dev/sdX | /mnt/aegis-isos]
                   [--folder NAME]
                   [--description TEXT] [--version VER] [--category CAT]
 
+       aegis-boot add --scan [/dev/sdX | /mnt/aegis-isos]
+
 If the first arg is NOT a file on disk but IS a known catalog slug
 (e.g. 'ubuntu-24.04-live-server'), add fetches + verifies it first,
 then stages the cached copy — collapses 'fetch X && add <path>' (#352).
@@ -35,6 +37,13 @@ Optional sidecar metadata (#246) is written next to the ISO as
 <iso>.aegis.toml so rescue-tui can show 'Network-install Debian 12'
 instead of the bare filename. The sidecar is unsigned cosmetic
 metadata — boot decisions still key off the sha256-attested manifest.
+
+--scan (#479) walks AEGIS_ISOS looking for .iso files without .sha256
+sidecars, streams each through sha256, and writes coreutils-compatible
+sidecars so rescue-tui upgrades them from tier 2 (BareUnverified) to
+tier 1 (OperatorAttested). Existing sidecars are verified but never
+overwritten — a mismatch surfaces as a tamper signal instead. Minisig
+sidecars can't be generated (would need the operator's private key).
 ```
 
 ## `aegis-boot attest`

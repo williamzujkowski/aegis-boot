@@ -44,7 +44,9 @@ pub use sidecar::{
     IsoSidecar, SidecarError, load_sidecar, sidecar_path_for, to_toml as sidecar_to_toml,
     write_sidecar,
 };
-pub use signature::{HashVerification, verify_iso_hash, verify_iso_hash_with_progress};
+pub use signature::{
+    HashVerification, compute_iso_sha256, verify_iso_hash, verify_iso_hash_with_progress,
+};
 
 /// Metadata for a single discovered ISO. Paths are relative to the (now
 /// unmounted) ISO root and become absolute once handed to [`prepare`].

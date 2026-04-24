@@ -264,6 +264,21 @@ fn is_sha256_hex(s: &str) -> bool {
 /// Streaming SHA-256 with periodic callback into `on_progress(bytes_read,
 /// total)`. Tick rate capped at ~10 Hz so the callback doesn't dominate
 /// CPU on fast storage. (#89)
+/// Compute the sha256 of an `.iso` file on disk as a lowercase hex
+/// string. Public streaming wrapper used by `aegis-boot add --scan`
+/// (#479) to generate `<iso>.sha256` sidecars for drag-dropped ISOs
+/// that currently render as tier-2 (BareUnverified) in rescue-tui.
+///
+/// # Errors
+///
+/// Propagates [`std::io::Error`] from the underlying read. Large ISOs
+/// hash in ~GB/s on NVMe; buffered at 64 KiB (same as the per-iso
+/// verification path).
+pub fn compute_iso_sha256(path: &Path) -> std::io::Result<String> {
+    let total = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    sha256_of_file_with_progress(path, total, &mut |_, _| {})
+}
+
 fn sha256_of_file_with_progress(
     path: &Path,
     total: u64,

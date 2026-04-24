@@ -178,7 +178,12 @@ pub(crate) fn try_run_add(args: &[String]) -> Result<(), u8> {
         version,
         category,
         folder,
+        scan,
     } = parse_add_args(args)?;
+
+    if scan {
+        return run_scan_mode(mount_arg.as_deref());
+    }
 
     // #352 UX-4: if the positional arg is a catalog slug (not a real
     // file path), fetch it first and substitute the cached ISO path.
@@ -287,6 +292,343 @@ pub(crate) fn try_run_add(args: &[String]) -> Result<(), u8> {
         unmount_temp(&mount);
     }
     Ok(())
+}
+
+/// `aegis-boot add --scan <mount>` — walk `AEGIS_ISOS`, hash each
+/// bare ISO, and write `<iso>.sha256` sidecars so the rescue-tui
+/// upgrades them from tier 2 (BareUnverified) to tier 1
+/// (OperatorAttested). (#479)
+///
+/// Does NOT overwrite existing sha256 sidecars — a mismatch between
+/// an existing sidecar and the computed hash is surfaced as a
+/// tamper signal rather than a write. Does NOT generate minisig
+/// sidecars (would require the operator's private key).
+fn run_scan_mode(mount_arg: Option<&str>) -> Result<(), u8> {
+    let mount = match resolve_mount(mount_arg) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("aegis-boot add --scan: {e}");
+            return Err(1);
+        }
+    };
+    println!(
+        "Scanning {} for ISOs without sidecars...",
+        mount.path.display()
+    );
+
+    let summary = scan_for_upgrades(&mount);
+
+    let ScanSummary {
+        total,
+        upgraded,
+        already_verified,
+        tamper_flagged,
+        minisig_missing,
+        io_errors,
+    } = &summary;
+
+    for entry in upgraded {
+        println!(
+            "  [✓] {}  ({}) — sha256 written",
+            entry.rel_path,
+            humanize(entry.size)
+        );
+    }
+    for entry in already_verified {
+        println!("  [-] {} — already verified; skipped", entry.rel_path);
+    }
+    for entry in tamper_flagged {
+        println!(
+            "  [!] {} — existing .sha256 MISMATCH (expected {}, actual {}); NOT overwritten",
+            entry.rel_path,
+            short_hex(&entry.expected),
+            short_hex(&entry.actual),
+        );
+    }
+    for entry in minisig_missing {
+        println!(
+            "  [~] {} — no .minisig (tier-1 requires operator's signing key; stays at tier-2+)",
+            entry.rel_path
+        );
+    }
+    for (rel_path, reason) in io_errors {
+        eprintln!("  [x] {rel_path} — I/O error: {reason}");
+    }
+
+    println!();
+    println!(
+        "Done: {upgraded_n} upgraded, {already_n} already verified, \
+         {tamper_n} tamper-flagged, {minisig_n} missing minisig \
+         (of {total} ISOs).",
+        upgraded_n = upgraded.len(),
+        already_n = already_verified.len(),
+        tamper_n = tamper_flagged.len(),
+        minisig_n = minisig_missing.len(),
+    );
+    if !tamper_flagged.is_empty() {
+        eprintln!();
+        eprintln!(
+            "WARNING: {} ISO(s) have .sha256 sidecars that don't match their bytes. \
+             This is a tamper signal — inspect them before booting.",
+            tamper_flagged.len()
+        );
+    }
+
+    if mount.temporary {
+        unmount_temp(&mount);
+    }
+
+    if !io_errors.is_empty() {
+        return Err(1);
+    }
+    Ok(())
+}
+
+/// Truncate a hex digest to 12 chars + ellipsis for CLI output.
+fn short_hex(s: &str) -> String {
+    if s.len() <= 14 {
+        return s.to_string();
+    }
+    let mut end = 12;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &s[..end])
+}
+
+/// Per-run classification of every `.iso` file found during a scan.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ScanSummary {
+    total: usize,
+    upgraded: Vec<ScanEntry>,
+    already_verified: Vec<ScanEntry>,
+    tamper_flagged: Vec<ScanTamperEntry>,
+    minisig_missing: Vec<ScanEntry>,
+    io_errors: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScanEntry {
+    /// `AEGIS_ISOS`-relative display path (e.g. `ubuntu-24.04/ubuntu-24.04.iso`).
+    rel_path: String,
+    size: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScanTamperEntry {
+    rel_path: String,
+    expected: String,
+    actual: String,
+}
+
+/// Walk the mounted `AEGIS_ISOS` partition, classify each `.iso` by
+/// sidecar state, and generate missing `.sha256` sidecars. Returns a
+/// [`ScanSummary`] for the CLI to render.
+fn scan_for_upgrades(mount: &Mount) -> ScanSummary {
+    let entries = scan_isos(&mount.path);
+    let mut summary = ScanSummary {
+        total: entries.len(),
+        ..Default::default()
+    };
+
+    for iso in entries {
+        let iso_abs = match iso.folder.as_deref() {
+            Some(folder) => mount.path.join(folder).join(&iso.name),
+            None => mount.path.join(&iso.name),
+        };
+        let rel_path = match iso.folder.as_deref() {
+            Some(f) => format!("{f}/{}", iso.name),
+            None => iso.name.clone(),
+        };
+
+        // Track minisig-missing for every ISO — #479 can't generate
+        // minisigs, but the summary surfaces them so operators see
+        // the upgrade ceiling.
+        if !iso.has_minisig {
+            summary.minisig_missing.push(ScanEntry {
+                rel_path: rel_path.clone(),
+                size: iso.size,
+            });
+        }
+
+        if iso.has_sha256 {
+            match check_existing_sha256(&iso_abs) {
+                ExistingSha256Check::Match => summary.already_verified.push(ScanEntry {
+                    rel_path,
+                    size: iso.size,
+                }),
+                ExistingSha256Check::Mismatch { expected, actual } => {
+                    summary.tamper_flagged.push(ScanTamperEntry {
+                        rel_path,
+                        expected,
+                        actual,
+                    });
+                }
+                ExistingSha256Check::Error(reason) => {
+                    summary.io_errors.push((rel_path, reason));
+                }
+            }
+            continue;
+        }
+
+        // No sidecar yet — compute + write.
+        match write_generated_sha256(&iso_abs, &rel_path, mount) {
+            Ok(()) => {
+                summary.upgraded.push(ScanEntry {
+                    rel_path: rel_path.clone(),
+                    size: iso.size,
+                });
+                // Host-side attestation entry.
+                let _ = crate::attest::record_iso_added(
+                    &mount.path,
+                    &iso_abs,
+                    vec!["sha256".to_string()],
+                );
+            }
+            Err(reason) => {
+                summary.io_errors.push((rel_path, reason));
+            }
+        }
+    }
+
+    summary
+}
+
+/// Compute the actual sha256 of an ISO on disk and compare against
+/// the declared value in its sibling `.sha256` file. Returns a
+/// 3-state verdict so the scan summary can route match vs mismatch
+/// vs I/O error to different reporting paths.
+enum ExistingSha256Check {
+    Match,
+    Mismatch { expected: String, actual: String },
+    Error(String),
+}
+
+fn check_existing_sha256(iso_abs: &Path) -> ExistingSha256Check {
+    let sidecar_path = sha256_sidecar_path(iso_abs);
+    let body = match std::fs::read_to_string(&sidecar_path) {
+        Ok(s) => s,
+        Err(e) => return ExistingSha256Check::Error(format!("read sidecar: {e}")),
+    };
+    let Some(expected) = parse_sha256_sidecar(&body) else {
+        return ExistingSha256Check::Error("sidecar has no parseable sha256 line".to_string());
+    };
+    let actual = match iso_probe::compute_iso_sha256(iso_abs) {
+        Ok(h) => h,
+        Err(e) => return ExistingSha256Check::Error(format!("hash: {e}")),
+    };
+    if actual.eq_ignore_ascii_case(&expected) {
+        ExistingSha256Check::Match
+    } else {
+        ExistingSha256Check::Mismatch {
+            expected: expected.to_ascii_lowercase(),
+            actual,
+        }
+    }
+}
+
+/// Compute + write a `<iso>.sha256` sidecar for an ISO that didn't
+/// have one. Writes in coreutils-compatible `<hex>  <basename>\n`
+/// format so `sha256sum -c` can verify it independently.
+///
+/// Atomic: stages to a tempfile, fsyncs, then copies via
+/// [`copy_with_sudo`] so the sidecar either exists completely or
+/// not at all (no half-written file if we're interrupted).
+fn write_generated_sha256(iso_abs: &Path, rel_path: &str, _mount: &Mount) -> Result<(), String> {
+    let digest = iso_probe::compute_iso_sha256(iso_abs).map_err(|e| format!("hash: {e}"))?;
+    let basename = iso_abs
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| format!("no basename for {rel_path}"))?;
+    // Standard sha256sum format: `<hex>  <basename>\n` (double-space).
+    let body = format!("{digest}  {basename}\n");
+    let dest = sha256_sidecar_path(iso_abs);
+
+    // Try a direct write first. Succeeds when the operator already
+    // has write access to the mount (e.g. udisks2 mounted it rw as
+    // their user, or they're running the whole command as root, or
+    // unit tests writing to a tempdir). Falls through to sudo only
+    // when we hit EPERM/EACCES — keeps the test path + the
+    // "operator already root" path fast and prompt-free.
+    match write_atomic(&dest, body.as_bytes()) {
+        Ok(()) => return Ok(()),
+        Err(e)
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem
+            ) =>
+        {
+            // fall through to the sudo path below
+        }
+        Err(e) => return Err(format!("direct write: {e}")),
+    }
+
+    // Sudo fallback: stage to a private tempfile (that we can write
+    // without elevation), then `sudo cp` into the mount. Matches the
+    // pattern already used by `write_sidecar_via_sudo`.
+    use std::io::Write as _;
+    let mut staging = tempfile::Builder::new()
+        .prefix("aegis-sha256-")
+        .suffix(".txt")
+        .tempfile()
+        .map_err(|e| format!("staging tempfile: {e}"))?;
+    staging
+        .write_all(body.as_bytes())
+        .map_err(|e| format!("staging write: {e}"))?;
+    staging
+        .as_file()
+        .sync_all()
+        .map_err(|e| format!("staging sync: {e}"))?;
+    copy_with_sudo(staging.path(), &dest)?;
+    Ok(())
+}
+
+/// Atomically write `bytes` to `dest`: stage in a sibling tempfile
+/// (same parent dir so rename is an in-fs move), fsync, rename over
+/// the target. Either the sidecar exists completely with the new
+/// content or the old one (or none) remains — never a half-written
+/// file.
+fn write_atomic(dest: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let parent = dest
+        .parent()
+        .ok_or_else(|| std::io::Error::other("sidecar dest has no parent"))?;
+    let mut staged = tempfile::Builder::new()
+        .prefix(".aegis-sha256-staged-")
+        .tempfile_in(parent)?;
+    staged.write_all(bytes)?;
+    staged.as_file().sync_all()?;
+    staged.persist(dest).map_err(|e| e.error)?;
+    Ok(())
+}
+
+/// Compute the canonical `<iso>.sha256` sidecar path — matches what
+/// `iso-probe` looks for in its `find_expected_hash` + what
+/// `copy_classic_sidecars` copies.
+fn sha256_sidecar_path(iso_abs: &Path) -> PathBuf {
+    let mut p = iso_abs.to_path_buf();
+    let ext = p
+        .extension()
+        .map(|e| e.to_string_lossy().to_string())
+        .unwrap_or_default();
+    p.set_extension(if ext.is_empty() {
+        "sha256".to_string()
+    } else {
+        format!("{ext}.sha256")
+    });
+    p
+}
+
+/// Extract the hex digest from a sha256 sidecar body. Accepts either
+/// the bare-hex form or the coreutils `<hex>  <filename>` form.
+fn parse_sha256_sidecar(body: &str) -> Option<String> {
+    for line in body.lines() {
+        let token = line.split_whitespace().next()?;
+        if token.len() == 64 && token.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Some(token.to_ascii_lowercase());
+        }
+    }
+    None
 }
 
 /// Append the just-added ISO to the matching attestation receipt.
@@ -509,6 +851,13 @@ struct AddArgs {
     /// it correctly. Validated by [`validate_folder_name`] to reject
     /// path-traversal / reserved-char / exFAT-unsafe input.
     folder: Option<String>,
+    /// #479: `--scan` mode. When true, [`try_run_add`] bypasses the
+    /// copy-one-ISO path and instead walks `AEGIS_ISOS` to generate
+    /// missing `.sha256` sidecars for drag-and-dropped ISOs that
+    /// render as tier-2 (BareUnverified) in rescue-tui. The
+    /// positional argument (if any) is treated as the mount arg
+    /// instead of an ISO path.
+    scan: bool,
 }
 
 /// Parse the argv tail of `aegis-boot add`. Recognizes positional
@@ -523,6 +872,7 @@ fn parse_add_args(args: &[String]) -> Result<AddArgs, u8> {
     let mut version: Option<String> = None;
     let mut category: Option<String> = None;
     let mut folder: Option<String> = None;
+    let mut scan = false;
     let mut i = 0;
     while i < args.len() {
         let a = &args[i];
@@ -571,6 +921,9 @@ fn parse_add_args(args: &[String]) -> Result<AddArgs, u8> {
             s if s.starts_with("--folder=") => {
                 folder = Some(s["--folder=".len()..].to_string());
             }
+            "--scan" => {
+                scan = true;
+            }
             s if s.starts_with("--") => {
                 eprintln!("aegis-boot add: unknown option '{s}'");
                 return Err(2);
@@ -588,6 +941,43 @@ fn parse_add_args(args: &[String]) -> Result<AddArgs, u8> {
         }
         i += 1;
     }
+    // #479 --scan mode: the positional is (optional) mount arg, not an
+    // ISO path. If no positional was given, mount_arg stays None and
+    // resolve_mount auto-detects AEGIS_ISOS.
+    if scan {
+        // In scan mode, iso_path was being collected into the positional
+        // slot — treat it as the mount arg instead.
+        if let Some(p) = iso_path.as_ref() {
+            if mount_arg.is_none() {
+                mount_arg = Some(p.to_string_lossy().into_owned());
+            } else {
+                eprintln!(
+                    "aegis-boot add: --scan accepts a single <mount> argument; got \
+                     '{}' and '{}'",
+                    p.display(),
+                    mount_arg.as_deref().unwrap_or("")
+                );
+                return Err(2);
+            }
+        }
+        if description.is_some() || version.is_some() || category.is_some() || folder.is_some() {
+            eprintln!(
+                "aegis-boot add: --scan is incompatible with \
+                 --description / --version / --category / --folder"
+            );
+            return Err(2);
+        }
+        return Ok(AddArgs {
+            iso_path: PathBuf::new(), // unused in scan mode
+            mount_arg,
+            description: None,
+            version: None,
+            category: None,
+            folder: None,
+            scan: true,
+        });
+    }
+
     let Some(iso_path) = iso_path else {
         eprintln!("aegis-boot add: missing required <iso-file> argument");
         return Err(2);
@@ -605,6 +995,7 @@ fn parse_add_args(args: &[String]) -> Result<AddArgs, u8> {
         version,
         category,
         folder,
+        scan: false,
     })
 }
 
@@ -677,6 +1068,8 @@ fn print_add_help() {
     println!("                  [--folder NAME]");
     println!("                  [--description TEXT] [--version VER] [--category CAT]");
     println!();
+    println!("       aegis-boot add --scan [/dev/sdX | /mnt/aegis-isos]");
+    println!();
     println!("If the first arg is NOT a file on disk but IS a known catalog slug");
     println!("(e.g. 'ubuntu-24.04-live-server'), add fetches + verifies it first,");
     println!("then stages the cached copy — collapses 'fetch X && add <path>' (#352).");
@@ -690,6 +1083,13 @@ fn print_add_help() {
     println!("<iso>.aegis.toml so rescue-tui can show 'Network-install Debian 12'");
     println!("instead of the bare filename. The sidecar is unsigned cosmetic");
     println!("metadata — boot decisions still key off the sha256-attested manifest.");
+    println!();
+    println!("--scan (#479) walks AEGIS_ISOS looking for .iso files without .sha256");
+    println!("sidecars, streams each through sha256, and writes coreutils-compatible");
+    println!("sidecars so rescue-tui upgrades them from tier 2 (BareUnverified) to");
+    println!("tier 1 (OperatorAttested). Existing sidecars are verified but never");
+    println!("overwritten — a mismatch surfaces as a tamper signal instead. Minisig");
+    println!("sidecars can't be generated (would need the operator's private key).");
 }
 
 /// #352 UX-4: resolve the `<iso-or-slug>` positional arg to a file
@@ -1681,5 +2081,219 @@ mod tests {
         // error for typos like `add ubntu-24.04`.
         let got = resolve_iso_arg(Path::new("totally-not-in-catalog-zzz")).unwrap();
         assert_eq!(got, None);
+    }
+
+    // ---- #479 --scan mode -------------------------------------------
+
+    fn parse(args: &[&str]) -> Result<AddArgs, u8> {
+        let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        parse_add_args(&owned)
+    }
+
+    #[test]
+    fn parse_scan_with_no_positional_produces_scan_mode() {
+        let args = parse(&["--scan"]).unwrap();
+        assert!(args.scan);
+        assert!(args.mount_arg.is_none());
+    }
+
+    #[test]
+    fn parse_scan_treats_positional_as_mount_arg() {
+        let args = parse(&["--scan", "/dev/sda2"]).unwrap();
+        assert!(args.scan);
+        assert_eq!(args.mount_arg.as_deref(), Some("/dev/sda2"));
+    }
+
+    #[test]
+    fn parse_scan_rejects_copy_mode_flags() {
+        assert_eq!(parse(&["--scan", "--description", "x"]).unwrap_err(), 2);
+        assert_eq!(parse(&["--scan", "--folder", "x"]).unwrap_err(), 2);
+        assert_eq!(parse(&["--scan", "--version", "x"]).unwrap_err(), 2);
+        assert_eq!(parse(&["--scan", "--category", "x"]).unwrap_err(), 2);
+    }
+
+    #[test]
+    fn parse_scan_rejects_two_positionals() {
+        // `--scan` takes at most one positional (the mount arg).
+        assert_eq!(parse(&["--scan", "/dev/sda2", "/mnt/x"]).unwrap_err(), 2);
+    }
+
+    #[test]
+    fn sha256_sidecar_path_appends_extension() {
+        let p = sha256_sidecar_path(Path::new("/mnt/AEGIS_ISOS/ubuntu.iso"));
+        assert_eq!(p, PathBuf::from("/mnt/AEGIS_ISOS/ubuntu.iso.sha256"));
+    }
+
+    #[test]
+    fn sha256_sidecar_path_handles_extensionless_file() {
+        // No extension → .sha256 becomes the sole extension.
+        let p = sha256_sidecar_path(Path::new("/mnt/AEGIS_ISOS/no-ext"));
+        assert_eq!(p, PathBuf::from("/mnt/AEGIS_ISOS/no-ext.sha256"));
+    }
+
+    #[test]
+    fn parse_sha256_sidecar_accepts_bare_hex() {
+        let hex = "0".repeat(64);
+        assert_eq!(parse_sha256_sidecar(&hex).as_deref(), Some(hex.as_str()));
+    }
+
+    #[test]
+    fn parse_sha256_sidecar_accepts_coreutils_format() {
+        let hex = "a".repeat(64);
+        let body = format!("{hex}  ubuntu-24.04.iso\n");
+        assert_eq!(parse_sha256_sidecar(&body).as_deref(), Some(hex.as_str()));
+    }
+
+    #[test]
+    fn parse_sha256_sidecar_lowercases_hex() {
+        let hex = "A".repeat(64);
+        let out = parse_sha256_sidecar(&hex).unwrap();
+        assert_eq!(out, "a".repeat(64));
+    }
+
+    #[test]
+    fn parse_sha256_sidecar_rejects_short_or_non_hex() {
+        assert!(parse_sha256_sidecar("").is_none());
+        assert!(parse_sha256_sidecar("not-a-hash").is_none());
+        assert!(parse_sha256_sidecar(&"z".repeat(64)).is_none());
+        assert!(parse_sha256_sidecar(&"f".repeat(63)).is_none());
+    }
+
+    #[test]
+    fn short_hex_truncates_long_digests() {
+        let s = "a".repeat(64);
+        let out = short_hex(&s);
+        assert!(out.ends_with('…'));
+        assert_eq!(out.chars().filter(|c| *c == 'a').count(), 12);
+    }
+
+    #[test]
+    fn short_hex_passes_short_strings() {
+        assert_eq!(short_hex("abc"), "abc");
+        assert_eq!(short_hex("deadbeefdeadbe"), "deadbeefdeadbe");
+    }
+
+    #[test]
+    fn scan_summary_default_is_empty() {
+        let s = ScanSummary::default();
+        assert_eq!(s.total, 0);
+        assert!(s.upgraded.is_empty());
+        assert!(s.already_verified.is_empty());
+        assert!(s.tamper_flagged.is_empty());
+        assert!(s.minisig_missing.is_empty());
+        assert!(s.io_errors.is_empty());
+    }
+
+    #[test]
+    fn scan_for_upgrades_on_empty_mount_returns_empty_summary() {
+        let dir = tempfile::tempdir().unwrap();
+        let mount = Mount {
+            path: dir.path().to_path_buf(),
+            temporary: false,
+            device: None,
+        };
+        let summary = scan_for_upgrades(&mount);
+        assert_eq!(summary.total, 0);
+        assert!(summary.upgraded.is_empty());
+    }
+
+    #[test]
+    fn scan_for_upgrades_generates_sidecar_for_bare_iso() {
+        // Put a fake "ISO" (any bytes, iso-probe won't mount it here —
+        // scan_isos walks by extension, not by mounting).
+        let dir = tempfile::tempdir().unwrap();
+        let iso = dir.path().join("bare.iso");
+        std::fs::write(&iso, b"fake iso contents for hashing").unwrap();
+
+        let mount = Mount {
+            path: dir.path().to_path_buf(),
+            temporary: false,
+            device: None,
+        };
+        let summary = scan_for_upgrades(&mount);
+        assert_eq!(summary.total, 1);
+        assert_eq!(summary.upgraded.len(), 1);
+        assert_eq!(summary.upgraded[0].rel_path, "bare.iso");
+
+        // Sidecar should now exist with coreutils format.
+        let sidecar = dir.path().join("bare.iso.sha256");
+        let body = std::fs::read_to_string(&sidecar).unwrap();
+        assert!(body.contains("  bare.iso\n"));
+        assert_eq!(body.split_whitespace().next().unwrap().len(), 64);
+
+        // minisig is absent → entry shows up in minisig_missing too.
+        assert_eq!(summary.minisig_missing.len(), 1);
+    }
+
+    #[test]
+    fn scan_for_upgrades_skips_already_verified_isos() {
+        let dir = tempfile::tempdir().unwrap();
+        let iso = dir.path().join("ok.iso");
+        let bytes = b"content";
+        std::fs::write(&iso, bytes).unwrap();
+
+        // Pre-seed a matching .sha256 sidecar (sha256 of "content").
+        use sha2::{Digest, Sha256};
+        let hash = hex::encode(Sha256::digest(bytes));
+        let sidecar = dir.path().join("ok.iso.sha256");
+        std::fs::write(&sidecar, format!("{hash}  ok.iso\n")).unwrap();
+
+        let mount = Mount {
+            path: dir.path().to_path_buf(),
+            temporary: false,
+            device: None,
+        };
+        let summary = scan_for_upgrades(&mount);
+        assert_eq!(summary.total, 1);
+        assert!(summary.upgraded.is_empty());
+        assert_eq!(summary.already_verified.len(), 1);
+        assert!(summary.tamper_flagged.is_empty());
+    }
+
+    #[test]
+    fn scan_for_upgrades_flags_tampered_sidecars_without_overwriting() {
+        let dir = tempfile::tempdir().unwrap();
+        let iso = dir.path().join("forged.iso");
+        std::fs::write(&iso, b"real bytes").unwrap();
+
+        // Pre-seed a sidecar with the WRONG hash.
+        let wrong = "0".repeat(64);
+        let sidecar = dir.path().join("forged.iso.sha256");
+        std::fs::write(&sidecar, format!("{wrong}  forged.iso\n")).unwrap();
+
+        let mount = Mount {
+            path: dir.path().to_path_buf(),
+            temporary: false,
+            device: None,
+        };
+        let summary = scan_for_upgrades(&mount);
+        assert_eq!(summary.total, 1);
+        assert!(summary.upgraded.is_empty());
+        assert!(summary.already_verified.is_empty());
+        assert_eq!(summary.tamper_flagged.len(), 1);
+        assert_eq!(summary.tamper_flagged[0].expected, wrong);
+
+        // Sidecar must NOT have been overwritten — tamper protection.
+        let after = std::fs::read_to_string(&sidecar).unwrap();
+        assert!(after.contains(&wrong));
+    }
+
+    #[test]
+    fn scan_for_upgrades_tracks_minisig_missing_alongside_upgrade() {
+        // An ISO with no sidecars at all produces both an upgrade
+        // (sha256 written) AND a minisig_missing entry (we can't
+        // generate minisig without the operator's key).
+        let dir = tempfile::tempdir().unwrap();
+        let iso = dir.path().join("bare.iso");
+        std::fs::write(&iso, b"x").unwrap();
+
+        let mount = Mount {
+            path: dir.path().to_path_buf(),
+            temporary: false,
+            device: None,
+        };
+        let summary = scan_for_upgrades(&mount);
+        assert_eq!(summary.upgraded.len(), 1);
+        assert_eq!(summary.minisig_missing.len(), 1);
     }
 }
