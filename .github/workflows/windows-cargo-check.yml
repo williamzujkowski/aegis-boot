@@ -98,20 +98,13 @@ jobs:
         # API surface, serde wiring, clippy-gated code paths).
         run: cargo check -p aegis-bootctl --all-targets --locked
 
-      - name: cargo test — windows_direct_install module
-        # Runs only the ~70 tests under windows_direct_install::* —
-        # the 18 raw_write + 13 pipeline + 10 source_resolution + 14
-        # drive_enumeration + 15 flash_dispatcher tests that cover
-        # the #419 Windows surface directly. The full aegis-bootctl
-        # suite has ~5 pre-existing Linux-path-biased tests (look for
-        # `ls` in PATH, use POSIX /tmp paths, etc.) that fail on
-        # Windows for reasons unrelated to this workflow's signal.
-        # A full-suite run is tracked as #502.
-        #
+      - name: cargo test (full aegis-bootctl suite)
+        # Full suite — #502 fixed the 5 Linux-biased tests (colon
+        # in filenames, `ls` probe, HOME fallback for cache dir).
         # Skips the `#[ignore]`-gated raw_write_roundtrip integration
         # test — that one needs a real scratch disk and is exercised
         # manually on the VM.
-        run: cargo test -p aegis-bootctl windows_direct_install --locked
+        run: cargo test -p aegis-bootctl --locked
 
       - name: cargo clippy (Windows-native lint)
         # Some clippy lints (struct_excessive_bools, borrow_as_ptr

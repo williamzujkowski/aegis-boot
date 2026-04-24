@@ -1025,8 +1025,12 @@ mod tests {
           "failure_class": "kexec_failure",
           "failure_hash": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
         }"#;
+        // Filename uses dashes not colons — NTFS forbids `:` in
+        // paths (reserved for alternate data streams). The
+        // collected_at JSON field still carries the ISO-8601 colon
+        // form; only the on-disk filename is Windows-safe.
         std::fs::write(
-            log_dir.join("2026-04-20T12:00:00Z-abcdef012345.json"),
+            log_dir.join("2026-04-20T12-00-00Z-abcdef012345.json"),
             valid,
         )
         .unwrap();

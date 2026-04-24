@@ -1378,15 +1378,23 @@ mod tests {
 
     #[test]
     fn check_command_present_with_pkg_finds_existing_binary() {
-        // `ls` is present on every supported platform's PATH — use
-        // it as a known-good probe to verify the Pass path of the
-        // pkg-aware variant.
+        // Known-good probe per platform — `ls` is universal on
+        // POSIX; `cmd.exe` is present on every Windows install. The
+        // `.exe` suffix is required because `crate::cmd_path::which`
+        // does not currently auto-append `PATHEXT` extensions on
+        // Windows (tracked as a separate improvement — the doctor
+        // surface for Windows operators is still a gap).
+        let probe = if cfg!(target_os = "windows") {
+            "cmd.exe"
+        } else {
+            "ls"
+        };
         let mut r = Report::new();
-        check_command_present_with_pkg(&mut r, "ls", "coreutils", "canary");
+        check_command_present_with_pkg(&mut r, probe, "coreutils", "canary");
         assert_eq!(r.rows.len(), 1);
         assert!(
             matches!(r.rows[0].0, Verdict::Pass),
-            "expected Pass for `ls`, got {:?}",
+            "expected Pass for `{probe}`, got {:?}",
             r.rows[0].0
         );
         assert!(r.rows[0].2.contains("canary"));
