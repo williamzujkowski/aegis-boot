@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "aegis-bootctl"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "aegis-wire-formats",
  "hex",
@@ -20,7 +20,7 @@ dependencies = [
 
 [[package]]
 name = "aegis-fitness"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -28,7 +28,7 @@ dependencies = [
 
 [[package]]
 name = "aegis-wire-formats"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "schemars",
  "serde",
@@ -549,7 +549,7 @@ dependencies = [
 
 [[package]]
 name = "iso-parser"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -562,7 +562,7 @@ dependencies = [
 
 [[package]]
 name = "iso-probe"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "hex",
  "iso-parser",
@@ -614,7 +614,7 @@ dependencies = [
 
 [[package]]
 name = "kexec-loader"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "libc",
  "thiserror",
@@ -952,7 +952,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "rescue-tui"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "aegis-wire-formats",
  "crossterm",
