@@ -59,7 +59,30 @@ chmod +x aegis-boot-aarch64-apple-darwin
 
 What works on macOS today: `aegis-boot list`, `aegis-boot doctor`, drive detection, and `aegis-boot flash --image PATH` (against a pre-built `.img` fetched via `aegis-boot fetch-image`). Image *building* still requires Linux — see the Quickstart table in [README.md](../README.md).
 
-macOS x86_64 (Intel) and Windows native builds remain deferred — see [#365](https://github.com/aegis-boot/aegis-boot/issues/365) for the full cross-platform roadmap.
+macOS x86_64 (Intel) pre-built binaries remain deferred — see [#365](https://github.com/aegis-boot/aegis-boot/issues/365).
+
+### Windows
+
+**Recommended path — [Rufus](https://rufus.ie) + the pre-built `.img`:**
+
+1. Download the signed `aegis-boot-<version>.img` from [GitHub Releases](https://github.com/aegis-boot/aegis-boot/releases).
+2. Verify the signature with the release-page checksum / cosign bundle (see [§ Verification](#verification)).
+3. Open Rufus, select the `.img`, select your USB stick, click Start.
+4. Done — the stick is an aegis-boot stick. Plug it into the target machine and boot.
+
+No Windows CLI install needed for the typical operator path. Rufus is battle-tested (100M+ downloads), handles every quirky Windows storage edge case we'd otherwise have to reimplement, and is already the tool Windows sysadmins reach for.
+
+**Advanced path — native Windows CLI (CI / automation):**
+
+If you need to script flashes or run in CI, `aegis-boot` compiles on Windows:
+
+```powershell
+# From an elevated PowerShell with rustup installed:
+cargo install --path crates/aegis-cli
+aegis-boot flash --direct-install 1 --out-dir .\out --yes
+```
+
+The Windows `flash --direct-install` path uses native `diskpart` + `Format-Volume` + `windows-rs` direct-disk writes ([#419](https://github.com/aegis-boot/aegis-boot/issues/419) epic, closed 2026-04-24). Pre-built `aegis-boot.exe` releases are tracked in [#365](https://github.com/aegis-boot/aegis-boot/issues/365) but not currently prioritized — most operators shouldn't need the CLI on Windows.
 
 ### NixOS / Nix
 

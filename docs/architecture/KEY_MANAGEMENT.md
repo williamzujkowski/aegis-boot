@@ -156,7 +156,7 @@ The correct rotation trigger is **evidence of compromise**: maintainer laptop st
 
 ### 3.5 Why no CRL — and why a Key Epoch counter instead (rev 2)
 
-A traditional CRL would need a pinned URL (new trust problem), a signature over the CRL (new key-custody problem), operator-side fetch logic (new code, new failure mode), and a "what if the CRL URL is down?" offline-verify answer. All of this to solve a problem — "operator runs old binary whose key was revoked" — that the existing update mechanism (`curl | sh`, `brew upgrade`, `winget upgrade`) already solves. Rev 1 stopped there.
+A traditional CRL would need a pinned URL (new trust problem), a signature over the CRL (new key-custody problem), operator-side fetch logic (new code, new failure mode), and a "what if the CRL URL is down?" offline-verify answer. All of this to solve a problem — "operator runs old binary whose key was revoked" — that the existing update mechanism (`curl | sh`, `brew upgrade`, or re-downloading the signed `.img` from GitHub Releases and reflashing with Rufus on Windows) already solves. Rev 1 stopped there.
 
 The first consensus vote surfaced a real gap rev 1 missed: **revocation circularity**. If the private key leaks, the attacker can sign a malicious `v9.9.9` binary that ships with replayed-old-pubkey logic, or that silently accepts rollback. Air-gapped operators pulling that build can't distinguish it from a legitimate rotation. A CRL doesn't actually fix this (see above), but *something* has to — "just ship a new binary" breaks down the moment the attacker can also ship a new binary.
 

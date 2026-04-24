@@ -4,6 +4,15 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 
 ## [Unreleased]
 
+### Anti-sprawl: Rufus as the recommended Windows path
+
+Rescoped the Windows-operator story after a maintainer pushback. The recommended path on Windows is now **[Rufus](https://rufus.ie) + the pre-built `aegis-boot-<version>.img`** — Rufus is battle-tested on 100M+ installs for exactly this job and is already the tool Windows operators reach for; there's no good reason to reimplement it.
+
+- **README Platform-status table + `docs/INSTALL.md § Windows` + `docs/CLI.md § flash`** updated so Rufus is the primary recommendation. `aegis-boot flash --direct-install` on Windows remains supported (the #419 epic's code is still shipped + tested) but is demoted to an advanced path for CLI-first operators + CI automation.
+- **`winget-manifests/` scaffolding deleted.** Templates for publishing `aegis-boot.exe` via `winget install` were un-wired, un-tested, and solved a problem (getting the CLI onto Windows) that the new recommendation ("just use Rufus + the `.img`") no longer cares about.
+- **`docs/design/windows-iso-boot.md` rescoped** to L1-only (rescue-tui prose panel pointing at Rufus when a Win11 ISO is detected). L2 (`aegis-boot flash --windows-target`) dropped — it would have reimplemented what Rufus already does better. The design doc's consensus-vote record is preserved along with the follow-up "did the vote miss the build-vs-buy question?" findings, which triggered [nexus-agents#2185](https://github.com/williamzujkowski/nexus-agents/issues/2185) (add Scope Steward / Product Owner role).
+- **Epic #512 closed** — the original multi-phase Windows-ISO-boot epic no longer has a real implementation target; the only work left is a small L1 PR (rescue-tui prose).
+
 ### Windows-native clippy promoted to strict (follow-up to #501)
 
 Cleared the 27 pre-existing `cfg(target_os = "windows")` clippy findings in the `windows_direct_install::*` code paths, then removed the `continue-on-error` flag on the `windows-cargo-check.yml` clippy step. Any new Windows-gated clippy finding now fails CI. Notable semantic fixes along the way:

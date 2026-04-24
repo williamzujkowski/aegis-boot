@@ -175,6 +175,8 @@ Writes a freshly built `aegis-boot.img` to a USB stick. Two backends: the defaul
 
 ### Usage
 
+**Windows operators** — the recommended path is **[Rufus](https://rufus.ie) + the pre-built `.img`** ([see docs/INSTALL.md § Windows](./INSTALL.md#windows)). The `aegis-boot flash --direct-install` path below works on Windows too but is optional; Rufus is battle-tested and handles Windows storage edge cases we'd otherwise have to reimplement.
+
 ```bash
 # Linux — mkusb.sh + dd default
 sudo aegis-boot flash             # auto-detect removable drives
@@ -183,7 +185,8 @@ sudo aegis-boot flash /dev/sdc    # explicit device
 # Linux — in-place partition + format + stage (faster)
 sudo aegis-boot flash /dev/sdc --direct-install
 
-# Windows (#419 epic, closed 2026-04-24) — must run elevated
+# Windows, advanced (#419 epic, closed 2026-04-24) — must run elevated
+# Most Windows operators should use Rufus + the pre-built .img instead.
 aegis-boot flash --direct-install 1 --out-dir ./out --yes
 aegis-boot flash --direct-install PhysicalDrive1 --out-dir ./out --yes
 
