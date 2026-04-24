@@ -35,6 +35,7 @@
 
 mod attest;
 mod bug_report;
+mod bundle_cache;
 mod bundle_verify;
 mod catalog;
 mod cmd_path;
