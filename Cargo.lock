@@ -28,6 +28,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "aegis-trust"
+version = "0.17.0"
+dependencies = [
+ "minisign",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "aegis-wire-formats"
 version = "0.17.0"
 dependencies = [
