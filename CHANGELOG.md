@@ -4,6 +4,33 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 
 ## [Unreleased]
 
+### ADR 0002 trust anchor + runtime signed-chain downloader (closes #417, #421)
+
+Landed the full ADR 0002 key-management chain in six PRs: a new `aegis-trust` crate, `doctor` surface, a programmatic epoch-history table, the `BundleManifest` wire contract, the verify + cache modules, and the `aegis-boot fetch-trust-chain` subcommand that ties it all together. Cross-platform direct-install now has the trust primitive it needs before it can flash.
+
+- **`aegis-trust` crate (PR #516 / #421 PR A).** New ~400-LOC workspace member implementing the `TrustAnchor::verify_with_epoch` primitive from ADR 0002 §3.4–3.5 — embeds `keys/historical-anchors.json` + each epoch's pubkey via `include_str!`, surfaces `MIN_REQUIRED_EPOCH` from `build.rs`, and maintains the monotonic `seen-epoch` state file at `$XDG_STATE_HOME/aegis-boot/trust/seen-epoch`. No minisig-verify logic in `aegis-cli` anymore — all callers go through this crate.
+- **`aegis-boot doctor` trust rows (PR #517 / #421 PR B).** Three new rows in doctor's host-checks section: `trust: binary epoch floor` (surfaces `MIN_REQUIRED_EPOCH` + anchor count), `trust: seen-epoch` (surfaces the local counter + state-file path), `trust: drift` (Warn when local `seen > MIN_REQUIRED`, prompting operator to upgrade the binary). Fail paths carry remediation text.
+- **Trust-anchors docgen (PR #521, bonus).** New `trust-anchors-docgen` binary reads `keys/historical-anchors.json` + `keys/canonical-epoch.json` and renders the epoch table in `docs/architecture/KEY_MANAGEMENT.md` §3.6 via a `<!-- trust-anchors:BEGIN:EPOCH_TABLE -->` marker. CI drift-check fails any PR that rotates keys without regenerating the doc. Also fixes a stale code fence in §3.6 that predated the real `EpochEntry` schema.
+- **`BundleManifest` wire type (PR #522 / #417 Phase 1).** New `aegis_wire_formats::BundleManifest` + `BundleFileEntry` + `BundleFileRole` closed-set enum. Schema pinned at `BUNDLE_MANIFEST_SCHEMA_VERSION = 1`; JSON Schema auto-generated into `docs/reference/schemas/aegis-boot-bundle-manifest.schema.json` via `aegis-wire-formats-schema-docgen`. 6 new round-trip / field-order / serde-default tests.
+- **`bundle_verify` module (PR #523 / #417 Phase 2).** Composes wire-type decode + epoch-aware minisig verify + shape validation (schema version, path-traversal rejection, sha256 shape, non-empty file list). 17 new tests covering every error variant.
+- **`bundle_cache` module (PR #524 / #417 Phase 3a).** Cache layer with `$XDG_CACHE_HOME/aegis-boot/signed-chain/<bundle_version>/` layout, content-addressed by sha256 (partial caches self-heal on re-fetch). Downloader abstraction via `trait Downloader` so the module compiles and tests without network deps. 14 new tests — including one that asserts via call-log inspection that verify fires *before* any file URL is requested.
+- **`aegis-boot fetch-trust-chain` subcommand (PR #525 / #417 Phase 3b+3c).** Operator-facing surface: `aegis-boot fetch-trust-chain <origin-url>`. Implements the `Downloader` trait via curl subprocess (same pattern as `fetch-image` — zero new network deps). stdout is the verified cache dir path (composable via `$(…)`); stderr is the per-role file inventory + NEXT ACTION hints on failure. Advances the monotonic `seen_epoch` on success. CLI + man page + synopsis regenerated; `SUBCOMMANDS` list updated in `cli-docgen`. Closes #417.
+
+### L1 Windows ISO prose panel — Rufus redirect in rescue-tui (PR #518)
+
+When `rescue-tui` meets a `Distribution::Windows` ISO with `Quirk::NotKexecBootable`, the tier-5 "BOOT BLOCKED / Boot is disabled" info-pane body now renders an actionable 3-part panel: Windows-by-design refusal, 3-step Rufus install recipe with `https://rufus.ie`, and a list of the bootable Linux ISOs already on the stick (or a "drop one into AEGIS_ISOS/" fallback when none are present). The verdict label stays `BOOT BLOCKED` — only the body swaps. Final L1 scope from `docs/design/windows-iso-boot.md § Revised recommendation` after a maintainer anti-sprawl pushback dropped the originally-paired L2 (`aegis-boot flash --windows-target`).
+
+- **3 new unit tests** covering the Rufus-URL header, the bootable-Linux listing, and the AEGIS_ISOS/ fallback.
+- **`docs/HOW_IT_WORKS.md § What aegis-boot does NOT do`** gets a new bullet naming the Windows redirect so docs-first readers land in the same place as rescue-tui-first ones.
+
+### `rescue-tui` clippy baseline + dedicated CI job (PR #520, closes #519)
+
+Cleared the 14 pre-existing clippy errors across `docgen.rs`, `render.rs`, `state.rs`, `verdict.rs`, and `bin/tui_screenshots.rs` that were hiding because `.github/workflows/ci.yml`'s `Test` job scopes its clippy run to `crates/iso-parser` only. New dedicated `rescue-tui clippy` job mirrors the `aegis-cli` pattern so any future drift fails a PR. Source-level fixes were mostly mechanical: `map_or_else` conversions, doc backtick additions, a single-pattern merge of two identical-body match arms, and a narrow `#[allow(clippy::too_many_lines)]` on `run_text_mode` with prose rationale (the text-mode state-machine pairs each `ANN:` stderr with a stdin prompt, which doesn't split cleanly).
+
+### Release workflow least-privilege (PR #526, dismisses Scorecard `Token-Permissions`)
+
+Narrowed `.github/workflows/release.yml`'s top-level permissions from `contents: write` to `contents: read`, keeping `id-token: write` at the workflow level (cosign keyless signing applies to every build job). The three jobs that genuinely need write — `build-and-release`, `build-macos-arm64`, `bump-brew-formula` — now each opt in explicitly via their own `permissions:` block. A future job added to this workflow fails closed unless it explicitly asks for write. The two Scorecard `Token-Permissions` alerts (137, 138) that flagged the job-level writes as load-bearing were dismissed as "false positive" with an explanatory comment — those grants can't be narrowed further without breaking the release pipeline.
+
 ### Homebrew shrink — macOS-only bottle, monthly (not weekly) CI
 
 Ran a `consensus_vote` on whether to drop Homebrew support entirely (now that `.img` + Rufus is the Windows story + `curl | sh` covers Linux). Panel voted 5/6 for **shrink**, not drop (Option S). Key reasoning: `brew install` / `brew upgrade` / `brew uninstall` are macOS operator muscle memory that `curl | sh` doesn't replicate cleanly, and the Linux brew bottle is a niche-of-a-niche that's strictly dominated by apt/dnf/cargo/install-sh.
