@@ -68,8 +68,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use aegis_wire_formats::{
-    AttestListReport, Attestation, CliError, CompatReport, CompatSubmitReport, DoctorReport,
-    FailureMicroreport, ListReport, Manifest, RecommendReport, UpdateReport, VerifyReport, Version,
+    AttestListReport, Attestation, BundleManifest, CliError, CompatReport, CompatSubmitReport,
+    DoctorReport, FailureMicroreport, ListReport, Manifest, RecommendReport, UpdateReport,
+    VerifyReport, Version,
 };
 use schemars::schema_for;
 
@@ -148,7 +149,16 @@ fn targets() -> Vec<Target> {
             relative_path: "docs/reference/schemas/aegis-boot-failure-microreport.schema.json",
             render: render_failure_microreport_schema,
         },
+        Target {
+            name: "BundleManifest",
+            relative_path: "docs/reference/schemas/aegis-boot-bundle-manifest.schema.json",
+            render: render_bundle_manifest_schema,
+        },
     ]
+}
+
+fn render_bundle_manifest_schema() -> Result<String, String> {
+    render_pretty(&schema_for!(BundleManifest))
 }
 
 fn render_manifest_schema() -> Result<String, String> {

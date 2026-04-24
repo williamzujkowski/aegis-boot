@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BundleManifest",
+  "description": "Signed index over the shim/grub/kernel/initrd/grub.cfg archive\nthat cross-platform direct-install downloads at runtime. See\nmodule-level comment above for the overall download flow.\n\nSerialized field order matches declaration order — the detached\nminisig is computed over `serde_json::to_vec(&BundleManifest)`,\nso any consumer that re-emits this struct must preserve the\nserialization order. The verifier treats [`Self::files`] as\na closed set: a file present in the archive but not in the\nmanifest is a verification failure.",
+  "type": "object",
+  "properties": {
+    "bundle_version": {
+      "description": "Bundle version string — typically `\"<aegis-boot-version>+bundle.<N>\"`\nwhere `<N>` bumps for a re-publish of the same chain (e.g.\na shim re-build without a new binary release). Informational;\nnot a trust anchor.",
+      "type": "string"
+    },
+    "files": {
+      "description": "Closed set of files the bundle publishes. Order matches the\nrole order the flasher writes them in (shim → grub →\ngrub.cfg → kernel → initrd); a verifier that needs a\nspecific file looks it up by [`BundleFileEntry::role`] not\nby index.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/BundleFileEntry"
+      }
+    },
+    "generated_at": {
+      "description": "RFC3339 timestamp the maintainer generated the manifest at.\nInformational — the verifier does not treat it as a time\nsource (clock-skew on rescue hardware makes that unsafe).",
+      "type": "string"
+    },
+    "key_epoch": {
+      "description": "ADR 0002 epoch of the key that signed this manifest. The\nverifier rejects if `key_epoch < max(MIN_REQUIRED_EPOCH,\nseen_epoch)` even if the signature itself validates against\na historical anchor. Defends against replay of a pre-rotation\nmanifest after a key compromise.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "note": {
+      "description": "Free-text maintainer note (e.g. \"Rebuilt against\nshim-signed 15.8-0ubuntu3; CVE-2025-1234 picked up\"). Not\nsecurity-relevant; surfaces in `aegis-boot doctor` +\nrelease notes.",
+      "type": "string",
+      "default": ""
+    },
+    "origin_url": {
+      "description": "HTTPS origin the bundle was published from (e.g.\n`https://github.com/aegis-boot/aegis-boot/releases/download/v0.17.0/`).\nEach [`BundleFileEntry::path`] is interpreted relative to\nthis URL. Recorded so a stored/cached manifest is\nself-describing — a later re-download can re-resolve files\nwithout a second config source.",
+      "type": "string"
+    },
+    "schema_version": {
+      "description": "Wire-format version. See [`BUNDLE_MANIFEST_SCHEMA_VERSION`].",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "schema_version",
+    "key_epoch",
+    "bundle_version",
+    "generated_at",
+    "origin_url",
+    "files"
+  ],
+  "$defs": {
+    "BundleFileEntry": {
+      "description": "A single file inside a [`BundleManifest`].",
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Archive-relative path (e.g. `\"shim/shimx64.efi\"`). Joined\nwith [`BundleManifest::origin_url`] to form the download URL.\nMust not contain `..` or leading `/` — the flasher rejects\nsuch paths to prevent archive-directory-traversal.",
+          "type": "string"
+        },
+        "role": {
+          "description": "Role this file plays in the signed chain. Drives the\ntarget path the flasher writes it to on the ESP.",
+          "$ref": "#/$defs/BundleFileRole"
+        },
+        "sha256": {
+          "description": "Lowercase hex sha256 of the file body as downloaded. The\nflasher computes the same hash over the downloaded bytes and\nrejects on mismatch.",
+          "type": "string"
+        },
+        "size_bytes": {
+          "description": "File size in bytes. Redundant with `sha256` but cheap to\ncheck first — the flasher can reject an obviously-wrong\ndownload without reading the full body.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "role",
+        "path",
+        "sha256",
+        "size_bytes"
+      ]
+    },
+    "BundleFileRole": {
+      "description": "Signed-chain file roles. Drives the ESP target path the flasher\nwrites each file to. Serialized as lowercase strings\n(`\"shim\"`, `\"grub\"`, `\"kernel\"`, `\"initrd\"`, `\"grub_cfg\"`) so the\non-wire shape matches the existing string-literal convention in\n`aegis-cli/src/update.rs` without a schema-version bump if new\nroles are added later.",
+      "oneOf": [
+        {
+          "description": "First-stage bootloader (`shimx64.efi`). Verified by firmware\nagainst the Microsoft 3rd-party CA chain.",
+          "type": "string",
+          "const": "shim"
+        },
+        {
+          "description": "Second-stage bootloader (`grubx64.efi`). Verified by shim\nagainst the embedded Debian CA.",
+          "type": "string",
+          "const": "grub"
+        },
+        {
+          "description": "Linux kernel image. Verified by grub.",
+          "type": "string",
+          "const": "kernel"
+        },
+        {
+          "description": "Initial ramdisk. Hashed by the manifest; the kernel-command\nline plus signed initrd-hash pattern protects against swap.",
+          "type": "string",
+          "const": "initrd"
+        },
+        {
+          "description": "`grub.cfg` loaded by grub at boot time.",
+          "type": "string",
+          "const": "grub_cfg"
+        }
+      ]
+    }
+  }
+}

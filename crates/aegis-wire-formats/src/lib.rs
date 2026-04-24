@@ -148,6 +148,17 @@ pub const CLI_ERROR_SCHEMA_VERSION: u32 = 1;
 /// classified error code + an opaque hash of the full error text.
 pub const FAILURE_MICROREPORT_SCHEMA_VERSION: u32 = 1;
 
+/// Locked schema version for the [`BundleManifest`] — the signed
+/// index written alongside the shim/grub/kernel/initrd/grub.cfg
+/// archive that `aegis-boot` downloads at runtime on macOS + Windows
+/// direct-install paths. Per ADR 0002 §3.6 + [#417] + [#367] Phase D.
+/// Independent of [`SCHEMA_VERSION`] — either contract can advance
+/// without the other.
+///
+/// [#417]: https://github.com/aegis-boot/aegis-boot/issues/417
+/// [#367]: https://github.com/aegis-boot/aegis-boot/issues/367
+pub const BUNDLE_MANIFEST_SCHEMA_VERSION: u32 = 1;
+
 /// Top-level manifest body. Serialized field order matches the
 /// declaration order below — relied on for canonical JSON stability
 /// (the signature is computed over `serde_json::to_vec(&Manifest)`).
@@ -1210,6 +1221,124 @@ pub struct RecommendEntry {
     pub purpose: String,
 }
 
+// -----------------------------------------------------------------
+// Bundle manifest (ADR 0002 §3.6 + #417 + #367 Phase D).
+//
+// The on-ESP [`Manifest`] above describes a flashed stick. The
+// [`BundleManifest`] below describes the signed-chain archive that
+// `aegis-boot` downloads at runtime on macOS + Windows hosts
+// (Rufus-style `DownloadSignedFile` flow, but verified against the
+// epoch-aware trust anchor in `aegis-trust`). The host downloads:
+//
+//   1. `bundle-manifest.json`        — serialized `BundleManifest`
+//   2. `bundle-manifest.json.minisig` — detached sig by the active
+//                                       aegis-boot maintainer key
+//
+// The minisig verifies via `aegis_trust::TrustAnchor::verify_with_epoch`
+// against `BundleManifest::key_epoch`; then each `BundleFileEntry`
+// guides the flasher (download file, verify sha256 matches the
+// manifest entry, write to the target ESP at the role-specific
+// path). A single signature thus gates the whole chain.
+// -----------------------------------------------------------------
+
+/// Signed index over the shim/grub/kernel/initrd/grub.cfg archive
+/// that cross-platform direct-install downloads at runtime. See
+/// module-level comment above for the overall download flow.
+///
+/// Serialized field order matches declaration order — the detached
+/// minisig is computed over `serde_json::to_vec(&BundleManifest)`,
+/// so any consumer that re-emits this struct must preserve the
+/// serialization order. The verifier treats [`Self::files`] as
+/// a closed set: a file present in the archive but not in the
+/// manifest is a verification failure.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct BundleManifest {
+    /// Wire-format version. See [`BUNDLE_MANIFEST_SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// ADR 0002 epoch of the key that signed this manifest. The
+    /// verifier rejects if `key_epoch < max(MIN_REQUIRED_EPOCH,
+    /// seen_epoch)` even if the signature itself validates against
+    /// a historical anchor. Defends against replay of a pre-rotation
+    /// manifest after a key compromise.
+    pub key_epoch: u32,
+    /// Bundle version string — typically `"<aegis-boot-version>+bundle.<N>"`
+    /// where `<N>` bumps for a re-publish of the same chain (e.g.
+    /// a shim re-build without a new binary release). Informational;
+    /// not a trust anchor.
+    pub bundle_version: String,
+    /// RFC3339 timestamp the maintainer generated the manifest at.
+    /// Informational — the verifier does not treat it as a time
+    /// source (clock-skew on rescue hardware makes that unsafe).
+    pub generated_at: String,
+    /// HTTPS origin the bundle was published from (e.g.
+    /// `https://github.com/aegis-boot/aegis-boot/releases/download/v0.17.0/`).
+    /// Each [`BundleFileEntry::path`] is interpreted relative to
+    /// this URL. Recorded so a stored/cached manifest is
+    /// self-describing — a later re-download can re-resolve files
+    /// without a second config source.
+    pub origin_url: String,
+    /// Closed set of files the bundle publishes. Order matches the
+    /// role order the flasher writes them in (shim → grub →
+    /// grub.cfg → kernel → initrd); a verifier that needs a
+    /// specific file looks it up by [`BundleFileEntry::role`] not
+    /// by index.
+    pub files: Vec<BundleFileEntry>,
+    /// Free-text maintainer note (e.g. "Rebuilt against
+    /// shim-signed 15.8-0ubuntu3; CVE-2025-1234 picked up"). Not
+    /// security-relevant; surfaces in `aegis-boot doctor` +
+    /// release notes.
+    #[serde(default)]
+    pub note: String,
+}
+
+/// A single file inside a [`BundleManifest`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct BundleFileEntry {
+    /// Role this file plays in the signed chain. Drives the
+    /// target path the flasher writes it to on the ESP.
+    pub role: BundleFileRole,
+    /// Archive-relative path (e.g. `"shim/shimx64.efi"`). Joined
+    /// with [`BundleManifest::origin_url`] to form the download URL.
+    /// Must not contain `..` or leading `/` — the flasher rejects
+    /// such paths to prevent archive-directory-traversal.
+    pub path: String,
+    /// Lowercase hex sha256 of the file body as downloaded. The
+    /// flasher computes the same hash over the downloaded bytes and
+    /// rejects on mismatch.
+    pub sha256: String,
+    /// File size in bytes. Redundant with `sha256` but cheap to
+    /// check first — the flasher can reject an obviously-wrong
+    /// download without reading the full body.
+    pub size_bytes: u64,
+}
+
+/// Signed-chain file roles. Drives the ESP target path the flasher
+/// writes each file to. Serialized as lowercase strings
+/// (`"shim"`, `"grub"`, `"kernel"`, `"initrd"`, `"grub_cfg"`) so the
+/// on-wire shape matches the existing string-literal convention in
+/// `aegis-cli/src/update.rs` without a schema-version bump if new
+/// roles are added later.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum BundleFileRole {
+    /// First-stage bootloader (`shimx64.efi`). Verified by firmware
+    /// against the Microsoft 3rd-party CA chain.
+    Shim,
+    /// Second-stage bootloader (`grubx64.efi`). Verified by shim
+    /// against the embedded Debian CA.
+    Grub,
+    /// Linux kernel image. Verified by grub.
+    Kernel,
+    /// Initial ramdisk. Hashed by the manifest; the kernel-command
+    /// line plus signed initrd-hash pattern protects against swap.
+    Initrd,
+    /// `grub.cfg` loaded by grub at boot time.
+    GrubCfg,
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -2156,5 +2285,141 @@ mod tests {
             body.contains(r#"\"/dev/sdX\""#),
             "embedded quotes must be escaped: {body}"
         );
+    }
+
+    // ---- #417 Phase 1: BundleManifest wire format ------------------------
+
+    fn sample_bundle_manifest() -> BundleManifest {
+        BundleManifest {
+            schema_version: BUNDLE_MANIFEST_SCHEMA_VERSION,
+            key_epoch: 1,
+            bundle_version: "aegis-boot 0.17.0+bundle.1".to_string(),
+            generated_at: "2026-04-24T18:00:00-04:00".to_string(),
+            origin_url:
+                "https://github.com/aegis-boot/aegis-boot/releases/download/v0.17.0/bundle/"
+                    .to_string(),
+            files: vec![
+                BundleFileEntry {
+                    role: BundleFileRole::Shim,
+                    path: "shim/shimx64.efi".to_string(),
+                    sha256: "a".repeat(64),
+                    size_bytes: 940_320,
+                },
+                BundleFileEntry {
+                    role: BundleFileRole::Grub,
+                    path: "grub/grubx64.efi".to_string(),
+                    sha256: "b".repeat(64),
+                    size_bytes: 2_468_320,
+                },
+                BundleFileEntry {
+                    role: BundleFileRole::GrubCfg,
+                    path: "grub/grub.cfg".to_string(),
+                    sha256: "c".repeat(64),
+                    size_bytes: 2_048,
+                },
+                BundleFileEntry {
+                    role: BundleFileRole::Kernel,
+                    path: "kernel/vmlinuz-aegis".to_string(),
+                    sha256: "d".repeat(64),
+                    size_bytes: 14_213_120,
+                },
+                BundleFileEntry {
+                    role: BundleFileRole::Initrd,
+                    path: "kernel/initrd-aegis.img".to_string(),
+                    sha256: "e".repeat(64),
+                    size_bytes: 48_219_648,
+                },
+            ],
+            note: "Initial Epoch 1 bundle.".to_string(),
+        }
+    }
+
+    #[test]
+    fn bundle_manifest_round_trips_json() {
+        // The detached minisig is computed over to_vec(), so the
+        // deserialize→serialize cycle must be bit-for-bit stable
+        // for any verifier that re-emits on disk.
+        let orig = sample_bundle_manifest();
+        let body = serde_json::to_string(&orig).expect("serialize");
+        let parsed: BundleManifest = serde_json::from_str(&body).expect("parse");
+        assert_eq!(orig, parsed);
+    }
+
+    #[test]
+    fn bundle_file_role_uses_snake_case_on_wire() {
+        // The grub.cfg role in particular must not serialize as
+        // "grubCfg" or "GrubCfg" — the on-wire name is the contract
+        // third-party verifiers rely on, and they'll case-match.
+        let body = serde_json::to_string(&BundleFileRole::GrubCfg).expect("serialize");
+        assert_eq!(body, "\"grub_cfg\"");
+        let body = serde_json::to_string(&BundleFileRole::Shim).expect("serialize");
+        assert_eq!(body, "\"shim\"");
+    }
+
+    #[test]
+    fn bundle_manifest_field_order_matches_declaration() {
+        // The minisig-over-to_vec() requirement means serialized
+        // field order is part of the contract. Regressions here
+        // would silently invalidate every previously-signed
+        // manifest.
+        let body = serde_json::to_string(&sample_bundle_manifest()).expect("serialize");
+        let expected_order = [
+            "schema_version",
+            "key_epoch",
+            "bundle_version",
+            "generated_at",
+            "origin_url",
+            "files",
+            "note",
+        ];
+        let mut last = 0usize;
+        for field in expected_order {
+            let needle = format!("\"{field}\"");
+            let pos = body
+                .find(&needle)
+                .unwrap_or_else(|| panic!("expected field {field} in serialized manifest: {body}"));
+            assert!(
+                pos >= last,
+                "field {field} appeared out of declaration order in: {body}"
+            );
+            last = pos;
+        }
+    }
+
+    #[test]
+    fn bundle_manifest_note_defaults_to_empty() {
+        // Omitting `note` on decode is explicitly supported (the
+        // field has `#[serde(default)]`). Guards against an older
+        // signer that predates the note field.
+        let body = serde_json::to_string(&sample_bundle_manifest())
+            .expect("serialize")
+            .replace(",\"note\":\"Initial Epoch 1 bundle.\"", "");
+        let parsed: BundleManifest = serde_json::from_str(&body).expect("parse");
+        assert_eq!(parsed.note, "");
+    }
+
+    #[test]
+    fn bundle_file_role_round_trips_each_variant() {
+        for r in [
+            BundleFileRole::Shim,
+            BundleFileRole::Grub,
+            BundleFileRole::Kernel,
+            BundleFileRole::Initrd,
+            BundleFileRole::GrubCfg,
+        ] {
+            let body = serde_json::to_string(&r).expect("serialize");
+            let back: BundleFileRole = serde_json::from_str(&body).expect("parse");
+            assert_eq!(r, back, "role {r:?} didn't round-trip: body={body}");
+        }
+    }
+
+    #[test]
+    fn bundle_manifest_rejects_unknown_role_on_wire() {
+        // A role not in the closed set MUST fail to deserialize —
+        // a future role addition is a schema_version bump, and
+        // older verifiers must refuse rather than silently ignore.
+        let body = r#"{"role":"iso","path":"x","sha256":"a","size_bytes":1}"#;
+        let result: Result<BundleFileEntry, _> = serde_json::from_str(body);
+        assert!(result.is_err(), "unknown role must fail to parse");
     }
 }
