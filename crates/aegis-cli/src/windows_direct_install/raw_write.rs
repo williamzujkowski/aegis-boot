@@ -311,19 +311,15 @@ pub(crate) fn check_not_boot_drive(physical_drive: u32) -> Result<(), PartitionB
 
 // ---- Windows-only destructive side ----------------------------------
 //
-// Each fn below compiles only on target_os = "windows". They're
-// pre-stubbed to return an "unimplemented" error against the public
-// contract — the follow-up PR turns on the actual `unsafe`
-// `windows::Win32::*` syscalls behind a narrow `#[allow(unsafe_code)]`
-// annotation and flips the return paths from Err(...) to the real
-// implementations. This split keeps #449 reviewable without a Windows
-// dev environment: pure-fn math + contract tests land first, raw I/O
-// lands in the wiring PR where a reviewer with WinDbg can iterate on
-// real hardware.
+// #484 wires the raw-disk I/O path: `CreateFileW` with direct-I/O flags,
+// `IOCTL_DISK_GET_DRIVE_GEOMETRY_EX` for the runtime sector size,
+// `FSCTL_LOCK_VOLUME` before write, sector-aligned `WriteFile` loop,
+// `FSCTL_DISMOUNT_VOLUME` after write, `CloseHandle` cleanup via RAII.
 //
-// The `windows` crate dep is still pulled in on target_os = "windows"
-// (see Cargo.toml) so the CI cross-compile validates the pin + feature
-// list up-front — no surprise feature flip in the wiring PR.
+// Unsafe is narrow: each syscall site carries its own
+// `#[allow(unsafe_code)]` annotation with a documented invariant
+// comment. The workspace-level `unsafe_code = "deny"` catches any
+// unannotated slip.
 
 /// Write `src` bytes to `\\.\PhysicalDriveN` starting at `offset`.
 /// Direct I/O (`FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH`),
@@ -341,25 +337,49 @@ pub(crate) fn write_bytes_to_physical_drive(
     offset: u64,
 ) -> Result<(), String> {
     check_not_boot_drive(physical_drive).map_err(|e| format!("raw_write: {e}"))?;
-    let _ = (src, offset); // silence unused-warnings until the wiring PR
-    Err(format!(
-        "raw_write::write_bytes_to_physical_drive: not yet wired \
-         (#449 pure-fn scaffold only; the CreateFileW + FSCTL_LOCK_VOLUME \
-          + WriteFile path lands in the wiring PR)"
-    ))
+
+    let mut src_file = std::fs::File::open(src)
+        .map_err(|e| format!("raw_write: open source {}: {e}", src.display()))?;
+    let total_bytes = src_file
+        .metadata()
+        .map_err(|e| format!("raw_write: stat source {}: {e}", src.display()))?
+        .len();
+
+    let handle = sys::open_physical_drive(physical_drive)?;
+    let sector_bytes = sys::query_sector_size(&handle)?;
+    let plan = plan_write(offset, total_bytes, sector_bytes)
+        .map_err(|e| format!("raw_write: plan rejected: {e}"))?;
+
+    // Lock before write: refuses on BitLocker + surfaces sharing
+    // conflicts (Defender real-time scan) as ACCESS_DENIED.
+    sys::lock_volume(&handle)?;
+
+    // Ensure the volume is dismounted even if the write loop errors —
+    // otherwise Windows caches pre-format partition info and the next
+    // operator sees a stale layout.
+    let write_result = sys::write_all_sector_aligned(&handle, &mut src_file, &plan);
+
+    // Always attempt dismount — errors here are logged but don't
+    // mask the primary write error.
+    let dismount_result = sys::dismount_volume(&handle);
+
+    write_result?;
+    dismount_result?;
+    Ok(())
 }
 
 /// Stage all 6 ESP files from `sources` onto the freshly-formatted
-/// ESP of `physical_drive`. Windows-only. Each file goes through the
-/// volume GUID path (`\\.\Volume{...}`) rather than mcopy — we rely
-/// on Windows' native FAT32 FS driver for file creation + write.
+/// ESP of `physical_drive`. Windows-only. Resolves the volume GUID for
+/// partition 1 of the target drive via `FindFirstVolumeW` +
+/// `IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS`, then uses the FAT32 FS
+/// driver for file creation + write — no direct-I/O semantics needed
+/// since the payloads are small (a few MiB total).
 #[cfg(target_os = "windows")]
 pub(crate) fn stage_esp(physical_drive: u32, sources: &EspStagingSources) -> Result<(), String> {
     check_not_boot_drive(physical_drive).map_err(|e| format!("stage_esp: {e}"))?;
-    // Source-existence check stays in the scaffold — it's a host-fs
-    // operation with no unsafe involved, and lets the wiring PR's
-    // first "did I get the plumbing right?" smoke test start from a
-    // known-good precondition.
+
+    // Source-existence precondition — fails fast before any
+    // destructive action touches the ESP.
     for esp_file in EspFile::ALL {
         let src = sources.path_for(esp_file);
         if !src.is_file() {
@@ -370,7 +390,536 @@ pub(crate) fn stage_esp(physical_drive: u32, sources: &EspStagingSources) -> Res
             ));
         }
     }
-    Err("raw_write::stage_esp: not yet wired (#449 pure-fn scaffold only)".to_string())
+
+    let volume_guid_path = sys::find_esp_volume_guid(physical_drive)?;
+
+    for esp_file in EspFile::ALL {
+        let src = sources.path_for(esp_file);
+        // Volume GUID path ends with a trailing `\`; EspFile::esp_path
+        // begins with `/`. Strip the leading `/` to build
+        // `\\?\Volume{GUID}\EFI\BOOT\BOOTX64.EFI`.
+        let rel = esp_file
+            .esp_path()
+            .trim_start_matches('/')
+            .replace('/', "\\");
+        let dst_path = format!("{volume_guid_path}{rel}");
+        sys::copy_file_to_volume(src, &dst_path)
+            .map_err(|e| format!("stage_esp: {} → {dst_path}: {e}", src.display()))?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+mod sys {
+    //! Narrow Win32 FFI for [`super::write_bytes_to_physical_drive`] and
+    //! [`super::stage_esp`]. Each `unsafe` call carries its own
+    //! `#[allow(unsafe_code)]` with a documented safety invariant; the
+    //! workspace lint would otherwise refuse to compile.
+    //!
+    //! RAII wrappers close handles + free aligned buffers on drop so
+    //! early returns on write-loop errors don't leak a locked volume
+    //! or a 4 MiB VirtualAlloc region.
+
+    use std::alloc::{Layout, alloc_zeroed, dealloc};
+    use std::ffi::c_void;
+    use std::fs::File;
+    use std::io::{Read, Write};
+    use std::mem::MaybeUninit;
+    use std::os::windows::ffi::OsStrExt as _;
+    use std::path::Path;
+    use std::ptr;
+
+    use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE};
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_FLAG_NO_BUFFERING, FILE_FLAG_WRITE_THROUGH, FILE_FLAGS_AND_ATTRIBUTES,
+        FILE_SHARE_NONE, FindFirstVolumeW, FindNextVolumeW, FindVolumeClose,
+        IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS, OPEN_EXISTING, WriteFile,
+    };
+    use windows::Win32::System::IO::DeviceIoControl;
+    use windows::Win32::System::Ioctl::{
+        DISK_GEOMETRY_EX, FSCTL_DISMOUNT_VOLUME, FSCTL_LOCK_VOLUME,
+        IOCTL_DISK_GET_DRIVE_GEOMETRY_EX, VOLUME_DISK_EXTENTS,
+    };
+    use windows::core::PCWSTR;
+
+    use super::{WRITE_CHUNK_BYTES, WritePlan, translate_win32_error};
+
+    /// RAII wrapper for a `HANDLE`. `CloseHandle` runs on `Drop` so
+    /// early returns (write-loop failure, lock failure, etc.) don't
+    /// leak an exclusive-access handle that would otherwise leave the
+    /// volume locked until the process exits.
+    pub(super) struct OwnedHandle(HANDLE);
+
+    impl OwnedHandle {
+        pub(super) fn raw(&self) -> HANDLE {
+            self.0
+        }
+    }
+
+    impl Drop for OwnedHandle {
+        fn drop(&mut self) {
+            if !self.0.is_invalid() {
+                // Safety: self.0 was produced by CreateFileW and is
+                // exclusively owned — no aliasing HANDLE copies exist.
+                #[allow(unsafe_code)]
+                // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+                let _ = unsafe { CloseHandle(self.0) };
+            }
+        }
+    }
+
+    /// Sector-aligned heap buffer for direct-I/O writes. Layout
+    /// `align = 4 KiB` covers any plausible sector size (512 B –
+    /// 4 KiB typical; 64 KiB is the upper bound the pure-fn layer
+    /// accepts). `Drop` frees on every exit path.
+    pub(super) struct AlignedBuffer {
+        ptr: *mut u8,
+        layout: Layout,
+    }
+
+    impl AlignedBuffer {
+        fn new(size: usize) -> Result<Self, String> {
+            let layout = Layout::from_size_align(size, 4096)
+                .map_err(|e| format!("AlignedBuffer::new layout: {e}"))?;
+            // Safety: layout has size > 0 (WRITE_CHUNK_BYTES = 4 MiB)
+            // and a power-of-two alignment. alloc_zeroed returns a
+            // valid pointer or null; we check null below.
+            #[allow(unsafe_code)]
+            // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+            let ptr = unsafe { alloc_zeroed(layout) };
+            if ptr.is_null() {
+                return Err(format!(
+                    "AlignedBuffer::new: allocator returned null for {size} bytes @ 4 KiB"
+                ));
+            }
+            Ok(Self { ptr, layout })
+        }
+
+        fn as_mut_slice(&mut self) -> &mut [u8] {
+            // Safety: self.ptr is non-null (enforced in ::new), points
+            // to self.layout.size() bytes we allocated, and self owns
+            // that region exclusively (no aliasing — we yield a
+            // mutable slice through a &mut self).
+            #[allow(unsafe_code)]
+            // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+            unsafe {
+                std::slice::from_raw_parts_mut(self.ptr, self.layout.size())
+            }
+        }
+
+        fn as_ptr(&self) -> *const c_void {
+            self.ptr.cast()
+        }
+    }
+
+    impl Drop for AlignedBuffer {
+        fn drop(&mut self) {
+            if !self.ptr.is_null() {
+                // Safety: self.ptr was returned by alloc_zeroed with
+                // self.layout, and we own it exclusively.
+                #[allow(unsafe_code)]
+                // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+                unsafe {
+                    dealloc(self.ptr, self.layout);
+                }
+                self.ptr = ptr::null_mut();
+            }
+        }
+    }
+
+    fn to_wide(s: &str) -> Vec<u16> {
+        std::ffi::OsStr::new(s)
+            .encode_wide()
+            .chain(std::iter::once(0u16))
+            .collect()
+    }
+
+    fn last_error_message(op: &str) -> String {
+        // windows::core::Error::from_win32() reads GetLastError.
+        let err = windows::core::Error::from_win32();
+        let code = u32::try_from(err.code().0).unwrap_or(u32::MAX);
+        format!("{op}: {}", translate_win32_error(code))
+    }
+
+    /// Open `\\.\PhysicalDriveN` with the flag set documented in the
+    /// module safety invariants: `GENERIC_READ | GENERIC_WRITE`,
+    /// `FILE_SHARE_NONE`, `OPEN_EXISTING`,
+    /// `FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH`.
+    pub(super) fn open_physical_drive(physical_drive: u32) -> Result<OwnedHandle, String> {
+        let path = format!(r"\\.\PhysicalDrive{physical_drive}");
+        let wide = to_wide(&path);
+        // Safety: `wide` is a NUL-terminated UTF-16 buffer owned by
+        // this function for the entire CreateFileW call. All other
+        // arguments are Win32 constants. The return value is a
+        // Result that reflects GetLastError on failure.
+        #[allow(unsafe_code)]
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+        let handle = unsafe {
+            CreateFileW(
+                PCWSTR(wide.as_ptr()),
+                (GENERIC_READ | GENERIC_WRITE).0,
+                FILE_SHARE_NONE,
+                None,
+                OPEN_EXISTING,
+                FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH,
+                None,
+            )
+        }
+        .map_err(|e| {
+            let code = u32::try_from(e.code().0).unwrap_or(u32::MAX);
+            format!("CreateFileW({path}): {}", translate_win32_error(code))
+        })?;
+
+        if handle.is_invalid() {
+            return Err(format!(
+                "CreateFileW({path}): returned INVALID_HANDLE_VALUE without error"
+            ));
+        }
+        Ok(OwnedHandle(handle))
+    }
+
+    /// `IOCTL_DISK_GET_DRIVE_GEOMETRY_EX` reads the on-disk sector
+    /// size. Returns the sector size in bytes. The pure-fn layer
+    /// refuses implausible values (<512 B, >64 KiB, non-power-of-two);
+    /// that gate runs in [`super::plan_write`] after this returns.
+    pub(super) fn query_sector_size(handle: &OwnedHandle) -> Result<u32, String> {
+        let mut out = MaybeUninit::<DISK_GEOMETRY_EX>::zeroed();
+        let mut bytes_returned: u32 = 0;
+        let out_size = u32::try_from(std::mem::size_of::<DISK_GEOMETRY_EX>()).unwrap_or(u32::MAX);
+
+        // Safety: out points to a zeroed DISK_GEOMETRY_EX for Windows
+        // to fill. out_size matches its byte length. bytes_returned is
+        // a valid u32 slot. handle is a valid raw-disk HANDLE.
+        #[allow(unsafe_code)]
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+        let rc = unsafe {
+            DeviceIoControl(
+                handle.raw(),
+                IOCTL_DISK_GET_DRIVE_GEOMETRY_EX,
+                None,
+                0,
+                Some(out.as_mut_ptr().cast()),
+                out_size,
+                Some(&mut bytes_returned),
+                None,
+            )
+        };
+        rc.map_err(|_| last_error_message("IOCTL_DISK_GET_DRIVE_GEOMETRY_EX"))?;
+
+        // Safety: DeviceIoControl returned success, so Windows wrote
+        // a DISK_GEOMETRY_EX into `out`. Reading it back as initialized
+        // is therefore sound.
+        #[allow(unsafe_code)]
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+        let geom = unsafe { out.assume_init() };
+        Ok(geom.Geometry.BytesPerSector)
+    }
+
+    /// `FSCTL_LOCK_VOLUME` — exclusive access before write. Fails
+    /// cleanly on BitLocker-protected volumes (ACCESS_DENIED) or on
+    /// Defender-scan contention (SHARING_VIOLATION).
+    pub(super) fn lock_volume(handle: &OwnedHandle) -> Result<(), String> {
+        let mut bytes_returned: u32 = 0;
+        // Safety: FSCTL_LOCK_VOLUME takes no input/output buffers.
+        #[allow(unsafe_code)]
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+        let rc = unsafe {
+            DeviceIoControl(
+                handle.raw(),
+                FSCTL_LOCK_VOLUME,
+                None,
+                0,
+                None,
+                0,
+                Some(&mut bytes_returned),
+                None,
+            )
+        };
+        rc.map_err(|_| last_error_message("FSCTL_LOCK_VOLUME"))
+    }
+
+    /// `FSCTL_DISMOUNT_VOLUME` — forces Windows to drop cached
+    /// partition-table state so the next open sees the fresh layout.
+    pub(super) fn dismount_volume(handle: &OwnedHandle) -> Result<(), String> {
+        let mut bytes_returned: u32 = 0;
+        // Safety: FSCTL_DISMOUNT_VOLUME takes no input/output buffers.
+        #[allow(unsafe_code)]
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+        let rc = unsafe {
+            DeviceIoControl(
+                handle.raw(),
+                FSCTL_DISMOUNT_VOLUME,
+                None,
+                0,
+                None,
+                0,
+                Some(&mut bytes_returned),
+                None,
+            )
+        };
+        rc.map_err(|_| last_error_message("FSCTL_DISMOUNT_VOLUME"))
+    }
+
+    /// Sector-aligned write loop. Seeks to `plan.offset`, then reads
+    /// `WRITE_CHUNK_BYTES` from `src` into an aligned buffer and
+    /// `WriteFile`s each chunk. The final chunk is zero-padded to a
+    /// sector boundary (required by direct-I/O flags).
+    pub(super) fn write_all_sector_aligned(
+        handle: &OwnedHandle,
+        src: &mut File,
+        plan: &WritePlan,
+    ) -> Result<(), String> {
+        use windows::Win32::Storage::FileSystem::{FILE_BEGIN, SetFilePointerEx};
+
+        // Seek the raw-disk handle to the write offset. offset is
+        // already validated sector-aligned by plan_write.
+        let offset_i64 = i64::try_from(plan.offset)
+            .map_err(|_| format!("write_all: offset {} exceeds i64", plan.offset))?;
+        // Safety: handle is a valid raw-disk HANDLE open for write;
+        // FILE_BEGIN is the documented constant. new-position out ptr
+        // is None because we don't need it.
+        #[allow(unsafe_code)]
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+        let rc = unsafe { SetFilePointerEx(handle.raw(), offset_i64, None, FILE_BEGIN) };
+        rc.map_err(|_| last_error_message("SetFilePointerEx"))?;
+
+        let mut buf = AlignedBuffer::new(WRITE_CHUNK_BYTES)?;
+        let sector_bytes = plan.sector_bytes as usize;
+
+        let mut remaining = plan.aligned_total;
+        loop {
+            if remaining == 0 {
+                break;
+            }
+
+            // Fill the buffer from src. read_to_end would allocate;
+            // instead, loop read() until the chunk is full or EOF.
+            let chunk_target = std::cmp::min(remaining, WRITE_CHUNK_BYTES as u64);
+            let chunk_target_usize = usize::try_from(chunk_target).unwrap_or(usize::MAX);
+            let slice = &mut buf.as_mut_slice()[..chunk_target_usize];
+            let mut filled: usize = 0;
+            while filled < chunk_target_usize {
+                match src.read(&mut slice[filled..]) {
+                    Ok(0) => break,
+                    Ok(n) => filled += n,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(e) => return Err(format!("write_all: source read: {e}")),
+                }
+            }
+            // Pad the read shortfall to a sector boundary with zeros.
+            // The buffer was zero-initialized and we only overwrite
+            // bytes we wrote, so zero-pad is implicit up to the slice
+            // end; but `filled` may sit between sectors, so round UP.
+            let filled_rounded = if filled == 0 {
+                0
+            } else {
+                ((filled - 1) / sector_bytes + 1) * sector_bytes
+            };
+            // Tail-chunk semantics: read 0 bytes means we're done.
+            let write_len = if filled == 0 {
+                0
+            } else {
+                std::cmp::min(filled_rounded, chunk_target_usize)
+            };
+            if write_len == 0 {
+                // No more bytes to read AND remaining==0 handled at loop top.
+                break;
+            }
+
+            // Bounds check: WRITE_CHUNK_BYTES = 4 MiB fits in u32 but
+            // keep the explicit conversion so a future WRITE_CHUNK_BYTES
+            // change can't silently overflow.
+            u32::try_from(write_len)
+                .map_err(|_| format!("write_all: chunk {write_len} exceeds u32"))?;
+            let mut bytes_written: u32 = 0;
+            // Safety: buf.as_ptr() points to write_len bytes of our
+            // AlignedBuffer. handle is a valid write handle. Output
+            // ptr is a local u32.
+            #[allow(unsafe_code)]
+            // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+            let rc = unsafe {
+                WriteFile(
+                    handle.raw(),
+                    Some(std::slice::from_raw_parts(
+                        buf.as_ptr().cast::<u8>(),
+                        write_len,
+                    )),
+                    Some(&mut bytes_written),
+                    None,
+                )
+            };
+            rc.map_err(|_| last_error_message("WriteFile"))?;
+            if bytes_written as usize != write_len {
+                return Err(format!(
+                    "WriteFile: short write {bytes_written}/{write_len} — \
+                     direct I/O should never partial-write"
+                ));
+            }
+            remaining = remaining.saturating_sub(write_len as u64);
+
+            // When we hit source EOF (filled < chunk_target_usize),
+            // we've zero-padded to the final sector — stop.
+            if filled < chunk_target_usize {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// Find the volume GUID path (`\\?\Volume{GUID}\`) for partition 1
+    /// of `physical_drive`. Used by [`super::stage_esp`] to drop files
+    /// through the FS driver without needing a drive letter.
+    pub(super) fn find_esp_volume_guid(physical_drive: u32) -> Result<String, String> {
+        let mut name_buf = [0u16; 256];
+        // Safety: name_buf is a valid u16 slice for FindFirstVolumeW
+        // to fill. Length passed matches slice size.
+        #[allow(unsafe_code)]
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+        let find = unsafe { FindFirstVolumeW(&mut name_buf) }
+            .map_err(|_| last_error_message("FindFirstVolumeW"))?;
+
+        // RAII cleanup: always close the find handle. windows-rs 0.58
+        // exposes Find*VolumeW as HANDLE-based APIs; the distinct
+        // FindVolumeHandle newtype doesn't exist in this version.
+        struct FindGuard(HANDLE);
+        impl Drop for FindGuard {
+            fn drop(&mut self) {
+                #[allow(unsafe_code)]
+                // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+                let _ = unsafe { FindVolumeClose(self.0) };
+            }
+        }
+        let _guard = FindGuard(find);
+
+        loop {
+            // Convert UTF-16 to Rust string, trimming the NUL.
+            let nul = name_buf
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(name_buf.len());
+            let vol_name = String::from_utf16_lossy(&name_buf[..nul]);
+
+            if volume_backs_physical_drive(&vol_name, physical_drive).unwrap_or(false) {
+                return Ok(vol_name);
+            }
+
+            name_buf.fill(0);
+            // Safety: find is a valid FindVolume handle; name_buf is
+            // a valid mutable u16 buffer.
+            #[allow(unsafe_code)]
+            // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+            let next = unsafe { FindNextVolumeW(find, &mut name_buf) };
+            if next.is_err() {
+                return Err(format!(
+                    "find_esp_volume_guid: no volume backed by \
+                     PhysicalDrive{physical_drive}"
+                ));
+            }
+        }
+    }
+
+    /// Check whether the volume named `vol_name` (a `\\?\Volume{GUID}\`
+    /// path) is backed by disk `physical_drive`. Opens the volume
+    /// read-only, queries `IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS`, and
+    /// returns true if any extent lives on the target disk.
+    fn volume_backs_physical_drive(vol_name: &str, physical_drive: u32) -> Result<bool, String> {
+        // Trim the trailing `\` — CreateFileW accepts the volume name
+        // with or without, but the raw-volume handle needs it without.
+        let trimmed = vol_name.trim_end_matches('\\');
+        let wide = to_wide(trimmed);
+
+        // Safety: wide is a NUL-terminated UTF-16 buffer; all other
+        // args are Win32 constants. Handle is checked below.
+        #[allow(unsafe_code)]
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+        let handle = unsafe {
+            CreateFileW(
+                PCWSTR(wide.as_ptr()),
+                0, // query-only; no access needed for IOCTL
+                windows::Win32::Storage::FileSystem::FILE_SHARE_READ
+                    | windows::Win32::Storage::FileSystem::FILE_SHARE_WRITE,
+                None,
+                OPEN_EXISTING,
+                FILE_FLAGS_AND_ATTRIBUTES(0),
+                None,
+            )
+        }
+        .map_err(|_| last_error_message("CreateFileW(volume)"))?;
+
+        let owned = OwnedHandle(handle);
+
+        // VOLUME_DISK_EXTENTS is variable-length (DISK_EXTENT[]); a
+        // buffer large enough for 8 extents suffices for USB sticks
+        // (usually 1, occasionally 2-4 for striped layouts).
+        const EXTENT_BUF_SIZE: usize = 256;
+        let mut ext_buf = [0u8; EXTENT_BUF_SIZE];
+        let mut bytes_returned: u32 = 0;
+
+        // Safety: ext_buf points to EXTENT_BUF_SIZE valid bytes;
+        // handle is a valid volume handle.
+        #[allow(unsafe_code)]
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+        let rc = unsafe {
+            DeviceIoControl(
+                owned.raw(),
+                IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS,
+                None,
+                0,
+                Some(ext_buf.as_mut_ptr().cast()),
+                u32::try_from(EXTENT_BUF_SIZE).unwrap_or(u32::MAX),
+                Some(&mut bytes_returned),
+                None,
+            )
+        };
+        rc.map_err(|_| last_error_message("IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS"))?;
+
+        // Safety: DeviceIoControl filled ext_buf with a
+        // VOLUME_DISK_EXTENTS header + DISK_EXTENT[] tail. Reading the
+        // header is sound once bytes_returned covers its size.
+        if (bytes_returned as usize) < std::mem::size_of::<VOLUME_DISK_EXTENTS>() {
+            return Ok(false);
+        }
+        #[allow(unsafe_code)]
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+        let header = unsafe { &*(ext_buf.as_ptr() as *const VOLUME_DISK_EXTENTS) };
+        let n = header.NumberOfDiskExtents as usize;
+        // Extents live after the first u32 + 4-byte pad; windows-rs
+        // DISK_EXTENT[1] is a tail array.
+        for i in 0..n {
+            // Safety: `header.Extents` is a flexible array member; the
+            // DeviceIoControl filled bytes_returned >= header_size +
+            // n * extent_size. Indexing up to n-1 is sound.
+            #[allow(unsafe_code)]
+            // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+            let extent = unsafe { &*header.Extents.as_ptr().add(i) };
+            if extent.DiskNumber == physical_drive {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Copy `src` to `dst_path` using the FAT32 FS driver — standard
+    /// buffered I/O, no direct-I/O flags, no volume lock. Writes are
+    /// bounded to a few MiB per file, so buffered semantics are fine.
+    pub(super) fn copy_file_to_volume(src: &Path, dst_path: &str) -> Result<(), String> {
+        // Ensure the ESP sub-directories exist. EFI\BOOT is the only
+        // one needed (per EspFile::esp_path); vmlinuz + initramfs.cpio.gz
+        // live at volume root.
+        if let Some(parent) = std::path::Path::new(dst_path).parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("create_dir_all({}): {e}", parent.display()))?;
+        }
+
+        let bytes = std::fs::read(src).map_err(|e| format!("read source: {e}"))?;
+        let mut out = std::fs::File::create(dst_path).map_err(|e| format!("create dest: {e}"))?;
+        out.write_all(&bytes)
+            .map_err(|e| format!("write dest: {e}"))?;
+        out.sync_all().map_err(|e| format!("sync dest: {e}"))?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -554,5 +1103,174 @@ mod tests {
         let msg = format!("{e}");
         assert!(msg.contains("513"));
         assert!(msg.contains("512"));
+    }
+
+    // ---- Windows integration test (#484) -------------------------------
+    //
+    // Destructive write + readback round-trip against a real physical
+    // disk. Opt-in via `AEGIS_BOOT_RAW_WRITE_TEST_DRIVE=N` to avoid
+    // accidental execution — CI + local dev runs without that env var
+    // skip these entirely. The only safe drive number to pass is the
+    // operator's pre-designated scratch disk; the refuse-disk-0 gate
+    // catches the most common typo.
+    //
+    // Running this locally:
+    //     $env:AEGIS_BOOT_RAW_WRITE_TEST_DRIVE = "1"  # or whatever
+    //     cargo test -p aegis-bootctl --bins windows_direct_install::raw_write -- --ignored --test-threads=1
+    //
+    // The test writes a 3-sector pattern at offset 64 KiB (past any
+    // partition-table header), reads it back through a read-only
+    // handle, and asserts byte equality.
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[ignore = "destructive — requires AEGIS_BOOT_RAW_WRITE_TEST_DRIVE + Administrator"]
+    fn raw_write_roundtrip_on_scratch_disk() {
+        use std::io::Write as _;
+
+        let drive: u32 = match std::env::var("AEGIS_BOOT_RAW_WRITE_TEST_DRIVE") {
+            Ok(s) => s
+                .parse()
+                .expect("AEGIS_BOOT_RAW_WRITE_TEST_DRIVE must be u32"),
+            Err(_) => {
+                eprintln!("AEGIS_BOOT_RAW_WRITE_TEST_DRIVE unset; skipping");
+                return;
+            }
+        };
+        assert_ne!(drive, 0, "disk 0 is the OS boot drive — refuse");
+
+        // Build a deterministic payload the readback can verify.
+        // 3 × 4 KiB = 12 KiB (covers the "final chunk padding" path
+        // without taking seconds of I/O).
+        let mut payload = Vec::with_capacity(3 * 4096);
+        for i in 0..(3 * 4096) {
+            payload.push(((i * 131) & 0xff) as u8);
+        }
+        let mut src = tempfile::NamedTempFile::new().expect("temp");
+        src.write_all(&payload).expect("write temp");
+        src.flush().expect("flush temp");
+
+        // Write offset chosen well past any real partition-table
+        // header (MBR lives in the first 512 B; GPT header + table in
+        // the first ~34 sectors ≈ 17 KiB). 64 KiB gives 46+ KiB of
+        // safety margin.
+        let offset: u64 = 64 * 1024;
+
+        write_bytes_to_physical_drive(drive, src.path(), offset)
+            .expect("raw write should succeed on scratch disk");
+
+        // Readback: open the same physical drive read-only (no direct
+        // I/O flags needed — this is a validation read) and compare.
+        let readback =
+            read_bytes_for_verify(drive, offset, payload.len()).expect("readback should succeed");
+        assert_eq!(&readback[..], &payload[..], "roundtrip mismatch");
+    }
+
+    #[cfg(target_os = "windows")]
+    fn read_bytes_for_verify(
+        physical_drive: u32,
+        offset: u64,
+        len: usize,
+    ) -> Result<Vec<u8>, String> {
+        use std::os::windows::ffi::OsStrExt as _;
+        use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, HANDLE};
+        use windows::Win32::Storage::FileSystem::{
+            CreateFileW, FILE_BEGIN, FILE_FLAG_NO_BUFFERING, FILE_SHARE_READ, FILE_SHARE_WRITE,
+            OPEN_EXISTING, ReadFile, SetFilePointerEx,
+        };
+        use windows::core::PCWSTR;
+
+        let path = format!(r"\\.\PhysicalDrive{physical_drive}");
+        let wide: Vec<u16> = std::ffi::OsStr::new(&path)
+            .encode_wide()
+            .chain(std::iter::once(0u16))
+            .collect();
+        // Safety: wide is a NUL-terminated UTF-16 buffer owned for the
+        // duration of the call; all other args are Win32 constants.
+        #[allow(unsafe_code)]
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+        let h: HANDLE = unsafe {
+            CreateFileW(
+                PCWSTR(wide.as_ptr()),
+                GENERIC_READ.0,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                None,
+                OPEN_EXISTING,
+                FILE_FLAG_NO_BUFFERING,
+                None,
+            )
+        }
+        .map_err(|e| format!("readback open: {e}"))?;
+
+        // Read a sector-aligned region covering `len`.
+        // Scratch disks are typically 512 B sectors; round up to 4 KiB
+        // to cover both 512e and 4Kn. The test payload is already 12 KiB
+        // (3 × 4 KiB).
+        let sector_bytes: usize = 4096;
+        let read_size = ((len + sector_bytes - 1) / sector_bytes) * sector_bytes;
+
+        // Need an aligned buffer for direct I/O.
+        let layout = std::alloc::Layout::from_size_align(read_size, 4096)
+            .map_err(|e| format!("readback layout: {e}"))?;
+        // Safety: layout is valid with power-of-two alignment and
+        // non-zero size; null is checked below.
+        #[allow(unsafe_code)]
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+        let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
+        if ptr.is_null() {
+            // Safety: h was returned by CreateFileW above and is owned.
+            #[allow(unsafe_code)]
+            // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+            unsafe {
+                let _ = CloseHandle(h);
+            }
+            return Err("readback: alloc failed".into());
+        }
+        // Safety: ptr was returned by alloc_zeroed with layout above,
+        // non-null (checked), and exclusively owned.
+        let buf: &mut [u8] = {
+            #[allow(unsafe_code)]
+            // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+            unsafe {
+                std::slice::from_raw_parts_mut(ptr, read_size)
+            }
+        };
+
+        // Seek, read, close.
+        let offset_i64 = i64::try_from(offset).map_err(|_| "offset > i64")?;
+        // Safety: h is a valid read-only raw-disk HANDLE.
+        #[allow(unsafe_code)]
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+        let rc = unsafe { SetFilePointerEx(h, offset_i64, None, FILE_BEGIN) };
+        if let Err(e) = rc {
+            // Safety: ptr + h are both still owned at this point.
+            #[allow(unsafe_code)]
+            // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+            unsafe {
+                std::alloc::dealloc(ptr, layout);
+                let _ = CloseHandle(h);
+            }
+            return Err(format!("readback seek: {e}"));
+        }
+
+        let mut bytes_read: u32 = 0;
+        // Safety: buf points to read_size bytes; h is a valid read handle.
+        #[allow(unsafe_code)]
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+        let rc = unsafe { ReadFile(h, Some(buf), Some(&mut bytes_read), None) };
+
+        let out = buf[..len].to_vec();
+
+        // Safety: ptr + h ownership unchanged since creation; last use.
+        #[allow(unsafe_code)]
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+        unsafe {
+            std::alloc::dealloc(ptr, layout);
+            let _ = CloseHandle(h);
+        }
+        rc.map_err(|e| format!("readback ReadFile: {e}"))?;
+        if (bytes_read as usize) < len {
+            return Err(format!("readback: short read {bytes_read}/{read_size}"));
+        }
+        Ok(out)
     }
 }
