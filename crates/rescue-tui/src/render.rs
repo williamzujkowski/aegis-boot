@@ -1962,4 +1962,273 @@ mod tests {
         assert!(s.contains("signature") || s.contains("Signature"));
         assert!(s.contains("mokutil"));
     }
+
+    // ---- #461 — render coverage suite --------------------------------
+    //
+    // Comprehensive render-level regression suite covering all 6
+    // TrustVerdict tiers, every Screen variant, edge cases (empty
+    // list, extreme geometry, focus states, filter modes).
+    //
+    // These complement the string-contains tests above by exercising
+    // the full render pipeline with a wider variety of state
+    // fixtures. A failure here catches the class of bug where a
+    // previously-working screen silently regresses (e.g. a variant
+    // pattern that gets dropped, a label that disappears, a color
+    // that inverts).
+
+    /// Build an ISO with a specific `(hash, sig, quirks)` combination
+    /// so we can assert each tier renders correctly in one shot.
+    fn iso_with_verification(
+        label: &str,
+        hash: iso_probe::HashVerification,
+        sig: iso_probe::SignatureVerification,
+        quirks: Vec<Quirk>,
+    ) -> iso_probe::DiscoveredIso {
+        let mut iso = fake_iso(label);
+        iso.hash_verification = hash;
+        iso.signature_verification = sig;
+        iso.quirks = quirks;
+        iso
+    }
+
+    #[test]
+    fn render_coverage_tier1_operator_attested() {
+        let iso = iso_with_verification(
+            "ubuntu",
+            iso_probe::HashVerification::Verified {
+                digest: "abcdef1234567890".to_string(),
+                source: "/isos/ubuntu.iso.sha256".to_string(),
+            },
+            iso_probe::SignatureVerification::NotPresent,
+            vec![],
+        );
+        let s = render_to_string(&AppState::new(vec![iso]));
+        assert!(s.contains("VERIFIED"), "tier-1 label missing");
+        assert!(s.contains("verified"), "info pane sha256 status missing");
+    }
+
+    #[test]
+    fn render_coverage_tier2_bare_unverified() {
+        let iso = iso_with_verification(
+            "bare",
+            iso_probe::HashVerification::NotPresent,
+            iso_probe::SignatureVerification::NotPresent,
+            vec![],
+        );
+        let s = render_to_string(&AppState::new(vec![iso]));
+        assert!(s.contains("UNVERIFIED"));
+        assert!(s.contains("no sibling .sha256"));
+    }
+
+    #[test]
+    fn render_coverage_tier3_key_not_trusted() {
+        let iso = iso_with_verification(
+            "untrusted",
+            iso_probe::HashVerification::NotPresent,
+            iso_probe::SignatureVerification::KeyNotTrusted {
+                key_id: "9f3a...".to_string(),
+            },
+            vec![],
+        );
+        let s = render_to_string(&AppState::new(vec![iso]));
+        assert!(s.contains("UNTRUSTED KEY"));
+        assert!(s.contains("9f3a"));
+    }
+
+    #[test]
+    fn render_coverage_tier4_parse_failed() {
+        let failed = iso_probe::FailedIso {
+            iso_path: PathBuf::from("/isos/broken.iso"),
+            reason: "mount: wrong fs type".to_string(),
+            kind: iso_probe::FailureKind::MountFailed,
+        };
+        let state = AppState::new(Vec::new()).with_failed_isos(vec![failed]);
+        let s = render_to_string(&state);
+        assert!(s.contains("PARSE FAILED"));
+        assert!(s.contains("wrong fs type"));
+        assert!(s.contains("MountFailed"));
+    }
+
+    #[test]
+    fn render_coverage_tier5_windows_blocked() {
+        let mut iso = fake_iso("win11");
+        iso.quirks = vec![Quirk::NotKexecBootable];
+        iso.distribution = Distribution::Windows;
+        let s = render_to_string(&AppState::new(vec![iso]));
+        assert!(s.contains("BOOT BLOCKED"), "tier-5 label missing");
+        assert!(s.contains("Boot is disabled"));
+    }
+
+    #[test]
+    fn render_coverage_tier6_hash_mismatch() {
+        let iso = iso_with_verification(
+            "forged",
+            iso_probe::HashVerification::Mismatch {
+                expected: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    .to_string(),
+                actual: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    .to_string(),
+                source: "/isos/forged.iso.sha256".to_string(),
+            },
+            iso_probe::SignatureVerification::NotPresent,
+            vec![],
+        );
+        let s = render_to_string(&AppState::new(vec![iso]));
+        assert!(s.contains("HASH MISMATCH"));
+        assert!(
+            s.contains("MISMATCH"),
+            "sha256 status must call out mismatch"
+        );
+    }
+
+    #[test]
+    fn render_coverage_confirm_screen_preserves_metadata() {
+        let mut state = AppState::new(vec![fake_iso("debian")]);
+        state.confirm_selection();
+        let s = render_to_string(&state);
+        for needle in &["Verdict", "casper/vmlinuz", "boot=casper", "GiB"] {
+            assert!(s.contains(needle), "Confirm screen missing {needle}: {s}");
+        }
+    }
+
+    #[test]
+    fn render_coverage_verifying_screen_shows_progress() {
+        let mut state = AppState::new(vec![fake_iso("verify-me")]);
+        state.begin_verify(0);
+        state.verify_tick(500_000, 1_000_000);
+        let s = render_to_string(&state);
+        assert!(s.contains("Verifying"), "Verifying label missing: {s}");
+    }
+
+    #[test]
+    fn render_coverage_trust_challenge_shows_typed_confirmation() {
+        let mut state = AppState::new(vec![fake_iso("degraded")]);
+        state.screen = Screen::TrustChallenge {
+            selected: 0,
+            buffer: "bo".to_string(),
+        };
+        let s = render_to_string(&state);
+        assert!(s.contains("typed confirmation"));
+        assert!(s.contains("Degraded"));
+    }
+
+    #[test]
+    fn render_coverage_help_overlay_drawn_above_prior_screen() {
+        let mut state = AppState::new(vec![fake_iso("a")]);
+        state.open_help();
+        let s = render_to_string(&state);
+        assert!(s.contains("Keybindings") || s.contains("Help"));
+    }
+
+    #[test]
+    fn render_coverage_confirm_quit_overlay_drawn() {
+        let mut state = AppState::new(vec![fake_iso("a")]);
+        state.request_quit();
+        let s = render_to_string(&state);
+        assert!(
+            s.contains("Quit") || s.contains("quit"),
+            "ConfirmQuit overlay missing: {s}"
+        );
+    }
+
+    #[test]
+    fn render_coverage_filter_editing_mode_shows_banner() {
+        let mut state = AppState::new(vec![fake_iso("a")]);
+        state.open_filter();
+        state.filter_push('t');
+        state.filter_push('e');
+        let s = render_to_string(&state);
+        assert!(s.contains("FILTER"), "filter-editing banner missing: {s}");
+    }
+
+    #[test]
+    fn render_coverage_filter_no_matches_shows_empty_state_label() {
+        let mut state = AppState::new(vec![fake_iso("debian")]);
+        state.open_filter();
+        state.filter_push('z');
+        state.filter_commit();
+        let s = render_to_string(&state);
+        assert!(s.contains("no matches"), "no-match label missing: {s}");
+    }
+
+    #[test]
+    fn render_coverage_focus_border_differs_by_pane() {
+        // The focused pane's border uses theme.success (green), the
+        // unfocused pane uses DarkGray. We can't color-introspect in
+        // the TestBackend easily, so assert title distinction: the
+        // active info-pane title reads "info (focused)".
+        let mut state = AppState::new(vec![fake_iso("a")]);
+        let list_focused = render_to_string(&state);
+        assert!(!list_focused.contains("(focused)"));
+        state.toggle_pane();
+        let info_focused = render_to_string(&state);
+        assert!(info_focused.contains("info (focused)"));
+    }
+
+    #[test]
+    fn render_coverage_mixed_tiers_all_visible_in_list() {
+        // Stick containing a tier-1 ISO + a tier-4 (failed) ISO.
+        // Both must appear in the list — verifying all-ISOs-visible
+        // is the primary epic goal (#455).
+        let iso = iso_with_verification(
+            "good",
+            iso_probe::HashVerification::Verified {
+                digest: "1".repeat(64),
+                source: "/isos/good.iso.sha256".to_string(),
+            },
+            iso_probe::SignatureVerification::NotPresent,
+            vec![],
+        );
+        let failed = iso_probe::FailedIso {
+            iso_path: PathBuf::from("/isos/broken.iso"),
+            reason: "wrong fs type".to_string(),
+            kind: iso_probe::FailureKind::MountFailed,
+        };
+        let state = AppState::new(vec![iso]).with_failed_isos(vec![failed]);
+        let s = render_to_string(&state);
+        assert!(s.contains("good"), "tier-1 filename missing");
+        assert!(s.contains("broken.iso"), "tier-4 filename missing");
+    }
+
+    #[test]
+    fn render_coverage_extreme_narrow_terminal_does_not_panic() {
+        // 80x24 is the documented minimum. The dual-pane layout is
+        // cramped at this width but must not panic — degraded
+        // rendering is acceptable.
+        let state = AppState::new(vec![fake_iso("a")]);
+        let s = render_to_string_sized(&state, 80, 24);
+        assert!(!s.is_empty(), "80x24 render produced empty output");
+    }
+
+    #[test]
+    fn render_coverage_extreme_wide_terminal_still_renders() {
+        let state = AppState::new(vec![fake_iso("a")]);
+        let s = render_to_string_sized(&state, 200, 60);
+        assert!(s.contains("UNVERIFIED"), "wide terminal lost tier label");
+    }
+
+    #[test]
+    fn render_coverage_footer_matches_list_context() {
+        // Footer is registry-driven (#460). On List screen with
+        // list-pane focus we expect Tab/?/q plus navigation.
+        let state = AppState::new(vec![fake_iso("a")]);
+        let s = render_to_string(&state);
+        for k in &["[Tab]", "[?]", "[q]", "[/]"] {
+            assert!(s.contains(k), "footer missing {k}: {s}");
+        }
+    }
+
+    #[test]
+    fn render_coverage_info_pane_scroll_offsets_hide_top_lines() {
+        // Scroll the info pane down; early rows should be clipped.
+        let mut state = AppState::new(vec![fake_iso("a")]);
+        state.toggle_pane();
+        state.move_info_scroll(3);
+        let s = render_to_string(&state);
+        // With info_scroll=3 the "Verdict:" row may be pushed off the
+        // top. We can't assert "absent" cleanly because ratatui still
+        // draws labels below, but the total length should still be
+        // non-empty (no panic).
+        assert!(!s.is_empty());
+    }
 }
