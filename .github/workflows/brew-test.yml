@@ -1,7 +1,7 @@
 name: Homebrew formula test
 
-# Validates Formula/aegis-boot.rb on every change and periodically
-# against brew CLI updates. Catches three classes of breakage:
+# Validates Formula/aegis-boot.rb on every change. Catches three
+# classes of breakage:
 #
 #   1. Formula syntax / style errors (`brew audit`, `brew style`)
 #   2. Install failure — URL unreachable, sha256 mismatch, missing
@@ -14,9 +14,11 @@ name: Homebrew formula test
 #   * push to main when Formula/ changes — catches the auto-bump
 #     commits from release.yml before users brew upgrade
 #   * pull_request when Formula/ or this workflow changes
-#   * weekly cron (Monday 12:30 UTC, 30 min after catalog-revalidate
-#     so they don't contend) — catches brew-CLI changes that break
-#     the formula even without us touching it
+#   * monthly cron (first Monday of each month, 12:30 UTC) —
+#     catches `brew audit` rule drift between releases with a
+#     cadence proportional to how much the `brew` CLI actually
+#     changes. Dropped from weekly → monthly per 2026-04-24
+#     consensus vote on brew-shrink.
 #   * workflow_dispatch for ad-hoc
 
 on:
@@ -30,7 +32,14 @@ on:
       - "Formula/**"
       - ".github/workflows/brew-test.yml"
   schedule:
-    - cron: "30 12 * * 1"
+    # Monthly: first Monday of each month, 12:30 UTC. Weekly was
+    # dropped after a brew-shrink consensus vote (2026-04-24) found
+    # the weekly run was mostly detecting `brew audit` rule drift
+    # (noise), not product regressions. Monthly catches rule drift
+    # within ~30 days without the weekly noise. If it still turns
+    # out to be pure noise, escalate to release-only by deleting
+    # this schedule block.
+    - cron: "30 12 1-7 * 1"
   workflow_dispatch:
 
 permissions:
@@ -39,7 +48,12 @@ permissions:
 jobs:
   brew-test:
     name: brew audit + install + test
-    runs-on: ubuntu-22.04
+    # macos-14 runner — native arm64 matches the Formula's only
+    # published bottle (macOS Apple Silicon). Linux runners (old
+    # ubuntu-22.04 choice) can't audit a macOS-only formula because
+    # Homebrew's `brew audit` loads all spec-bearing blocks and our
+    # formula has no on_linux url after the brew-shrink vote.
+    runs-on: macos-14
     timeout-minutes: 15
 
     steps:

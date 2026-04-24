@@ -485,13 +485,17 @@ jobs:
             exit 0
           fi
 
-          # Bump version (single line match — unambiguous).
-          sed -i "s|^  version \".*\"|  version \"${version}\"|" Formula/aegis-boot.rb
+          # NOTE: Formula no longer declares an explicit `version "..."`
+          # line — brew scans it from the release URL (required by
+          # `brew audit --strict`; see PR #514). Keeping this section
+          # tag-labelled `Bump version` would mislead readers; skipped.
 
-          # Bump the Linux block — scope the edit to lines between
-          # `on_linux do` and its matching `end` so we don't clobber the
-          # macOS block. Use awk with a small state machine (ranges are
-          # trickier in sed for nested blocks + we want an inner-range).
+          # Linux block was dropped in PR #514 (brew-shrink — macOS-only
+          # Formula). This awk block is retained in case a future
+          # maintainer reintroduces `on_linux do`; until then it runs
+          # but matches nothing (no-op). Kept visible rather than
+          # deleted so the symmetry with the macOS bump below stays
+          # obvious to the next reader.
           if [ -n "$linux_sha" ]; then
             awk -v ver="$version" -v sha="$linux_sha" '
               /^  on_linux do$/ { in_block = 1 }
@@ -505,9 +509,9 @@ jobs:
               { print }
             ' Formula/aegis-boot.rb > Formula/aegis-boot.rb.tmp
             mv Formula/aegis-boot.rb.tmp Formula/aegis-boot.rb
-          else
-            echo "::warning::macOS arm64 sha present but Linux x86_64 sha missing — Linux block left unchanged"
           fi
+          # (else-warning removed — a missing linux_sha is no longer a
+          # Formula-bump concern since the Formula has no Linux block.)
 
           # Bump the macOS block — same scoping trick, different block.
           if [ -n "$macos_sha" ]; then
