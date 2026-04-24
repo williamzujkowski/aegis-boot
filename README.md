@@ -66,7 +66,7 @@ Pre-built binaries ship today for Linux x86_64 and macOS arm64 (Apple Silicon); 
 # Cosign-verified install from the latest GitHub release.
 curl -sSL https://raw.githubusercontent.com/aegis-boot/aegis-boot/main/scripts/install.sh | sh
 
-# OR via Homebrew (Linux):
+# OR via Homebrew (macOS Apple Silicon only):
 brew tap aegis-boot/aegis-boot https://github.com/aegis-boot/aegis-boot
 brew install aegis-boot
 

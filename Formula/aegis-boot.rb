@@ -4,9 +4,22 @@
 #   brew tap aegis-boot/aegis-boot https://github.com/aegis-boot/aegis-boot
 #   brew install aegis-boot
 #
-# Cross-platform support: Linux x86_64 + macOS Apple Silicon (arm64)
-# are shipped as of v0.16.0 (#365 Phase A1 + A3). macOS Intel, Windows,
-# and Linux aarch64 remain open under #365 / #367.
+# Supported platform: macOS Apple Silicon (arm64) only.
+#
+# Linux + Windows + macOS Intel operators: aegis-boot's primary
+# deliverable is the signed `.img` bootable USB image, not the CLI
+# binary. Native channels for those platforms:
+#   - Linux:    scripts/install.sh (cosign-verified), cargo install,
+#               or the distro's package manager.
+#   - Windows:  download the `.img` from GitHub Releases and flash
+#               with Rufus (https://rufus.ie). No Windows CLI needed.
+#   - macOS Intel: deferred (tracked in #365).
+#
+# Why brew is macOS-only here (per consensus vote on brew shrink):
+#   - macOS operators expect `brew install`; it's their canonical
+#     CLI-install channel + gives `brew upgrade` / `brew uninstall`.
+#   - Linux operators have better native channels (apt/dnf/cargo),
+#     so a Linux brew bottle was dead weight.
 class AegisBoot < Formula
   desc "Signed UEFI Secure Boot rescue environment for booting any ISO from USB"
   homepage "https://github.com/aegis-boot/aegis-boot"
@@ -15,50 +28,41 @@ class AegisBoot < Formula
 
   # Runtime dependencies the operator CLI shells out to. Listed
   # explicitly so brew installs them; aegis-boot doctor will also
-  # verify them at runtime. Must precede `on_linux` per brew audit
-  # ComponentsOrder rule.
+  # verify them at runtime.
   depends_on "curl"
   depends_on "gnupg"
   depends_on "gptfdisk" # provides sgdisk
+  depends_on :macos
 
   on_macos do
     on_arm do
-      # macOS arm64 support starts at v0.16.0 (per #365 Phase A1, which
-      # added the release.yml job that builds the aarch64-apple-darwin
-      # binary). Until v0.16.0 ships, this block's URL 404s and `brew
-      # install` fails clean on the download step — no silent-wrong-binary
-      # risk. The sha256 value is 64 zeros so it passes `brew audit` as
-      # syntactically valid hex; bump-brew-formula replaces it with the
-      # real sha when v0.16.0 is tagged.
-      url "https://github.com/aegis-boot/aegis-boot/releases/download/v0.16.0/aegis-boot-aarch64-apple-darwin"
+      # macOS arm64 binary ships with every release (#365 Phase A1).
+      # The sha256 below is bumped per-release by the bump-brew-formula
+      # job in release.yml; 64 zeros = placeholder that passes
+      # `brew audit` syntactically but would fail the download hash
+      # check until the real sha lands.
+      url "https://github.com/aegis-boot/aegis-boot/releases/download/v0.17.0/aegis-boot-aarch64-apple-darwin"
       sha256 "0000000000000000000000000000000000000000000000000000000000000000"
     end
   end
 
-  on_linux do
-    on_intel do
-      # v0.15.0 Linux binary — real URL + sha, `brew install` works today.
-      url "https://github.com/aegis-boot/aegis-boot/releases/download/v0.17.0/aegis-boot-x86_64-linux"
-      sha256 "12a34ca58f26e34dfea8560ca6ebdeb648d6b4071af676fd07ffe8b8a1f73fc4"
-    end
-  end
-
   def install
-    if OS.linux? && Hardware::CPU.intel?
-      bin.install "aegis-boot-x86_64-linux" => "aegis-boot"
-    elsif OS.mac? && Hardware::CPU.arm?
+    if OS.mac? && Hardware::CPU.arm?
       bin.install "aegis-boot-aarch64-apple-darwin" => "aegis-boot"
     else
       odie <<~EOS
-        aegis-boot binaries are currently published for:
-          - Linux x86_64
-          - macOS Apple Silicon (arm64)
+        aegis-boot's Homebrew formula publishes only the macOS Apple
+        Silicon (arm64) binary.
 
-        Support for macOS Intel, Windows, and Linux aarch64 is tracked in:
-          https://github.com/aegis-boot/aegis-boot/issues/365
-          https://github.com/aegis-boot/aegis-boot/issues/367
+        Linux operators: use the cosign-verified install script,
+        `cargo install`, or your distro's package manager. See:
+          https://github.com/aegis-boot/aegis-boot/blob/main/docs/INSTALL.md
 
-        If you're on one of the unsupported arches, build from source:
+        Windows operators: download the `.img` from GitHub Releases
+        and flash with Rufus (https://rufus.ie). No CLI install
+        needed for the typical operator path.
+
+        macOS Intel: deferred. Build from source if needed:
           git clone https://github.com/aegis-boot/aegis-boot
           cd aegis-boot
           cargo install --path crates/aegis-cli
@@ -93,13 +97,9 @@ class AegisBoot < Formula
   end
 
   def caveats
-    binary_name = if OS.mac? && Hardware::CPU.arm?
-      "aegis-boot-aarch64-apple-darwin"
-    else
-      "aegis-boot-x86_64-linux"
-    end
+    binary_name = "aegis-boot-aarch64-apple-darwin"
     <<~EOS
-      aegis-boot is a USB-imaging tool for Linux + macOS operator workstations.
+      aegis-boot is a USB-imaging tool for macOS operator workstations.
 
       Quick start:
         aegis-boot doctor              # check host + stick health

@@ -4,6 +4,20 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 
 ## [Unreleased]
 
+### Homebrew shrink — macOS-only bottle, monthly (not weekly) CI
+
+Ran a `consensus_vote` on whether to drop Homebrew support entirely (now that `.img` + Rufus is the Windows story + `curl | sh` covers Linux). Panel voted 5/6 for **shrink**, not drop (Option S). Key reasoning: `brew install` / `brew upgrade` / `brew uninstall` are macOS operator muscle memory that `curl | sh` doesn't replicate cleanly, and the Linux brew bottle is a niche-of-a-niche that's strictly dominated by apt/dnf/cargo/install-sh.
+
+Changes:
+
+- **`Formula/aegis-boot.rb` drops the Linux x86_64 bottle.** Formula now publishes macOS Apple Silicon (arm64) only. `depends_on :macos` added so `brew install aegis-boot` on a Linux host fails immediately with a message pointing at install-sh + cargo. Install + caveats simplified now that the binary_name branch is single-case.
+- **`.github/workflows/brew-test.yml` weekly cron → monthly.** The weekly run was detecting mostly `brew audit` rule drift (noise), not product regressions. Monthly (first Monday of each month, 12:30 UTC) catches rule drift within ~30 days without the weekly noise. If it still turns out to be pure noise, escalate to release-only by deleting the schedule block.
+- **README Platform-status** Linux-brew line + **`docs/INSTALL.md`** Option B blurb updated to note brew is macOS-only.
+
+`release.yml`'s `bump-brew-formula` job is unchanged — it commits an updated sha256 to `main` on tag push, which triggers `brew-test.yml`'s `push: paths: [Formula/**]` validation within minutes. That's the per-release gate the Contrarian panel role flagged as the replacement for the weekly cron.
+
+Follow-up from the same session: [nexus-agents#2185](https://github.com/williamzujkowski/nexus-agents/issues/2185) filed to add a `scope_steward` / `product_owner` role so future consensus_vote panels catch the "does an existing tool solve this?" question automatically.
+
 ### Windows-native clippy promoted to strict (follow-up to #501)
 
 Cleared the 27 pre-existing `cfg(target_os = "windows")` clippy findings in the `windows_direct_install::*` code paths, then removed the `continue-on-error` flag on the `windows-cargo-check.yml` clippy step. Any new Windows-gated clippy finding now fails CI. Notable semantic fixes along the way:

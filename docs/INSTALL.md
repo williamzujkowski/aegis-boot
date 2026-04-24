@@ -20,7 +20,7 @@ Pick your channel:
 # Option A — cosign-verified install one-liner
 curl -sSL https://raw.githubusercontent.com/aegis-boot/aegis-boot/main/scripts/install.sh | sh
 
-# Option B — Homebrew (Linux only today)
+# Option B — Homebrew (macOS Apple Silicon only)
 brew tap aegis-boot/aegis-boot https://github.com/aegis-boot/aegis-boot
 brew install aegis-boot
 
@@ -28,11 +28,11 @@ brew install aegis-boot
 cargo install --git https://github.com/aegis-boot/aegis-boot --bin aegis-boot --path crates/aegis-cli
 ```
 
-Both A and B install the same binary (Linux x86_64 today; cross-platform tracked in [#123](https://github.com/aegis-boot/aegis-boot/issues/123)).
+Option A (`curl | sh`) works on Linux + macOS. Option B (Homebrew) is macOS-only — Linux operators have better native channels (apt/dnf/cargo/curl-sh); the Linux brew bottle was dropped per a 2026-04-24 consensus vote on brew-shrink.
 
-Option A downloads the latest release's `aegis-boot-x86_64-linux` static binary, verifies its Sigstore cosign signature against this repo's `release.yml` workflow identity, and installs to `/usr/local/bin` (root) or `~/.local/bin` (non-root). The installer itself does NOT need root unless you're installing to `/usr/local/bin`. To inspect first: `curl -sSL ... -o install.sh && less install.sh && sh install.sh`.
+Option A downloads the latest release's `aegis-boot-x86_64-linux` (or `aegis-boot-aarch64-apple-darwin` on macOS arm64) static binary, verifies its Sigstore cosign signature against this repo's `release.yml` workflow identity, and installs to `/usr/local/bin` (root) or `~/.local/bin` (non-root). The installer itself does NOT need root unless you're installing to `/usr/local/bin`. To inspect first: `curl -sSL ... -o install.sh && less install.sh && sh install.sh`.
 
-Option B (Homebrew) auto-installs the Brew-tracked runtime deps (`curl`, `gnupg`, `gptfdisk`, `coreutils`). Runs the same cosign-verifiable binary; verify the cosign signature manually if you want to confirm — see [Formula/README.md](../Formula/README.md).
+Option B (Homebrew) auto-installs the Brew-tracked runtime deps (`curl`, `gnupg`, `gptfdisk`). Runs the same cosign-verifiable macOS arm64 binary; verify the cosign signature manually if you want to confirm — see [Formula/README.md](../Formula/README.md).
 
 ### macOS (Apple Silicon)
 
