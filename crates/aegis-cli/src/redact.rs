@@ -52,16 +52,27 @@ pub(crate) struct Redactor {
 
 impl Redactor {
     pub(crate) fn new(active: bool) -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static CONSTRUCTION_COUNTER: AtomicU64 = AtomicU64::new(0);
+
         let mut salt = [0u8; 16];
-        // Fill salt from nanos-precision timestamp XOR'd with PID. Not
-        // cryptographic salting; just enough entropy to unlink two runs
-        // on the same host.
+        // Fill salt from (nanos-precision timestamp) XOR'd with (PID)
+        // XOR'd with (monotonic in-process counter). Not cryptographic
+        // salting; just enough entropy to unlink two runs on the same
+        // host AND to differentiate two Redactors constructed back-to-
+        // back within the same clock granularity (macOS's
+        // `SystemTime::now` reports microsecond-resolution values on
+        // many configurations — so two consecutive calls can return
+        // identical nanos. The counter closes that gap).
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         let pid = u128::from(std::process::id());
-        let mixed = nanos.wrapping_mul(pid.wrapping_add(1));
+        let counter = u128::from(CONSTRUCTION_COUNTER.fetch_add(1, Ordering::Relaxed));
+        let mixed = nanos
+            .wrapping_mul(pid.wrapping_add(1))
+            .wrapping_add(counter.wrapping_mul(0x9E37_79B9_7F4A_7C15));
         for (i, byte) in mixed.to_le_bytes().iter().enumerate() {
             salt[i] = *byte;
         }
