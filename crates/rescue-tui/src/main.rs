@@ -15,6 +15,7 @@ mod render;
 mod state;
 mod theme;
 mod tpm;
+mod verdict;
 
 use std::env;
 use std::io;
@@ -147,21 +148,16 @@ fn run(roots: &[PathBuf]) -> Result<u8, Box<dyn std::error::Error>> {
             return Err(e.into());
         }
     };
-    // The structured `failed` list is discarded at this layer for now —
-    // #457 adds AppState::failed_isos and the dual-pane rendering that
-    // surfaces these as tier-4 rows. Until then, a count preserves the
-    // existing SKIPPED banner UX.
-    //
-    // The skipped count now sources from failed.len() (iso-parser's
-    // actual parse-failure list) plus any ISOs the count_iso_files walk
-    // saw that iso-parser never even attempted (should be zero under
-    // normal operation but stays defensive).
+    // Log structured failures at DEBUG. The inline SKIPPED banner is
+    // kept for now (sourced from failed.len() plus any on-disk files
+    // iso-parser never even attempted to mount); #458 replaces it with
+    // per-ISO tier-4 rows rendered from AppState::failed_isos.
     for failure in &failed {
         tracing::debug!(
             iso = %failure.iso_path.display(),
             reason = %failure.reason,
             kind = ?failure.kind,
-            "iso-probe: failed ISO (will surface in rescue-tui after #457)"
+            "iso-probe: failed ISO (surfaces as tier-4 row once #458 lands)"
         );
     }
     let counted_but_not_attempted = on_disk_iso_count.saturating_sub(isos.len() + failed.len());
@@ -194,6 +190,7 @@ fn run(roots: &[PathBuf]) -> Result<u8, Box<dyn std::error::Error>> {
         );
     }
     let mut state = AppState::new(isos)
+        .with_failed_isos(failed)
         .with_scanned_roots(roots.to_vec())
         .with_skipped_iso_count(skipped);
     if let Ok(name) = env::var("AEGIS_THEME") {

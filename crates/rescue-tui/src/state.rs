@@ -91,6 +91,13 @@ pub enum Screen {
 pub struct AppState {
     /// All discovered ISOs.
     pub isos: Vec<DiscoveredIso>,
+    /// `.iso` files on disk that iso-parser couldn't extract boot
+    /// entries from (mount failure, unfamiliar layout, truncated
+    /// file). Carried alongside [`Self::isos`] so the TUI can render
+    /// tier-4 rows with the per-file reason — the list stays
+    /// exhaustive even when parse fails. Populated from
+    /// [`iso_probe::DiscoveryReport::failed`] in `main.rs`. (#457)
+    pub failed_isos: Vec<iso_probe::FailedIso>,
     /// Current screen.
     pub screen: Screen,
     /// Per-ISO cmdline overrides keyed by index. When absent the
@@ -308,6 +315,7 @@ impl AppState {
     pub fn new(isos: Vec<DiscoveredIso>) -> Self {
         Self {
             isos,
+            failed_isos: Vec::new(),
             screen: Screen::List { selected: 0 },
             cmdline_overrides: std::collections::HashMap::new(),
             theme: Theme::default_theme(),
@@ -320,6 +328,18 @@ impl AppState {
             scanned_roots: Vec::new(),
             skipped_iso_count: 0,
         }
+    }
+
+    /// Attach the list of ISOs that iso-parser couldn't extract boot
+    /// entries from — carried alongside the successful ISOs so the
+    /// TUI can render tier-4 rows in the list instead of hiding them
+    /// behind a count. Populated from
+    /// [`iso_probe::DiscoveryReport::failed`] in `main.rs`. Tests
+    /// default to an empty vec via [`Self::new`]. (#457)
+    #[must_use]
+    pub fn with_failed_isos(mut self, failed: Vec<iso_probe::FailedIso>) -> Self {
+        self.failed_isos = failed;
+        self
     }
 
     /// Attach the paths `discover()` was asked to scan. Called from

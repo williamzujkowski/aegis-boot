@@ -146,7 +146,7 @@ pub enum ProbeError {
 /// image, unfamiliar layout, truncated file). rescue-tui renders
 /// these as tier-4 rows with a descriptive reason instead of hiding
 /// them. (#456)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscoveryReport {
     /// ISOs that mounted + parsed successfully.
     pub isos: Vec<DiscoveredIso>,
@@ -157,7 +157,7 @@ pub struct DiscoveryReport {
 /// A `.iso` file found on disk that failed to parse. Paired with a
 /// human-readable reason and a structured [`FailureKind`] for
 /// downstream tier mapping.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FailedIso {
     /// Absolute path to the broken `.iso` file.
     pub iso_path: PathBuf,

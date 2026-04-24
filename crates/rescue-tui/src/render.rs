@@ -13,6 +13,7 @@ use ratatui::{
 
 use crate::state::{AppState, Screen, SecureBootStatus, quirks_summary};
 use crate::theme::Theme;
+use crate::verdict::TrustVerdict;
 
 /// Render the current frame for the given state.
 ///
@@ -97,7 +98,7 @@ fn draw_trust_challenge(
     let Some(iso) = state.isos.get(selected) else {
         return;
     };
-    let verdict = trust_verdict(iso);
+    let verdict = trust_verdict(iso, state);
     let lines = vec![
         Line::from(Span::styled(
             "Degraded trust — typed confirmation required",
@@ -339,67 +340,11 @@ fn draw_footer(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     frame.render_widget(Paragraph::new(hint), area);
 }
 
-/// Android Verified Boot-style coarse verdict for a single ISO. One of
-/// four states drives a colored banner on the Confirm screen. (#93)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TrustVerdict {
-    /// Hash OR signature verified (strongest signal that sig exists).
-    Green,
-    /// Signature parsed but signer not in trust store (YELLOW on Android VB).
-    Yellow,
-    /// Bytes tampered / forged signature / not kexec-bootable.
-    Red,
-    /// No verification material at all.
-    Gray,
-}
-
-impl TrustVerdict {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Green => "GREEN  VERIFIED",
-            Self::Yellow => "YELLOW UNTRUSTED SIGNER",
-            Self::Red => "RED    DO NOT BOOT",
-            Self::Gray => "GRAY   NO VERIFICATION",
-        }
-    }
-
-    fn reason(self) -> &'static str {
-        match self {
-            Self::Green => "hash + signature checked against trusted key",
-            Self::Yellow => "signature parsed but key is not in AEGIS_TRUSTED_KEYS",
-            Self::Red => "integrity failure — kexec will be refused",
-            Self::Gray => "no sibling .sha256 or .minisig found",
-        }
-    }
-
-    fn color(self, theme: &Theme) -> ratatui::style::Color {
-        use ratatui::style::Color;
-        match self {
-            Self::Green => theme.success,
-            Self::Yellow => theme.warning,
-            Self::Red => theme.error,
-            Self::Gray => Color::Gray,
-        }
-    }
-}
-
-fn trust_verdict(iso: &iso_probe::DiscoveredIso) -> TrustVerdict {
-    use iso_probe::{HashVerification as H, Quirk, SignatureVerification as S};
-    if iso.quirks.contains(&Quirk::NotKexecBootable)
-        || matches!(iso.hash_verification, H::Mismatch { .. })
-        || matches!(iso.signature_verification, S::Forged { .. })
-    {
-        return TrustVerdict::Red;
-    }
-    if matches!(iso.signature_verification, S::Verified { .. })
-        || matches!(iso.hash_verification, H::Verified { .. })
-    {
-        return TrustVerdict::Green;
-    }
-    if matches!(iso.signature_verification, S::KeyNotTrusted { .. }) {
-        return TrustVerdict::Yellow;
-    }
-    TrustVerdict::Gray
+/// Derive the trust verdict for an ISO. Delegates to the canonical
+/// [`TrustVerdict::from_discovered`] in [`crate::verdict`] so there's
+/// a single source of truth for the tier model (#457).
+fn trust_verdict(iso: &iso_probe::DiscoveredIso, state: &AppState) -> TrustVerdict {
+    TrustVerdict::from_discovered(iso, state.secure_boot)
 }
 
 /// Single-character status glyph for a list row, encoding the worst
@@ -413,8 +358,9 @@ fn trust_verdict(iso: &iso_probe::DiscoveredIso) -> TrustVerdict {
 fn render_iso_list_item<'a>(
     iso: &iso_probe::DiscoveredIso,
     scanned_roots: &[std::path::PathBuf],
+    secure_boot: SecureBootStatus,
 ) -> ListItem<'a> {
-    let glyph = status_glyph(iso);
+    let glyph = TrustVerdict::from_discovered(iso, secure_boot).glyph();
     let qs = quirks_summary(iso);
     // Prefer pretty_name over label when present so operators see the
     // version (e.g. "Ubuntu 24.04.2 LTS" vs just "Ubuntu"). (#119)
@@ -472,26 +418,6 @@ fn iso_folder_prefix(iso_path: &std::path::Path, roots: &[std::path::PathBuf]) -
     } else {
         Some(parts.join("/"))
     }
-}
-
-fn status_glyph(iso: &iso_probe::DiscoveredIso) -> &'static str {
-    use iso_probe::{HashVerification as H, Quirk, SignatureVerification as S};
-    if iso.quirks.contains(&Quirk::NotKexecBootable) {
-        return "[X]"; // can't kexec at all
-    }
-    if matches!(iso.hash_verification, H::Mismatch { .. }) {
-        return "[!]"; // tampered
-    }
-    if matches!(iso.signature_verification, S::Forged { .. }) {
-        return "[!]"; // crypto fail
-    }
-    if matches!(iso.signature_verification, S::Verified { .. }) {
-        return "[+]"; // signed + trusted
-    }
-    if matches!(iso.hash_verification, H::Verified { .. }) {
-        return "[~]"; // hash ok, sig absent
-    }
-    "[ ]"
 }
 
 fn draw_help_overlay(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
@@ -776,7 +702,9 @@ fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usiz
     let items: Vec<ListItem> = entries
         .iter()
         .map(|e| match e {
-            ViewEntry::Iso(i) => render_iso_list_item(&state.isos[*i], &state.scanned_roots),
+            ViewEntry::Iso(i) => {
+                render_iso_list_item(&state.isos[*i], &state.scanned_roots, state.secure_boot)
+            }
             ViewEntry::RescueShell => {
                 ListItem::new("[#] rescue shell (busybox)  — dropped from rescue-tui")
             }
@@ -826,9 +754,10 @@ fn draw_confirm(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: u
         "Cmdline:  "
     };
 
-    // Android VB-style verdict line (#93). One coarse GREEN / YELLOW /
-    // RED / GRAY state derived from hash + signature + quirk results.
-    let verdict = trust_verdict(iso);
+    // Trust-tier verdict line. One of the 6 TrustVerdict variants
+    // (#457 extends the original GREEN/YELLOW/RED/GRAY model to also
+    // surface ParseFailed / SecureBootBlocked / HashMismatch).
+    let verdict = trust_verdict(iso, state);
     let verdict_line = Line::from(vec![
         Span::styled("Verdict:  ", Style::default().add_modifier(Modifier::BOLD)),
         Span::styled(
@@ -1165,7 +1094,7 @@ fn draw_error(
                 "Verdict:    ",
                 Style::default().add_modifier(Modifier::BOLD),
             ),
-            Span::raw(trust_verdict(iso).label().to_string()),
+            Span::raw(trust_verdict(iso, state).label().to_string()),
         ]));
         lines.push(Line::from(vec![
             Span::styled(
