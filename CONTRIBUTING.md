@@ -85,7 +85,7 @@ Every PR runs the following — each is also runnable locally. Running them befo
 | Workspace version drift | CI job, no local gate | `.github/workflows/ci.yml` |
 | Semgrep Rust SAST | GitHub-only | `.github/workflows/ci.yml` (job `sast`) |
 | gitleaks secret scan | GitHub-only | `.gitleaks.toml` |
-| Miri UB detection (kexec-loader) | `cargo +nightly miri test -p kexec-loader` | `.github/workflows/miri-kexec-loader.yml` |
+| Miri UB detection (workspace) | `cargo +nightly miri test -p <crate> [--lib]` | `.github/workflows/miri.yml` |
 | Real-hardware / OVMF boot smoke | GitHub-only | `.github/workflows/direct-install-e2e.yml`, `ovmf-secboot.yml` |
 | Trust-tier + keybinding doc drift | `cargo run -p rescue-tui --bin tiers-docgen -- --check` | `crates/rescue-tui/src/verdict.rs`, `crates/rescue-tui/src/keybindings.rs` |
 | Typo gate (#485) | `typos` (install via `cargo install typos-cli --locked`) | [`.typos.toml`](./.typos.toml) |

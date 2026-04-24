@@ -1,0 +1,110 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# Miri UB detection across the workspace (#489).
+#
+# Replaces the previous `miri-kexec-loader.yml` with a matrix pass
+# over every library crate where UB could realistically hide. The
+# kexec-loader entry is load-bearing (strict, blocks CI) since that
+# crate holds the only `unsafe` surface the workspace permits. The
+# other entries are informational (continue-on-error: true) for
+# the first rollout — miri catches UB in proc-macro-generated code
+# and transitive dep internals that we don't control, and a hit
+# there shouldn't block an unrelated PR until we've triaged it.
+#
+# Promote informational entries to strict by removing
+# `continue-on-error` once a full week of CI shows them clean.
+#
+# Paths kept deliberately broad: any .rs change in the workspace +
+# this workflow file + dependency changes (Cargo.lock) kick miri.
+# Miri is ~2-3 min per crate on a warm cache, so a 4-crate matrix
+# sits around 10 min which is fine for a security signal this
+# useful.
+#
+# What miri catches: OwnedFd not double-closed, CString lifetime
+# violations, stacked-borrows aliasing, out-of-bounds reads in the
+# stdlib collection impls, ABI mismatches between #[no_mangle] and
+# extern "C" declarations.
+#
+# What miri does NOT catch: real syscall behavior (miri doesn't
+# execute them), async runtime scheduling (tokio UB would need loom
+# or real execution), data races that only manifest under specific
+# scheduling (also loom territory).
+
+name: Miri (workspace UB detection)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/miri.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/miri.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  miri:
+    name: miri / ${{ matrix.crate }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # kexec-loader — the crate that owns the workspace's only
+          # `unsafe` surface (libc::syscall(SYS_kexec_file_load)).
+          # This entry stays strict: a new UB finding blocks CI.
+          - crate: kexec-loader
+            test-args: "-p kexec-loader"
+            informational: false
+          # iso-parser — `forbid(unsafe_code)` in source but serde +
+          # tokio in deps use unsafe. --lib skips the loop-mount
+          # integration tests (filesystem I/O miri can't simulate).
+          - crate: iso-parser
+            test-args: "-p iso-parser --lib"
+            informational: true
+          # iso-probe — forbids unsafe too; pulls minisign +
+          # sha2 which use unsafe for performance. --lib again to
+          # skip the mount_integration test that needs real loop
+          # devices.
+          - crate: iso-probe
+            test-args: "-p iso-probe --lib"
+            informational: true
+          # aegis-wire-formats — pure serde + schemars; simplest
+          # surface. First promotion candidate to strict.
+          - crate: aegis-wire-formats
+            test-args: "-p aegis-wire-formats --lib"
+            informational: true
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust nightly + miri
+        # Miri only ships on nightly. Pinning the toolchain name, not
+        # a specific date, so we track the rolling nightly — but we'll
+        # catch and pin if a regression breaks the workspace pass.
+        run: |
+          rustup toolchain install nightly --profile minimal --component miri
+          rustup override set nightly
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: miri-${{ matrix.crate }}
+
+      - name: cargo +nightly miri test ${{ matrix.test-args }}
+        continue-on-error: ${{ matrix.informational }}
+        env:
+          # Disable isolation so miri accepts the build-script env
+          # reads + cargo-fetch cache that run before the test
+          # harness. Same flag the old kexec-loader workflow used.
+          MIRIFLAGS: "-Zmiri-disable-isolation"
+        run: cargo +nightly miri test ${{ matrix.test-args }}
