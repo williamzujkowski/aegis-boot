@@ -1,0 +1,10 @@
+[
+  {
+    "epoch": 1,
+    "pubkey_file": "keys/maintainer-epoch-1.pub",
+    "pubkey_fingerprint": "RWSldhpvdTOXAKMBeOheDkE8N2rCPsD9Duct4n2ToDOf/cRqRijjpF/I",
+    "valid_from": "2026-04-24T14:09:30-04:00",
+    "expires_at": null,
+    "note": "Initial maintainer-held key, solo-maintainer epoch. No scheduled rotation; rotate only on compromise per ADR 0002 §3.4."
+  }
+]
