@@ -136,18 +136,36 @@ fn run(roots: &[PathBuf]) -> Result<u8, Box<dyn std::error::Error>> {
     // operators can act without reading journalctl. (#85 Tier 2)
     let on_disk_iso_count = count_iso_files_on_disk(roots);
 
-    let isos = match iso_probe::discover(roots) {
-        Ok(v) => v,
+    let (isos, failed) = match iso_probe::discover(roots) {
+        Ok(report) => (report.isos, report.failed),
         Err(iso_probe::ProbeError::NoIsosFound) => {
             tracing::info!("no ISOs discovered under any root");
-            Vec::new()
+            (Vec::new(), Vec::new())
         }
         Err(e) => {
             tracing::error!(error = %e, "ISO discovery failed");
             return Err(e.into());
         }
     };
-    let skipped = on_disk_iso_count.saturating_sub(isos.len());
+    // The structured `failed` list is discarded at this layer for now —
+    // #457 adds AppState::failed_isos and the dual-pane rendering that
+    // surfaces these as tier-4 rows. Until then, a count preserves the
+    // existing SKIPPED banner UX.
+    //
+    // The skipped count now sources from failed.len() (iso-parser's
+    // actual parse-failure list) plus any ISOs the count_iso_files walk
+    // saw that iso-parser never even attempted (should be zero under
+    // normal operation but stays defensive).
+    for failure in &failed {
+        tracing::debug!(
+            iso = %failure.iso_path.display(),
+            reason = %failure.reason,
+            kind = ?failure.kind,
+            "iso-probe: failed ISO (will surface in rescue-tui after #457)"
+        );
+    }
+    let counted_but_not_attempted = on_disk_iso_count.saturating_sub(isos.len() + failed.len());
+    let skipped = failed.len() + counted_but_not_attempted;
     // Startup banner to stderr — mirrored via tracing::info! so structured
     // consumers (journald, CI smoke greps) see the same signal as humans
     // reading the serial console directly.

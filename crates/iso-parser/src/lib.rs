@@ -90,6 +90,98 @@ pub enum IsoError {
     PathTraversal(String),
 }
 
+/// Result of a directory scan — successful boot entries plus any
+/// per-file failures that the caller should surface to the user.
+///
+/// Returned by [`IsoParser::scan_directory_with_failures`]. Unlike the
+/// legacy [`IsoParser::scan_directory`] which silently drops failed
+/// ISOs, this shape preserves the full on-disk inventory so a UI
+/// (e.g. rescue-tui) can render a descriptive row for each broken
+/// ISO instead of hiding it behind a "skipped" count. (#456)
+#[derive(Debug, Clone)]
+pub struct ScanReport {
+    /// ISOs that were mounted, parsed, and yielded at least one boot
+    /// entry.
+    pub entries: Vec<BootEntry>,
+    /// ISOs that were found on disk but could not be processed.
+    /// `reason` is human-readable; `kind` is structured for tier
+    /// decisions downstream.
+    pub failures: Vec<ScanFailure>,
+}
+
+/// A single ISO file that failed to yield boot entries during a
+/// directory scan.
+#[derive(Debug, Clone)]
+pub struct ScanFailure {
+    /// Absolute path to the `.iso` file that failed.
+    pub iso_path: PathBuf,
+    /// Human-readable reason, rendered safely in TUIs (no control
+    /// characters, source-error `Display` already applied).
+    pub reason: String,
+    /// Structured classification for downstream tier mapping.
+    pub kind: ScanFailureKind,
+}
+
+/// Structured classification of why an ISO failed to yield boot
+/// entries. A 1-to-1 map from the per-file variants of [`IsoError`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanFailureKind {
+    /// Filesystem error reading the ISO or its mount point.
+    IoError,
+    /// Loop-mounting the ISO failed (wrong format, permission denied,
+    /// no loop device available).
+    MountFailed,
+    /// Mount succeeded but no recognized boot entries were found on
+    /// the ISO's filesystem.
+    NoBootEntries,
+}
+
+impl ScanFailureKind {
+    fn from_iso_error(e: &IsoError) -> Self {
+        match e {
+            IsoError::MountFailed(_) => Self::MountFailed,
+            IsoError::NoBootEntries(_) => Self::NoBootEntries,
+            // Io and PathTraversal both map to IoError. PathTraversal
+            // is a caller-supplied error that should never surface at
+            // this layer (path validation runs before the per-ISO
+            // loop); defensively funneled here so a future regression
+            // surfaces as a generic IoError rather than a panic.
+            IsoError::Io(_) | IsoError::PathTraversal(_) => Self::IoError,
+        }
+    }
+}
+
+/// Maximum length (in bytes) of a [`ScanFailure::reason`] string.
+/// Long enough to include the original error's meaningful prefix
+/// (mount errors typically fit in ~120 chars) while keeping TUI
+/// rendering bounded.
+const MAX_REASON_LEN: usize = 256;
+
+/// Produce a TUI-safe version of an error string: control characters
+/// replaced with spaces, trimmed, truncated to [`MAX_REASON_LEN`].
+/// Non-ASCII is preserved (UTF-8 safe).
+fn sanitize_reason(raw: &str) -> String {
+    let cleaned: String = raw
+        .chars()
+        .map(|c| {
+            // Allow printable + space; replace any other control char
+            // with a single space so the TUI's line-layout math doesn't
+            // break. Tab is also dropped (would shift columns).
+            if c.is_control() { ' ' } else { c }
+        })
+        .collect();
+    let trimmed = cleaned.trim();
+    if trimmed.len() <= MAX_REASON_LEN {
+        return trimmed.to_string();
+    }
+    // Truncate on a char boundary so we never split a multibyte char.
+    let mut end = MAX_REASON_LEN;
+    while !trimmed.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &trimmed[..end])
+}
+
 /// Represents a discovered boot entry from an ISO
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BootEntry {
@@ -610,34 +702,77 @@ impl<E: IsoEnvironment> IsoParser<E> {
         Self { env }
     }
 
-    /// Scan a directory for ISO files and extract boot entries
-    /// Scan a directory for `.iso` files, mount + parse each one, and
-    /// return the collected [`BootEntry`] records.
+    /// Scan a directory for ISO files and extract boot entries.
     ///
     /// The `async` signature is retained for backwards source-compat
     /// with callers that `.await` it; the function itself performs no
     /// async work today.
     ///
+    /// This is the legacy entry point — it discards per-ISO failures.
+    /// Prefer [`IsoParser::scan_directory_with_failures`] for new
+    /// callers that need to surface broken ISOs to the user (#456).
+    ///
     /// # Errors
     ///
     /// Returns [`IsoError::PathTraversal`] if `path` escapes
-    /// `/` (degenerate), or [`IsoError::Io`] on a filesystem read
-    /// failure during the ISO-file discovery walk. Per-ISO parse /
-    /// mount failures are silently skipped and logged at `debug`; the
-    /// overall scan succeeds as long as at least the walk works.
+    /// `/` (degenerate), [`IsoError::Io`] on a filesystem read failure
+    /// during the ISO-file discovery walk, or [`IsoError::NoBootEntries`]
+    /// when every discovered ISO failed to yield entries (legacy
+    /// behavior — preserved for callers that still rely on it).
+    #[instrument(skip(self))]
+    pub async fn scan_directory(&self, path: &std::path::Path) -> Result<Vec<BootEntry>, IsoError> {
+        let report = self.scan_directory_with_failures(path).await?;
+        if report.entries.is_empty() {
+            // Preserve the legacy contract: "no usable entries" is a
+            // NoBootEntries error even when .iso files were found but
+            // all failed to parse.
+            return Err(IsoError::NoBootEntries(path.to_string_lossy().to_string()));
+        }
+        Ok(report.entries)
+    }
+
+    /// Scan a directory for `.iso` files, mount + parse each one, and
+    /// return a [`ScanReport`] with both successful entries and
+    /// per-file failures.
+    ///
+    /// Unlike [`IsoParser::scan_directory`], this does NOT return
+    /// [`IsoError::NoBootEntries`] when every on-disk ISO failed to
+    /// parse — instead it returns `Ok(ScanReport { entries: [],
+    /// failures: […] })`. `NoBootEntries` is reserved for the stricter
+    /// case "the walk found zero `.iso` files", which lets the caller
+    /// distinguish an empty stick from a stick full of broken ISOs.
+    /// (#456)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IsoError::PathTraversal`] if `path` escapes `/`,
+    /// [`IsoError::Io`] on a filesystem read failure during the walk,
+    /// or [`IsoError::NoBootEntries`] when zero `.iso` files were
+    /// found under `path`.
     #[instrument(skip(self))]
     #[allow(clippy::unused_async)]
-    pub async fn scan_directory(&self, path: &std::path::Path) -> Result<Vec<BootEntry>, IsoError> {
-        let mut entries = Vec::new();
-
-        // Validate base path
+    pub async fn scan_directory_with_failures(
+        &self,
+        path: &std::path::Path,
+    ) -> Result<ScanReport, IsoError> {
         let validated_path = self.env.validate_path(std::path::Path::new("/"), path)?;
 
         debug!("Scanning directory: {:?}", validated_path);
 
         let iso_files = self.find_iso_files(&validated_path)?;
         let attempted = iso_files.len();
-        let mut skipped = 0usize;
+
+        if attempted == 0 {
+            // Walk found zero `.iso` files — this is the only case we
+            // treat as "no ISOs". A directory that had files but they
+            // all failed to parse returns Ok with populated failures.
+            return Err(IsoError::NoBootEntries(
+                validated_path.to_string_lossy().to_string(),
+            ));
+        }
+
+        let mut entries = Vec::new();
+        let mut failures = Vec::new();
 
         for iso_path in iso_files {
             debug!("Processing ISO: {:?}", iso_path);
@@ -645,15 +780,21 @@ impl<E: IsoEnvironment> IsoParser<E> {
             match self.process_iso(&iso_path).await {
                 Ok(mut iso_entries) => entries.append(&mut iso_entries),
                 Err(e) => {
-                    skipped += 1;
-                    // Upgraded from debug → warn so silent-skip failures
-                    // surface on the serial console without operators
-                    // having to enable debug tracing. (#68)
+                    // Warn-level so silent-skip failures surface on the
+                    // serial console without operators needing debug
+                    // tracing. (#68) The failure is ALSO captured in
+                    // the ScanReport so TUIs can render a descriptive
+                    // row. (#456)
                     tracing::warn!(
                         iso = %iso_path.display(),
                         error = %e,
                         "iso-parser: skipped ISO (mount/parse failed)"
                     );
+                    failures.push(ScanFailure {
+                        iso_path: iso_path.clone(),
+                        reason: sanitize_reason(&e.to_string()),
+                        kind: ScanFailureKind::from_iso_error(&e),
+                    });
                 }
             }
         }
@@ -662,17 +803,11 @@ impl<E: IsoEnvironment> IsoParser<E> {
             root = %validated_path.display(),
             found_isos = attempted,
             extracted_entries = entries.len(),
-            skipped_isos = skipped,
+            skipped_isos = failures.len(),
             "iso-parser: scan summary"
         );
 
-        if entries.is_empty() {
-            return Err(IsoError::NoBootEntries(
-                validated_path.to_string_lossy().to_string(),
-            ));
-        }
-
-        Ok(entries)
+        Ok(ScanReport { entries, failures })
     }
 
     /// Find all ISO files in a directory recursively
@@ -1267,6 +1402,10 @@ mod tests {
     struct MockIsoEnvironment {
         files: HashMap<PathBuf, MockEntry>,
         mount_points: Mutex<Vec<PathBuf>>,
+        /// Per-ISO mount failure injection for exercising the
+        /// failure-surfacing path in [`IsoParser::scan_directory_with_failures`].
+        /// Key = absolute ISO path, value = `MountFailed` reason string.
+        mount_failures: HashMap<PathBuf, String>,
     }
 
     #[derive(Debug, Clone)]
@@ -1280,7 +1419,17 @@ mod tests {
             Self {
                 files: HashMap::new(),
                 mount_points: Mutex::new(Vec::new()),
+                mount_failures: HashMap::new(),
             }
+        }
+
+        /// Register an ISO path whose [`IsoEnvironment::mount_iso`] call
+        /// should fail with [`IsoError::MountFailed`] carrying `reason`.
+        /// Used by the scan-failure surfacing tests.
+        fn with_failing_mount(mut self, iso_path: &Path, reason: &str) -> Self {
+            self.mount_failures
+                .insert(iso_path.to_path_buf(), reason.to_string());
+            self
         }
 
         fn with_iso(distribution: Distribution) -> Self {
@@ -1428,6 +1577,9 @@ mod tests {
         }
 
         fn mount_iso(&self, iso_path: &std::path::Path) -> Result<PathBuf, IsoError> {
+            if let Some(reason) = self.mount_failures.get(iso_path) {
+                return Err(IsoError::MountFailed(reason.clone()));
+            }
             let mount_point = PathBuf::from(format!(
                 "/mock_mount/{}",
                 iso_path
@@ -1889,5 +2041,205 @@ ID=ubuntu
         // external crate can pattern-match on).
         let iso_distro = Distribution::Windows;
         assert!(matches!(iso_distro, Distribution::Windows));
+    }
+
+    // ---- #456 — ScanReport / ScanFailure surfacing ----
+
+    #[test]
+    fn sanitize_reason_trims_whitespace() {
+        assert_eq!(sanitize_reason("  hello  "), "hello");
+    }
+
+    #[test]
+    fn sanitize_reason_replaces_control_chars_with_spaces() {
+        // Newlines, tabs, and C0 controls all become single spaces so
+        // the TUI's line-layout math doesn't break on multi-line error
+        // strings (common from mount's stderr).
+        let input = "mount failed:\nwrong fs type\tor bad\x01option";
+        let out = sanitize_reason(input);
+        assert!(!out.contains('\n'));
+        assert!(!out.contains('\t'));
+        assert!(!out.contains('\x01'));
+        assert!(out.contains("mount failed"));
+        assert!(out.contains("wrong fs type"));
+    }
+
+    #[test]
+    fn sanitize_reason_preserves_utf8() {
+        let out = sanitize_reason("données non prises en charge — système Win32 ≠ ext4");
+        assert!(out.contains("données"));
+        assert!(out.contains('≠'));
+    }
+
+    #[test]
+    fn sanitize_reason_truncates_at_char_boundary() {
+        // Long string with multibyte chars near the truncation point
+        // must not split a char.
+        let long = "é".repeat(200); // 400 bytes, well over MAX_REASON_LEN
+        let out = sanitize_reason(&long);
+        // Must end with the ellipsis we appended.
+        assert!(
+            out.ends_with('…'),
+            "truncated output must end with …, got {out}"
+        );
+        // Must be valid UTF-8 (implicit — Rust guarantees this for String).
+        assert!(out.chars().all(|c| c == 'é' || c == '…'));
+    }
+
+    #[test]
+    fn scan_failure_kind_maps_from_iso_error() {
+        assert_eq!(
+            ScanFailureKind::from_iso_error(&IsoError::MountFailed("x".into())),
+            ScanFailureKind::MountFailed
+        );
+        assert_eq!(
+            ScanFailureKind::from_iso_error(&IsoError::NoBootEntries("x".into())),
+            ScanFailureKind::NoBootEntries
+        );
+        assert_eq!(
+            ScanFailureKind::from_iso_error(&IsoError::Io(std::io::Error::other("io"))),
+            ScanFailureKind::IoError
+        );
+        // PathTraversal is not a per-file error; map defensively to IoError.
+        assert_eq!(
+            ScanFailureKind::from_iso_error(&IsoError::PathTraversal("x".into())),
+            ScanFailureKind::IoError
+        );
+    }
+
+    /// Build a MockIsoEnvironment with `/isos/` containing `a.iso` and
+    /// `b.iso` — `a.iso` mounts successfully with an Arch layout;
+    /// `b.iso` can be configured to fail via `with_failing_mount`.
+    ///
+    /// The `/mock_mount/a` subtree is populated with an Arch-style
+    /// layout so `a.iso` parses; `b.iso` mounts to `/mock_mount/b`
+    /// which is intentionally empty (so even if b.iso mounts, it
+    /// produces no entries — callers that want a mount-failure
+    /// specifically must call `with_failing_mount`).
+    fn mock_with_two_isos() -> MockIsoEnvironment {
+        let mut env = MockIsoEnvironment::new();
+        // Register the top-level /isos directory.
+        env.files.insert(
+            PathBuf::from("/isos"),
+            MockEntry::Directory(vec![
+                PathBuf::from("/isos/a.iso"),
+                PathBuf::from("/isos/b.iso"),
+            ]),
+        );
+        env.files
+            .insert(PathBuf::from("/isos/a.iso"), MockEntry::File);
+        env.files
+            .insert(PathBuf::from("/isos/b.iso"), MockEntry::File);
+
+        // Arch layout under /mock_mount/a (matches mount_iso's
+        // filename-based mount-point derivation).
+        let a_root = PathBuf::from("/mock_mount/a");
+        env.files.insert(
+            a_root.clone(),
+            MockEntry::Directory(vec![a_root.join("boot")]),
+        );
+        env.files.insert(
+            a_root.join("boot"),
+            MockEntry::Directory(vec![
+                a_root.join("boot/vmlinuz"),
+                a_root.join("boot/initrd.img"),
+            ]),
+        );
+        env.files
+            .insert(a_root.join("boot/vmlinuz"), MockEntry::File);
+        env.files
+            .insert(a_root.join("boot/initrd.img"), MockEntry::File);
+
+        env
+    }
+
+    #[tokio::test]
+    async fn scan_directory_with_failures_empty_dir_errors_no_boot_entries() {
+        // Walk found zero .iso files — still an error so callers can
+        // distinguish empty-stick from stick-with-broken-ISOs.
+        let mut env = MockIsoEnvironment::new();
+        env.files
+            .insert(PathBuf::from("/isos"), MockEntry::Directory(Vec::new()));
+        let parser = IsoParser::new(env);
+        let err = parser
+            .scan_directory_with_failures(Path::new("/isos"))
+            .await
+            .expect_err("empty dir must error");
+        assert!(matches!(err, IsoError::NoBootEntries(_)));
+    }
+
+    #[tokio::test]
+    async fn scan_directory_with_failures_all_failed_returns_ok_with_failures() {
+        // Directory has ISOs but every mount fails — we return Ok with
+        // empty entries + populated failures so rescue-tui can show a
+        // descriptive row per broken ISO instead of hiding them.
+        let env = mock_with_two_isos()
+            .with_failing_mount(
+                Path::new("/isos/a.iso"),
+                "mount: wrong fs type, bad option, bad superblock",
+            )
+            .with_failing_mount(Path::new("/isos/b.iso"), "mount: no loop device available");
+        let parser = IsoParser::new(env);
+
+        let report = parser
+            .scan_directory_with_failures(Path::new("/isos"))
+            .await
+            .expect("all-failed is Ok, not an error");
+        assert!(report.entries.is_empty(), "no ISOs should parse");
+        assert_eq!(report.failures.len(), 2);
+        // Failures must carry path + sanitized reason + kind.
+        let by_path: HashMap<_, _> = report
+            .failures
+            .iter()
+            .map(|f| (f.iso_path.clone(), f.clone()))
+            .collect();
+        let a = &by_path[&PathBuf::from("/isos/a.iso")];
+        assert_eq!(a.kind, ScanFailureKind::MountFailed);
+        assert!(a.reason.contains("wrong fs type"));
+        let b = &by_path[&PathBuf::from("/isos/b.iso")];
+        assert_eq!(b.kind, ScanFailureKind::MountFailed);
+        assert!(b.reason.contains("no loop device"));
+    }
+
+    #[tokio::test]
+    async fn scan_directory_with_failures_mixed_returns_entries_and_failures() {
+        // a.iso mounts (Arch), b.iso fails — report carries both.
+        let env = mock_with_two_isos()
+            .with_failing_mount(Path::new("/isos/b.iso"), "mount: input/output error");
+        let parser = IsoParser::new(env);
+
+        let report = parser
+            .scan_directory_with_failures(Path::new("/isos"))
+            .await
+            .expect("mixed is Ok");
+        assert!(
+            !report.entries.is_empty(),
+            "a.iso should produce at least one entry"
+        );
+        assert!(
+            report.entries.iter().any(|e| e.source_iso == "a.iso"),
+            "entries must include a.iso"
+        );
+        assert_eq!(report.failures.len(), 1);
+        assert_eq!(report.failures[0].iso_path, PathBuf::from("/isos/b.iso"));
+        assert!(report.failures[0].reason.contains("input/output"));
+    }
+
+    #[tokio::test]
+    async fn scan_directory_legacy_preserves_no_boot_entries_on_all_failed() {
+        // The old scan_directory contract: when every on-disk ISO
+        // fails to parse, the overall result is NoBootEntries. This
+        // preserves the callsite behavior of any pre-#456 consumer
+        // that pattern-matches on that error.
+        let env = mock_with_two_isos()
+            .with_failing_mount(Path::new("/isos/a.iso"), "mount fail a")
+            .with_failing_mount(Path::new("/isos/b.iso"), "mount fail b");
+        let parser = IsoParser::new(env);
+
+        let err = parser
+            .scan_directory(Path::new("/isos"))
+            .await
+            .expect_err("legacy wrapper must error when all failed");
+        assert!(matches!(err, IsoError::NoBootEntries(_)));
     }
 }

@@ -38,7 +38,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-pub use iso_parser::{BootEntry, Distribution, IsoError};
+pub use iso_parser::{BootEntry, Distribution, IsoError, ScanFailure, ScanFailureKind, ScanReport};
 pub use minisign::{SignatureVerification, verify_iso_signature};
 pub use sidecar::{
     IsoSidecar, SidecarError, load_sidecar, sidecar_path_for, to_toml as sidecar_to_toml,
@@ -128,34 +128,105 @@ pub enum ProbeError {
     /// The wrapped ISO parser raised an error.
     #[error("iso parser: {0}")]
     Parser(#[from] IsoError),
-    /// No ISOs were found under any of the supplied roots.
+    /// No `.iso` files were found under any of the supplied roots.
+    ///
+    /// Reserved for the stricter case "the walk found zero .iso files"
+    /// so callers can distinguish an empty stick from a stick full of
+    /// broken ISOs — the latter returns `Ok(DiscoveryReport)` with
+    /// populated [`DiscoveryReport::failed`]. (#456)
     #[error("no ISOs found in supplied roots")]
     NoIsosFound,
 }
 
+/// Result of [`discover`] — every `.iso` file the scan found, split
+/// into the ones that parsed successfully and the ones that didn't.
+///
+/// `failed` is populated when an ISO was present on disk but
+/// iso-parser could not extract a kernel/initrd from it (unmountable
+/// image, unfamiliar layout, truncated file). rescue-tui renders
+/// these as tier-4 rows with a descriptive reason instead of hiding
+/// them. (#456)
+#[derive(Debug, Clone)]
+pub struct DiscoveryReport {
+    /// ISOs that mounted + parsed successfully.
+    pub isos: Vec<DiscoveredIso>,
+    /// ISOs that were on disk but could not be processed.
+    pub failed: Vec<FailedIso>,
+}
+
+/// A `.iso` file found on disk that failed to parse. Paired with a
+/// human-readable reason and a structured [`FailureKind`] for
+/// downstream tier mapping.
+#[derive(Debug, Clone)]
+pub struct FailedIso {
+    /// Absolute path to the broken `.iso` file.
+    pub iso_path: PathBuf,
+    /// Sanitized human-readable reason (safe for TUI rendering).
+    pub reason: String,
+    /// Structured failure classification.
+    pub kind: FailureKind,
+}
+
+/// Why an ISO failed to parse. 1-to-1 with [`ScanFailureKind`] from
+/// iso-parser — re-exposed here so consumers of iso-probe don't need
+/// to depend on iso-parser directly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailureKind {
+    /// Filesystem error reading the ISO or its mount point.
+    IoError,
+    /// Loop-mounting the ISO failed.
+    MountFailed,
+    /// Mount succeeded but no recognized boot entries were found.
+    NoBootEntries,
+}
+
+impl From<ScanFailureKind> for FailureKind {
+    fn from(k: ScanFailureKind) -> Self {
+        match k {
+            ScanFailureKind::IoError => Self::IoError,
+            ScanFailureKind::MountFailed => Self::MountFailed,
+            ScanFailureKind::NoBootEntries => Self::NoBootEntries,
+        }
+    }
+}
+
+impl From<ScanFailure> for FailedIso {
+    fn from(f: ScanFailure) -> Self {
+        Self {
+            iso_path: f.iso_path,
+            reason: f.reason,
+            kind: FailureKind::from(f.kind),
+        }
+    }
+}
+
 /// Discover all bootable ISOs under the supplied root directories.
+///
+/// Returns a [`DiscoveryReport`] containing both successfully parsed
+/// ISOs and per-file failures. rescue-tui uses the failures to render
+/// tier-4 rows with a descriptive reason rather than hiding broken
+/// ISOs behind a count. (#456)
 ///
 /// # Errors
 ///
-/// Returns [`ProbeError::Parser`] if the wrapped scan fails. Individual ISOs
-/// with unrecognized layouts are skipped silently and never abort the scan.
-pub fn discover(roots: &[PathBuf]) -> Result<Vec<DiscoveredIso>, ProbeError> {
+/// - [`ProbeError::Parser`] if the directory walk itself fails.
+/// - [`ProbeError::NoIsosFound`] if zero `.iso` files were found
+///   across every root. A root containing only broken ISOs returns
+///   `Ok` with populated `failed`.
+pub fn discover(roots: &[PathBuf]) -> Result<DiscoveryReport, ProbeError> {
     let parser = iso_parser::IsoParser::new(iso_parser::OsIsoEnvironment::new());
-    let mut all: Vec<DiscoveredIso> = Vec::new();
+    let mut isos: Vec<DiscoveredIso> = Vec::new();
+    let mut failed: Vec<FailedIso> = Vec::new();
     // Dedupe across roots that share ancestry (e.g. /run/media/aegis-isos
     // is a subdir of /run/media; both listed in AEGIS_ISO_ROOTS). (#117)
-    // iso-parser stores source_iso as filename-only; we can't reliably
-    // canonicalize because scan-2's root.join(filename) points to a
-    // non-existent path. Dedupe by (filename, size) — effectively a
-    // content-identity key for ISOs — resolved per root via search
-    // for an existing candidate on disk.
     let mut seen: std::collections::HashSet<(String, u64)> = std::collections::HashSet::new();
+    let mut seen_failed: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    let mut walk_succeeded_somewhere = false;
+
     for root in roots {
         // Missing / unreadable roots are not an error — the rescue environment
         // routinely runs with `/run/media` present but `/mnt` empty or vice
-        // versa depending on whether anything was attached at boot. Log at
-        // INFO so an empty list is debuggable (#68 — operators were seeing
-        // "0 ISOs discovered" without any signal of where the scan looked).
+        // versa depending on whether anything was attached at boot. (#68)
         if !root.exists() {
             tracing::info!(
                 root = %root.display(),
@@ -164,34 +235,42 @@ pub fn discover(roots: &[PathBuf]) -> Result<Vec<DiscoveredIso>, ProbeError> {
             continue;
         }
         tracing::info!(root = %root.display(), "iso-probe: scanning root");
-        match pollster::block_on(parser.scan_directory(root)) {
-            Ok(entries) => {
-                let before = all.len();
-                for entry in &entries {
-                    // Key = (source_iso filename, file size). Need size
-                    // so two ISOs with the same filename in different
-                    // dirs don't collide. Tree-walk for the actual file
-                    // under the current root — iso-parser already did
-                    // this during scan, but we need the result back.
+        match pollster::block_on(parser.scan_directory_with_failures(root)) {
+            Ok(report) => {
+                walk_succeeded_somewhere = true;
+                let before_ok = isos.len();
+                let before_fail = failed.len();
+                for entry in &report.entries {
                     let size = find_iso_size(root, &entry.source_iso).unwrap_or(0);
                     let key = (entry.source_iso.clone(), size);
                     if !seen.insert(key) {
                         continue;
                     }
-                    all.push(boot_entry_to_discovered(entry, root));
+                    isos.push(boot_entry_to_discovered(entry, root));
+                }
+                for failure in report.failures {
+                    // Dedupe failed ISOs by absolute path — two roots
+                    // that overlap should not produce duplicate rows.
+                    if seen_failed.insert(failure.iso_path.clone()) {
+                        failed.push(FailedIso::from(failure));
+                    }
                 }
                 tracing::info!(
                     root = %root.display(),
-                    extracted = entries.len(),
-                    kept = all.len() - before,
+                    extracted = report.entries.len(),
+                    kept = isos.len() - before_ok,
+                    failed_added = failed.len() - before_fail,
                     "iso-probe: scan extracted entries"
                 );
             }
             Err(IsoError::NoBootEntries(_)) => {
+                // Zero `.iso` files under this root. Not an error per-
+                // root because other roots may still have ISOs.
                 tracing::info!(
                     root = %root.display(),
-                    "iso-probe: scan returned NoBootEntries (no .iso files found, or all skipped)"
+                    "iso-probe: scan returned NoBootEntries (zero .iso files under this root)"
                 );
+                walk_succeeded_somewhere = true;
             }
             Err(IsoError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
                 tracing::info!(
@@ -202,11 +281,10 @@ pub fn discover(roots: &[PathBuf]) -> Result<Vec<DiscoveredIso>, ProbeError> {
             Err(e) => return Err(ProbeError::Parser(e)),
         }
     }
-    if all.is_empty() {
-        Err(ProbeError::NoIsosFound)
-    } else {
-        Ok(all)
+    if !walk_succeeded_somewhere || (isos.is_empty() && failed.is_empty()) {
+        return Err(ProbeError::NoIsosFound);
     }
+    Ok(DiscoveryReport { isos, failed })
 }
 
 /// Recursive walk helper for [`find_iso_size`]. Bounded depth so we
@@ -618,6 +696,51 @@ mod tests {
             panic!("discover on empty dir should fail");
         };
         assert!(matches!(err, ProbeError::NoIsosFound));
+    }
+
+    #[test]
+    fn failure_kind_maps_from_scan_failure_kind() {
+        assert_eq!(
+            FailureKind::from(ScanFailureKind::IoError),
+            FailureKind::IoError
+        );
+        assert_eq!(
+            FailureKind::from(ScanFailureKind::MountFailed),
+            FailureKind::MountFailed
+        );
+        assert_eq!(
+            FailureKind::from(ScanFailureKind::NoBootEntries),
+            FailureKind::NoBootEntries
+        );
+    }
+
+    #[test]
+    fn failed_iso_from_scan_failure_preserves_path_and_reason() {
+        let sf = ScanFailure {
+            iso_path: PathBuf::from("/isos/broken.iso"),
+            reason: "mount: wrong fs type".to_string(),
+            kind: ScanFailureKind::MountFailed,
+        };
+        let fi = FailedIso::from(sf);
+        assert_eq!(fi.iso_path, PathBuf::from("/isos/broken.iso"));
+        assert_eq!(fi.reason, "mount: wrong fs type");
+        assert_eq!(fi.kind, FailureKind::MountFailed);
+    }
+
+    #[test]
+    fn discovery_report_has_both_isos_and_failed_accessors() {
+        // Smoke test — the shape is a plain struct and must remain
+        // publicly constructible for rescue-tui test fixtures.
+        let report = DiscoveryReport {
+            isos: Vec::new(),
+            failed: vec![FailedIso {
+                iso_path: PathBuf::from("/isos/x.iso"),
+                reason: "test".to_string(),
+                kind: FailureKind::NoBootEntries,
+            }],
+        };
+        assert_eq!(report.isos.len(), 0);
+        assert_eq!(report.failed.len(), 1);
     }
 
     #[test]

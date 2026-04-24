@@ -79,15 +79,21 @@ fn discover_and_prepare_round_trip() {
     let kernel_magic = build_fixture_iso(&iso_path);
 
     let search_roots: Vec<PathBuf> = vec![dir.path().to_path_buf()];
-    let found = iso_probe::discover(&search_roots)
+    let report = iso_probe::discover(&search_roots)
         .unwrap_or_else(|e| panic!("discover returned error: {e}"));
     assert!(
-        !found.is_empty(),
+        !report.isos.is_empty(),
         "discover must return at least one DiscoveredIso"
+    );
+    assert!(
+        report.failed.is_empty(),
+        "fixture should parse cleanly; got failures: {:?}",
+        report.failed
     );
 
     // The fixture uses casper/ layout → Debian/Ubuntu family.
-    let iso: &DiscoveredIso = found
+    let iso: &DiscoveredIso = report
+        .isos
         .iter()
         .find(|d| d.distribution == Distribution::Debian)
         .unwrap_or_else(|| panic!("expected a Debian-layout discovery from fixture"));

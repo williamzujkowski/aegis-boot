@@ -124,12 +124,14 @@ pub struct AppState {
     /// default empty in tests. (#85 Tier 2)
     pub scanned_roots: Vec<std::path::PathBuf>,
     /// Count of `.iso` files found on disk under `scanned_roots` that
-    /// DID NOT parse into a `DiscoveredIso` (silently dropped by
-    /// `iso-probe::discover()` due to malformed layout, unsupported
-    /// distro, etc). Populated by `main.rs` via a direct fs walk that
-    /// runs alongside `discover()`. Surfaced as a yellow inline band
-    /// above the List when >0 so the operator knows the list is
-    /// incomplete. (#85 Tier 2 last child)
+    /// DID NOT parse into a `DiscoveredIso` (malformed layout, mount
+    /// failure, etc). Sourced from
+    /// [`iso_probe::DiscoveryReport::failed`]'s length plus any
+    /// additional files the on-disk walk saw that iso-parser never
+    /// attempted. Surfaced as a yellow inline band above the List
+    /// when >0 so the operator knows the list is incomplete.
+    /// (#85 Tier 2 last child.) #457 will replace this banner with
+    /// per-ISO tier-4 rows sourced from `DiscoveryReport::failed`.
     pub skipped_iso_count: usize,
 }
 
