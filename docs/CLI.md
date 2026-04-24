@@ -846,6 +846,49 @@ aegis-boot fetch-image --help
 
 ---
 
+## `aegis-boot fetch-trust-chain`
+
+Download + verify the ADR 0002 signed-chain bundle (`shim/grub/kernel/initrd/grub.cfg`) that cross-platform direct-install flows consume. Verification walks the full ADR 0002 trust chain: TLS (via `curl --proto =https --tlsv1.2`), then minisign over `bundle-manifest.json` against the binary-embedded maintainer pubkey (epoch-aware — rejects if the manifest's `key_epoch` is below `MIN_REQUIRED_EPOCH` or below the locally-persisted `seen_epoch`), then per-file sha256 against the verified manifest. No TOFU on any hop.
+
+The verified bundle is cached at `$XDG_CACHE_HOME/aegis-boot/signed-chain/<bundle_version>/` so repeat runs skip the HTTP download when the local copy already matches. Partial caches self-heal (a missing or truncated file gets re-fetched + re-verified).
+
+### Usage
+
+```bash
+# Fetch from the maintainer's release origin
+aegis-boot fetch-trust-chain https://github.com/aegis-boot/aegis-boot/releases/download/v0.17.0/bundle/
+
+# Override the cache base (e.g. for CI builds with a writable tmpfs)
+aegis-boot fetch-trust-chain --cache-base /var/cache/my-build https://example.invalid/bundle/
+
+aegis-boot fetch-trust-chain --help
+```
+
+### Behavior
+
+- Fetches `bundle-manifest.json` + `bundle-manifest.json.minisig` from `<origin-url>`.
+- Verifies the signature via `aegis_trust::TrustAnchor::verify_with_epoch` — rejects if the key epoch is below the binary's `MIN_REQUIRED_EPOCH` or the locally-persisted `seen_epoch` (see [ADR 0002](architecture/KEY_MANAGEMENT.md) §3.5).
+- Downloads each file listed in the manifest; re-uses the cached copy if its sha256 matches.
+- After every file verifies, advances the local `seen_epoch` via `aegis_trust::store_seen_epoch` (monotonic — no regression possible).
+- Prints the verified cache directory on stdout; per-file inventory on stderr.
+
+### Exit codes
+
+- `0` — all files verified; stdout is the cache dir path
+- `1` — any download or verification step refused; the cache dir is not printed
+- `2` — usage error (missing URL, non-HTTPS URL, unknown flag)
+
+### Relation to `fetch-image`
+
+| Subcommand | Verifies against | Covers |
+| --- | --- | --- |
+| `fetch-image` | cosign keyless, release workflow identity | Pre-built `aegis-boot.img` disk images |
+| `fetch-trust-chain` | minisign, ADR 0002 maintainer key + epoch | The signed chain cross-platform direct-install writes to the ESP |
+
+Two separate trust roots by design: cosign keyless verifies "did this come from our CI?" while minisign verifies "did this come from our maintainer?" The distinction matters for air-gapped operators who cannot reach Sigstore's transparency log but can still trust an offline pubkey.
+
+---
+
 ## `aegis-boot completions`
 
 Emit shell completion scripts for `bash`, `zsh`, or `fish` on stdout. Pipe to the appropriate completion directory for your shell.

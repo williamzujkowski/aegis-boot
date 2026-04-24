@@ -24,13 +24,6 @@
 //!
 //! [#417]: https://github.com/aegis-boot/aegis-boot/issues/417
 
-// Phase 2 lands the verify primitives ahead of the Phase 3 CLI
-// wiring that calls them. Allow dead_code at the module level so
-// the scaffold compiles cleanly until the Phase 3 PR imports
-// `verify_bundle_manifest`. The unit-test suite exercises every
-// public symbol, so regressions still get caught at CI time.
-#![allow(dead_code)]
-
 use aegis_trust::{TrustAnchor, TrustAnchorError};
 use aegis_wire_formats::{BUNDLE_MANIFEST_SCHEMA_VERSION, BundleFileEntry, BundleManifest};
 use thiserror::Error;
@@ -63,23 +56,10 @@ pub struct VerifiedBundleManifest {
     pub manifest: BundleManifest,
 }
 
-impl VerifiedBundleManifest {
-    /// Read-only view of the verified file list. Convenience wrapper
-    /// so callers don't need to reach into `.manifest.files`.
-    #[must_use]
-    pub fn files(&self) -> &[BundleFileEntry] {
-        &self.manifest.files
-    }
-
-    /// The epoch this manifest was signed under. Callers that persist
-    /// `seen_epoch` should use this value after a successful verify —
-    /// `aegis_trust::store_seen_epoch` refuses regression, so passing
-    /// in an older epoch is a no-op.
-    #[must_use]
-    pub fn key_epoch(&self) -> u32 {
-        self.manifest.key_epoch
-    }
-}
+// VerifiedBundleManifest deliberately exposes only the single
+// `manifest` field — callers reach through it for `.key_epoch` or
+// `.files`. Accessor methods would duplicate that with no
+// additional invariant, so we skip them.
 
 /// Reasons a bundle-manifest verify can fail. Each variant carries
 /// enough context for an operator-facing message without requiring a
@@ -441,12 +421,12 @@ mod tests {
     }
 
     #[test]
-    fn verified_manifest_exposes_files_and_epoch() {
-        // Can't actually succeed without a real sig, so build the
-        // struct by hand to exercise the accessor surface.
+    fn verified_manifest_exposes_manifest_directly() {
+        // Callers reach through `.manifest` rather than via separate
+        // accessor methods — keeps the API surface minimal.
         let m = sample_manifest();
         let v = VerifiedBundleManifest { manifest: m };
-        assert_eq!(v.files().len(), 1);
-        assert_eq!(v.key_epoch(), 1);
+        assert_eq!(v.manifest.files.len(), 1);
+        assert_eq!(v.manifest.key_epoch, 1);
     }
 }

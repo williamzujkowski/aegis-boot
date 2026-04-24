@@ -36,6 +36,7 @@
 mod attest;
 mod bug_report;
 mod bundle_cache;
+mod bundle_fetch;
 mod bundle_verify;
 mod catalog;
 mod cmd_path;
@@ -89,6 +90,7 @@ fn main() -> ExitCode {
         Some("recommend") => catalog::run(&args[1..]),
         Some("fetch") => fetch::run(&args[1..]),
         Some("fetch-image") => fetch_image::run(&args[1..]),
+        Some("fetch-trust-chain") => bundle_fetch::run(&args[1..]),
         Some("attest") => attest::run(&args[1..]),
         Some("bug-report") => bug_report::run(&args[1..]),
         Some("eject") => eject::run(&args[1..]),
@@ -159,6 +161,8 @@ fn print_help() {
     println!("  aegis-boot fetch <slug>        Download + verify a catalog ISO");
     println!("  aegis-boot fetch-image         Download + cosign-verify pre-built aegis-boot.img");
     println!("                                 (see `aegis-boot fetch-image --help` for flags)");
+    println!("  aegis-boot fetch-trust-chain   Download + verify the signed-chain bundle (#417)");
+    println!("                                 (ADR 0002 minisign; caches under XDG_CACHE_HOME)");
     println!("  aegis-boot attest [list|show]  Attestation receipts for past flashes");
     println!("  aegis-boot bug-report          Generate a redacted bug-report bundle (#342)");
     println!("  aegis-boot eject [device]      Safely power-off a stick before removal");

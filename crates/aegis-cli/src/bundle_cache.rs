@@ -48,12 +48,6 @@
 //!
 //! [#417]: https://github.com/aegis-boot/aegis-boot/issues/417
 
-// Phase 3a lands the cache scaffold ahead of Phase 3b's real
-// downloader + Phase 3c's CLI wiring. Until those land, nothing in
-// main.rs imports this module; the test suite exercises every
-// public symbol so regressions still surface at CI time.
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};

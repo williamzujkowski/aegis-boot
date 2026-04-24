@@ -239,6 +239,27 @@ Composes with `flash`:
   img=$(aegis-boot fetch-image) && aegis-boot flash --image "$img" /dev/sdX
 ```
 
+## `aegis-boot fetch-trust-chain`
+
+```text
+aegis-boot fetch-trust-chain — download + verify a signed-chain bundle
+
+USAGE:
+  aegis-boot fetch-trust-chain <origin-url>
+  aegis-boot fetch-trust-chain --cache-base <dir> <origin-url>
+
+<origin-url> must be an https:// URL ending with /. The tool appends
+`bundle-manifest.json` + `bundle-manifest.json.minisig` (and each
+per-file path from the manifest) to form download URLs.
+
+On success the verified cache directory is printed to stdout; on any
+verification failure the stick is not flashed and exit=1.
+
+OPTIONS:
+  --cache-base <dir>   Override the default $XDG_CACHE_HOME/aegis-boot/signed-chain/
+  -h, --help           Show this help
+```
+
 ## `aegis-boot flash`
 
 ```text

@@ -69,6 +69,7 @@ const SUBCOMMANDS: &[&str] = &[
     "eject",
     "fetch",
     "fetch-image",
+    "fetch-trust-chain",
     "flash",
     "init",
     "list",

@@ -86,6 +86,21 @@ from GitHub Releases. Pairs with
 .B flash \-\-image
 for the "no local build" operator path.
 .TP
+.B fetch-trust-chain \fIorigin-url\fR \fR[\-\-cache-base \fIdir\fR]
+Download + ADR 0002 minisign-verify the signed-chain bundle
+(shim/grub/kernel/initrd/grub.cfg) from
+.I origin-url
+and cache it under
+.IR $XDG_CACHE_HOME/aegis-boot/signed-chain/<bundle_version>/ .
+Per-file sha256 checks after the manifest signature verifies; the
+verified cache dir is printed on stdout so the call composes via
+shell substitution. Epoch-aware: refuses manifests whose
+.B key_epoch
+is below the binary's embedded
+.B MIN_REQUIRED_EPOCH
+or the locally-persisted
+.BR seen_epoch .
+.TP
 .B attest \fR{list|show} [\-\-json]
 List or inspect attestation receipts for past flashes.
 .TP
