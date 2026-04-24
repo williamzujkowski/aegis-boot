@@ -583,6 +583,22 @@ fn run_text_mode(state: &mut AppState) -> Result<u8, Box<dyn std::error::Error>>
                         iso.iso_path.display()
                     )?;
                 }
+                crate::state::ViewEntry::FailedIso(idx) => {
+                    // Tier 4 — iso-parser couldn't extract boot entries.
+                    // Surfaced in the text-mode menu so the operator
+                    // sees the file exists and why it's not bootable.
+                    // Not selectable (index yields a RefusedBoot branch
+                    // in the dispatch match below). (#459)
+                    if let Some(f) = state.failed_isos.get(*idx) {
+                        writeln!(
+                            out,
+                            "  {:>2}. [!] {} — PARSE FAILED: {}",
+                            i + 1,
+                            f.iso_path.display(),
+                            f.reason
+                        )?;
+                    }
+                }
                 crate::state::ViewEntry::RescueShell => {
                     writeln!(out, "  {:>2}. [#] rescue shell (busybox)", i + 1)?;
                 }
@@ -637,6 +653,18 @@ fn run_text_mode(state: &mut AppState) -> Result<u8, Box<dyn std::error::Error>>
                 run_text_confirm(state, &mut out, idx)?;
                 // After confirm/verdict/shell return, loop repaints.
                 // If kexec succeeded it replaced the process.
+            }
+            crate::state::ViewEntry::FailedIso(idx) => {
+                // Tier-4 rows aren't bootable by design. Text mode
+                // surfaces the reason and loops so the operator can
+                // pick a different entry. (#459)
+                if let Some(f) = state.failed_isos.get(idx) {
+                    writeln!(
+                        out,
+                        "error: entry {n} is a parse-failed ISO and cannot boot: {}",
+                        f.reason
+                    )?;
+                }
             }
         }
     }

@@ -37,18 +37,6 @@
 //! [`HashMismatch`]: TrustVerdict::HashMismatch
 //! [`docs/design/rescue-tui-ux-overhaul.md`]: ../../../../docs/design/rescue-tui-ux-overhaul.md
 //!
-//! # Dead-code allow
-//!
-//! `TrustVerdict::ParseFailed`, [`TrustVerdict::is_bootable`], and
-//! [`TrustVerdict::from_failed`] are canonical surface for tier-4
-//! rendering that lands in #458 (dual-pane layout) and #459 (info-
-//! pane content). Tested here, wired later. Module-scoped
-//! `allow(dead_code)` keeps CI green through the phased migration;
-//! remove once #459 merges and the full surface is exercised from
-//! non-test code.
-
-#![allow(dead_code)]
-
 use iso_probe::{DiscoveredIso, FailedIso, HashVerification, Quirk, SignatureVerification};
 use ratatui::style::Color;
 
