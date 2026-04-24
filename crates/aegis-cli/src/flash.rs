@@ -360,11 +360,13 @@ fn run_macos_direct_install(explicit_dev: Option<&str>, out_dir: &Path) -> Resul
             print!("{}", format_receipt(&receipt));
             Ok(())
         }
-        Err(err @ DispatchError::MissingDeviceArg) => {
-            eprintln!("{err}");
-            Err(2)
-        }
-        Err(err @ DispatchError::BadDeviceArg(_)) => {
+        // Usage-class errors (missing or bogus device arg) exit 2
+        // per the standard CLI convention; anything else is a
+        // runtime failure and exits 1. Merging the two arms keeps
+        // clippy's match_same_arms happy without losing the
+        // distinction — DispatchError's Display impl renders each
+        // variant separately.
+        Err(err @ (DispatchError::MissingDeviceArg | DispatchError::BadDeviceArg(_))) => {
             eprintln!("{err}");
             Err(2)
         }
