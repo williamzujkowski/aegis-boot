@@ -47,12 +47,12 @@ jobs:
       actions: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
         with:
           persist-credentials: false
 
       - name: Run Scorecard
-        uses: ossf/scorecard-action@v2.4.2
+        uses: ossf/scorecard-action@05b42c624433fc40578a4040d5cf5e36ddca8cde  # v2.4.2
         with:
           results_file: scorecard-results.sarif
           results_format: sarif
@@ -65,7 +65,7 @@ jobs:
       # Keep the raw SARIF as a workflow artifact — useful for local
       # drilldown when a check regresses.
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
         with:
           name: scorecard-sarif
           path: scorecard-results.sarif
@@ -75,6 +75,6 @@ jobs:
       # SARIF (same code-scanning pane). Each Scorecard check becomes
       # an entry there when it's non-passing.
       - name: Upload to code-scanning
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@ce64ddcb0d8d890d2df4a9d1c04ff297367dea2a  # v3
         with:
           sarif_file: scorecard-results.sarif

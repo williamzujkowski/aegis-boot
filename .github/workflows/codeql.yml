@@ -53,10 +53,9 @@ jobs:
         language: [rust, actions]
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
-
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@ce64ddcb0d8d890d2df4a9d1c04ff297367dea2a  # v3
         with:
           languages: ${{ matrix.language }}
           # security-extended + security-and-quality give us the full
@@ -70,7 +69,7 @@ jobs:
         if: matrix.language == 'rust'
         run: rustup toolchain install 1.88.0 --profile minimal && rustup override set 1.88.0
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
         if: matrix.language == 'rust'
 
       - name: Build workspace (Rust only)
@@ -78,6 +77,6 @@ jobs:
         run: cargo build --workspace --locked
 
       - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@ce64ddcb0d8d890d2df4a9d1c04ff297367dea2a  # v3
         with:
           category: "/language:${{ matrix.language }}"

@@ -21,8 +21,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
-
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Build image
         run: docker build -t aegis-boot:builder -f Dockerfile.locked .
 
@@ -68,7 +67,7 @@ jobs:
 
       - name: Upload verification artifacts
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
         with:
           name: build-hashes
           path: |

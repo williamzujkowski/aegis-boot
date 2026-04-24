@@ -4,6 +4,10 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 
 ## [Unreleased]
 
+### Pin all GitHub Actions refs to SHAs (Scorecard `Pinned-Dependencies`)
+
+76 action-ref pins across 24 workflows. Every `uses:` reference is now `repo@<40-char-sha>  # <tag>` form — a transactional constant that supply-chain attackers can't retroactively retarget via tag-move. Closes the 72 `Pinned-Dependencies` + 24 `actions/unpinned-tag` Scorecard / CodeQL findings raised by #490 + #488. Dependabot's `github-actions` package-ecosystem config (from #490) already auto-bumps both the SHA + the trailing comment on new releases, so this is zero operational overhead.
+
 ### Windows `PATHEXT` support in `cmd_path::which` (#504)
 
 `crate::cmd_path::which` now auto-appends `PATHEXT` extensions on Windows so operators can type `aegis-boot doctor` and see `cosign` / `curl` / `diskpart` resolve without having to spell out `.exe`. On POSIX the stem is used verbatim (no extension auto-append) — preserving existing Linux behavior.

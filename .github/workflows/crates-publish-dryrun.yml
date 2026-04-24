@@ -35,15 +35,13 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v5
-
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Install Rust (pinned to workspace MSRV)
         run: |
           rustup toolchain install 1.88.0 --profile minimal
           rustup override set 1.88.0
 
-      - uses: Swatinem/rust-cache@v2
-
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
       - name: cargo publish --dry-run -p iso-parser
         # Zero unpublished path deps → registry resolution succeeds
         # without needing iso-parser on the real registry yet.

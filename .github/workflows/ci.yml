@@ -26,12 +26,12 @@ jobs:
       run:
         working-directory: crates/iso-parser
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Install toolchain
         run: |
           rustup toolchain install ${{ matrix.rust }} --profile minimal --component rustfmt,clippy
           rustup override set ${{ matrix.rust }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
         with:
           workspaces: "crates/iso-parser -> target"
       - run: cargo fmt --check
@@ -42,14 +42,14 @@ jobs:
     name: aegis-cli (Linux + macOS + Windows cross-check)
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Install Rust
         run: |
           rustup toolchain install 1.88.0 --profile minimal --component rustfmt,clippy
           rustup override set 1.88.0
           rustup target add x86_64-apple-darwin
           rustup target add x86_64-pc-windows-gnu
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
       - name: Format + lint aegis-cli
         run: |
           cargo fmt --check
@@ -70,10 +70,10 @@ jobs:
     name: aegis-fitness audit
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Install Rust
         run: rustup toolchain install 1.88.0 --profile minimal && rustup override set 1.88.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
       - name: Run fitness audit (threshold 80)
         # Stage 8 of dev-test.sh — repo + scripts + docs hygiene.
         # Threshold lowered from the dev-test default (90) to 80 because
@@ -87,11 +87,11 @@ jobs:
     name: cargo-deny (advisories + licenses + bans + sources)
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       # Workspace-level policy enforced via deny.toml at the repo root.
       # Gates every PR + push-to-main so a dep-bump that pulls in a GPL /
       # AGPL / LGPL / unknown-license crate fails CI before merge.
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: EmbarkStudios/cargo-deny-action@91bf2b620e09e18d6eb78b92e7861937469acedb  # v2
         with:
           command: check advisories licenses bans sources
 
@@ -99,7 +99,7 @@ jobs:
     name: Generate CycloneDX SBOM
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Install Rust
         run: rustup toolchain install 1.88.0 --profile minimal && rustup override set 1.88.0
       - name: Install cargo-cyclonedx
@@ -108,7 +108,7 @@ jobs:
         working-directory: crates/iso-parser
         run: cargo cyclonedx --format json
       - name: Upload SBOM
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
         with:
           name: sbom-cyclonedx
           path: crates/iso-parser/**/*.cdx.json
@@ -119,7 +119,7 @@ jobs:
     name: Secret scanning (gitleaks)
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
         with:
           fetch-depth: 0
       - name: Install gitleaks
@@ -138,9 +138,9 @@ jobs:
       # setuptools 81+ removal leaves `latest` exposed to a sudden break).
       image: returntocorp/semgrep:1.160.0
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - run: semgrep scan --config=p/rust --config=p/security-audit --error --sarif --output semgrep.sarif .
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
         if: always()
         with:
           name: semgrep-sarif
@@ -151,8 +151,8 @@ jobs:
     name: Nix flake smoke-build
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
-      - uses: cachix/install-nix-action@v31
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
+      - uses: cachix/install-nix-action@616559265b40713947b9c190a8ff4b507b5df49b  # v31
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
@@ -174,7 +174,7 @@ jobs:
     name: Doc version drift-check
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - run: ./scripts/check-doc-version.sh
 
   # Shared-constants drift-check (Phase 2 of #288 / #286).
@@ -186,10 +186,10 @@ jobs:
     name: Doc constants drift-check
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Install Rust
         run: rustup toolchain install 1.88.0 --profile minimal && rustup override set 1.88.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
       - run: cargo run -p aegis-bootctl --bin constants-docgen --features docgen --locked -- --check
 
   # CLI subcommand + synopsis drift-check (Phase 3a + 3b of #289 / #286).
@@ -204,10 +204,10 @@ jobs:
     name: Doc CLI subcommand drift-check
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Install Rust
         run: rustup toolchain install 1.88.0 --profile minimal && rustup override set 1.88.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
       - name: Build aegis-boot binary
         run: cargo build -p aegis-bootctl --release --locked
       - name: Check CLI doc drift
@@ -224,10 +224,10 @@ jobs:
     name: Manifest JSON schema drift-check
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Install Rust
         run: rustup toolchain install 1.88.0 --profile minimal && rustup override set 1.88.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
       - run: cargo run -p aegis-wire-formats --features schema --bin aegis-wire-formats-schema-docgen --locked -- --check
 
   # rescue-tui trust-tier + keybinding drift-check (Phase 7 of #455 / #462).
@@ -241,8 +241,8 @@ jobs:
     name: Doc trust-tier + keybinding drift-check
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Install Rust
         run: rustup toolchain install 1.88.0 --profile minimal && rustup override set 1.88.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
       - run: cargo run -p rescue-tui --bin tiers-docgen --locked -- --check

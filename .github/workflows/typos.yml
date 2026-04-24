@@ -27,11 +27,10 @@ jobs:
     name: typos
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
-
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       # crate-ci/typos-action is the upstream-maintained wrapper around
       # the typos CLI. Pinned version = 1.45.1 to match the typos-cli
       # version developers are expected to install locally. Bump both
       # together via Dependabot.
       - name: Run typos
-        uses: crate-ci/typos@v1.45.1
+        uses: crate-ci/typos@cf5f1c29a8ac336af8568821ec41919923b05a83  # v1.45.1

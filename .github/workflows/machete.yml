@@ -34,10 +34,10 @@ jobs:
     name: cargo-machete
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Install Rust
         run: rustup toolchain install 1.88.0 --profile minimal && rustup override set 1.88.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
       # Pinned version = what we tested locally (0.9.2). Bump via
       # Dependabot when upstream ships a new release. Install via
       # `cargo install` rather than a third-party Action to keep the

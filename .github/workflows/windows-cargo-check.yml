@@ -77,8 +77,7 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
-
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Install Rust (MSRV pinned — matches Linux CI)
         # Match the exact MSRV the rest of CI pins to so a Windows
         # pass here means Linux will agree on the toolchain surface.
@@ -86,7 +85,7 @@ jobs:
           rustup toolchain install 1.88.0 --profile minimal --component clippy
           rustup default 1.88.0
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
         with:
           # Separate cache key from the Linux jobs — MSVC artifacts
           # don't share with Linux GNU artifacts.

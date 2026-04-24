@@ -23,12 +23,12 @@ jobs:
       matrix:
         target: [validate_path, distribution_from_paths]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Install nightly toolchain
         run: |
           rustup toolchain install nightly --profile minimal
           rustup override set nightly
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
         with:
           workspaces: "crates/iso-parser/fuzz -> target"
       - name: Install cargo-fuzz
@@ -40,7 +40,7 @@ jobs:
         run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=$DURATION
       - name: Upload crashes on failure
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
         with:
           name: fuzz-crashes-${{ matrix.target }}
           path: |

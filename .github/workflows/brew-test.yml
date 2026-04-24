@@ -43,11 +43,9 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v5
-
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Set up Homebrew
-        uses: Homebrew/actions/setup-homebrew@main
-
+        uses: Homebrew/actions/setup-homebrew@98cfa07b984a61682e6cd3a0833fad2006cc84ba  # main
       # Tap this repo first — `brew audit` no longer accepts paths;
       # it requires a tapped name. The first `brew tap <user>/<name>
       # <local-path>` also exercises what operators will type

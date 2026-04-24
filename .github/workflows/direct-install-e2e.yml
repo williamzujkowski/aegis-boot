@@ -28,8 +28,7 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v5
-
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Install signed boot chain + image tooling
         # Matches mkusb.yml's deps so the byte-parity diff has identical
         # source files for both paths. Adds util-linux for losetup +
@@ -230,7 +229,7 @@ jobs:
 
       - name: Upload direct-install image + boot log
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
         with:
           name: direct-install-image
           path: |
