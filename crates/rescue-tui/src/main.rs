@@ -9,14 +9,9 @@
 
 #![forbid(unsafe_code)]
 
-mod failure_log;
-mod keybindings;
-mod persistence;
-mod render;
-mod state;
-mod theme;
-mod tpm;
-mod verdict;
+// All modules now live in lib.rs so sibling binaries like
+// tiers-docgen (#462) can share them. main.rs is a thin driver.
+use rescue_tui::{failure_log, persistence, render, state, theme, tpm};
 
 use std::env;
 use std::io;

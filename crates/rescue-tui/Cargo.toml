@@ -11,6 +11,13 @@ description = "ratatui application for the aegis-boot signed Linux rescue enviro
 name = "rescue-tui"
 path = "src/main.rs"
 
+# Docgen devtool — regenerates the trust-tier + keybinding tables in
+# user-facing docs from the in-code sources. `--check` runs in CI to
+# enforce drift-freedom. Phase 7 of #455 / closes #462.
+[[bin]]
+name = "tiers-docgen"
+path = "src/bin/tiers_docgen.rs"
+
 [dependencies]
 aegis-wire-formats = { path = "../aegis-wire-formats", version = "0.16" }
 iso-probe = { path = "../iso-probe" }

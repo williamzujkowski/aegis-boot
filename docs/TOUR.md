@@ -129,6 +129,36 @@ Plug the stick into a target. Power on. Hit the firmware boot-menu key (`F12`/`F
 
 If you hit `SignatureRejected` for an ISO, it means the kernel inside that ISO isn't signed by a CA your firmware (or the operator's MOK keyring) trusts. The rescue-tui surfaces the `mokutil --import` recipe for the specific signing key; see [UNSIGNED_KERNEL.md](./UNSIGNED_KERNEL.md) for the full walkthrough.
 
+## rescue-tui keybindings
+
+Context-sensitive — the footer legend updates based on the current
+screen and focused pane. Press `?` inside the TUI for a help overlay.
+
+<!-- tiers:BEGIN:KEYBINDINGS -->
+| Key | Screens | Pane | Filter-editing | Description |
+| --- | ------- | ---- | -------------- | ----------- |
+| `?` | any | any | no | Show the help overlay with all keybindings |
+| `q` | any | any | no | Quit rescue-tui (returns control to the boot menu) |
+| `↑↓/jk` | List | any | no | Move the list cursor (pane=List) or scroll info pane (pane=Info) |
+| `Tab` | List | any | no | Toggle focus between the ISO list and the info pane |
+| `Enter` | List | List | no | Confirm the selected ISO (only valid in the list pane) |
+| `/` | List | any | no | Open the substring filter — typed chars match label + path |
+| `s` | List | any | no | Cycle sort order: name → size → distro → name |
+| `v` | List, Confirm | any | no | Re-compute sha256 of the selected ISO in a background thread |
+| `Enter` | List | any | yes | Commit the current filter and close the input |
+| `Esc` | List | any | yes | Close the filter input and clear the current filter |
+| `Enter` | Confirm | any | no | Kexec into the selected ISO (may trigger a trust challenge) |
+| `e` | Confirm | any | no | Edit the kernel command line before boot |
+| `Esc/h` | Confirm, Error | any | no | Return to the list without booting |
+| `Enter` | EditCmdline | any | no | Save the edited kernel command line and return to Confirm |
+| `Esc` | EditCmdline, Verifying, TrustChallenge | any | no | Discard edits and return to Confirm |
+| `F10` | Error | any | no | Write a failure-log bundle to AEGIS_ISOS for post-mortem analysis |
+| `boot+Enter` | TrustChallenge | any | no | Type the word 'boot' and press Enter to proceed past the trust challenge |
+<!-- tiers:END:KEYBINDINGS -->
+
+Generated from the `KEYBINDINGS` registry in
+[`crates/rescue-tui/src/keybindings.rs`](../crates/rescue-tui/src/keybindings.rs).
+
 ## What's next
 
 | Want to...                       | Try                                                   |

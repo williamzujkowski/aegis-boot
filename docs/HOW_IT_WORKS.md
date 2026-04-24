@@ -61,6 +61,33 @@ See [docs/USB_LAYOUT.md](USB_LAYOUT.md) for the full partition + filesystem cont
 
 When the rescue-tui menu lists your ISOs, it computes their sha256 on the spot and compares against optional `<iso>.sha256` sidecars you write yourself. The verdict (verified ✓ / mismatch ✗ / no sidecar) is shown before you boot — but the **boot decision** itself stays with you. There is no auto-update, no phone-home, no auto-trust.
 
+## Trust tiers in rescue-tui
+
+When you boot the stick and rescue-tui scans `AEGIS_ISOS`, every
+`.iso` file gets classified into one of 6 trust tiers. The tier drives
+the color, glyph, and whether Enter actually boots — the design
+principle is "Secure Boot stays strict; operator attestation relaxes
+gracefully" (see [epic #455](https://github.com/aegis-boot/aegis-boot/issues/455)).
+
+<!-- tiers:BEGIN:TRUST_TIER_TABLE -->
+| Tier | Verdict             | Glyph | Bootable | Meaning                                    |
+| ---- | ------------------- | ----- | -------- | ------------------------------------------ |
+| 1    | VERIFIED            | `[+]` | yes      | Hash or sig verified vs trusted source     |
+| 2    | UNVERIFIED          | `[ ]` | yes      | No sidecar — bootable with typed confirm   |
+| 3    | UNTRUSTED KEY       | `[~]` | yes      | Sig parses, signer untrusted               |
+| 4    | PARSE FAILED        | `[!]` | **no**   | iso-parser couldn't extract kernel         |
+| 5    | BOOT BLOCKED        | `[X]` | **no**   | Kernel rejected by platform keyring        |
+| 6    | HASH MISMATCH       | `[!]` | **no**   | ISO bytes don't match declared hash        |
+<!-- tiers:END:TRUST_TIER_TABLE -->
+
+This table is generated from the `TrustVerdict` enum in
+[`crates/rescue-tui/src/verdict.rs`](../crates/rescue-tui/src/verdict.rs)
+by the `tiers-docgen` devtool — run it after any enum change:
+
+```bash
+cargo run -p rescue-tui --bin tiers-docgen
+```
+
 ## What aegis-boot does NOT do
 
 - **It does not modify your laptop's firmware.** No MOK enrollment, no PK/KEK/db changes. Plug the stick in, boot, eject — your firmware is untouched.

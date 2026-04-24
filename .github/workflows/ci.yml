@@ -229,3 +229,20 @@ jobs:
         run: rustup toolchain install 1.88.0 --profile minimal && rustup override set 1.88.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo run -p aegis-wire-formats --features schema --bin aegis-wire-formats-schema-docgen --locked -- --check
+
+  # rescue-tui trust-tier + keybinding drift-check (Phase 7 of #455 / #462).
+  # Regenerates the trust-tier table and keybinding reference in
+  # docs/HOW_IT_WORKS.md, docs/TOUR.md, and crates/rescue-tui/README.md
+  # from the canonical in-code sources (TrustVerdict enum +
+  # KEYBINDINGS registry). Fails if any table has drifted — the fix
+  # is to run `cargo run -p rescue-tui --bin tiers-docgen` locally
+  # and commit the result.
+  tiers-drift:
+    name: Doc trust-tier + keybinding drift-check
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust
+        run: rustup toolchain install 1.88.0 --profile minimal && rustup override set 1.88.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo run -p rescue-tui --bin tiers-docgen --locked -- --check
