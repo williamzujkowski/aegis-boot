@@ -677,6 +677,22 @@ impl AppState {
         *cursor = new_cursor;
     }
 
+    /// Jump cursor to the start of the line (Home / Ctrl+A). #544.
+    pub fn cmdline_cursor_home(&mut self) {
+        let Screen::EditCmdline { cursor, .. } = &mut self.screen else {
+            return;
+        };
+        *cursor = 0;
+    }
+
+    /// Jump cursor to the end of the line (End / Ctrl+E). #544.
+    pub fn cmdline_cursor_end(&mut self) {
+        let Screen::EditCmdline { buffer, cursor, .. } = &mut self.screen else {
+            return;
+        };
+        *cursor = buffer.len();
+    }
+
     /// Jump to the first visible row (vim `g`). (#85). The visible
     /// view always has at least one row (the rescue-shell entry
     /// since #90), so the `has_view` check is trivially true — kept
@@ -1802,6 +1818,60 @@ mod tests {
         // cursor=9 after backspaces → left→left moves to 7 (before 's');
         // inserting 'X' there gives "boot=ca" + "X" + "sp".
         assert_eq!(buffer, "boot=caXsp");
+    }
+
+    #[test]
+    fn cmdline_cursor_home_jumps_to_start() {
+        // #544: Home / Ctrl+A should move the cursor to byte 0 regardless
+        // of where it is when the key is pressed.
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.confirm_selection();
+        s.enter_cmdline_editor();
+        // Default buffer is "boot=casper", cursor at end (11).
+        s.cmdline_cursor_home();
+        let Screen::EditCmdline { cursor, .. } = &s.screen else {
+            panic!("expected EditCmdline")
+        };
+        assert_eq!(*cursor, 0);
+        // Inserting 'X' at home should land at index 0.
+        s.cmdline_insert('X');
+        let Screen::EditCmdline { buffer, cursor, .. } = &s.screen else {
+            panic!()
+        };
+        assert_eq!(buffer, "Xboot=casper");
+        assert_eq!(*cursor, 1);
+    }
+
+    #[test]
+    fn cmdline_cursor_end_jumps_to_buffer_len() {
+        // #544: End / Ctrl+E should move the cursor to buffer.len()
+        // regardless of where it is when the key is pressed.
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.confirm_selection();
+        s.enter_cmdline_editor();
+        // Move to the start, then jump to end.
+        s.cmdline_cursor_home();
+        s.cmdline_cursor_end();
+        let Screen::EditCmdline { buffer, cursor, .. } = &s.screen else {
+            panic!()
+        };
+        assert_eq!(*cursor, buffer.len());
+        // Append should land after the existing buffer.
+        s.cmdline_insert('!');
+        let Screen::EditCmdline { buffer, .. } = &s.screen else {
+            panic!()
+        };
+        assert_eq!(buffer, "boot=casper!");
+    }
+
+    #[test]
+    fn cmdline_cursor_home_and_end_are_idempotent_on_empty_screen() {
+        // Defensive: home / end called when not in cmdline editor must
+        // not panic (the early-return guard in state.rs covers this).
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        // Still on List screen — neither key should mutate state or panic.
+        s.cmdline_cursor_home();
+        s.cmdline_cursor_end();
     }
 
     #[test]

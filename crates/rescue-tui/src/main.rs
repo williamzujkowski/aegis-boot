@@ -22,7 +22,7 @@ use std::thread;
 use std::time::Duration;
 
 use crossterm::cursor::MoveTo;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
     Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -391,6 +391,26 @@ where
             }
         }
 
+        // Ctrl+A / Ctrl+E in the cmdline editor are readline-style
+        // line-start / line-end jumps. Intercept BEFORE the main match so
+        // the catch-all KeyCode::Char(c) → cmdline_insert(c) doesn't
+        // swallow them as literal 'a' / 'e'. (#544)
+        if matches!(state.screen, Screen::EditCmdline { .. })
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+        {
+            match key.code {
+                KeyCode::Char('a') => {
+                    state.cmdline_cursor_home();
+                    continue;
+                }
+                KeyCode::Char('e') => {
+                    state.cmdline_cursor_end();
+                    continue;
+                }
+                _ => {}
+            }
+        }
+
         match (&state.screen, key.code) {
             // Tab toggles focus between the list pane and the info pane
             // on the List screen only. Shift+Tab is treated the same
@@ -498,6 +518,8 @@ where
             (Screen::EditCmdline { .. }, KeyCode::Esc) => state.cancel_cmdline_edit(),
             (Screen::EditCmdline { .. }, KeyCode::Left) => state.cmdline_cursor_left(),
             (Screen::EditCmdline { .. }, KeyCode::Right) => state.cmdline_cursor_right(),
+            (Screen::EditCmdline { .. }, KeyCode::Home) => state.cmdline_cursor_home(),
+            (Screen::EditCmdline { .. }, KeyCode::End) => state.cmdline_cursor_end(),
             (Screen::EditCmdline { .. }, KeyCode::Backspace) => state.cmdline_backspace(),
             (Screen::EditCmdline { .. }, KeyCode::Char(c)) => state.cmdline_insert(c),
 
