@@ -222,9 +222,13 @@ fn parse_flags(args: &[String]) -> Result<Option<FetchFlags>, u8> {
                 print_help();
                 return Ok(None);
             }
-            "--out" => {
+            // #541: --out / --out-dir / --cache-base are interchangeable
+            // aliases across fetch, flash, fetch-image, and fetch-trust-chain.
+            // Operator muscle memory from `curl -o`, `cp --target-directory`,
+            // `tar -C` doesn't agree on a single name, so we accept all three.
+            "--out" | "--out-dir" | "--cache-base" => {
                 let Some(v) = iter.next() else {
-                    eprintln!("aegis-boot fetch: --out requires a directory argument");
+                    eprintln!("aegis-boot fetch: {a} requires a directory argument");
                     return Err(2);
                 };
                 out_dir = Some(PathBuf::from(v));
@@ -235,6 +239,12 @@ fn parse_flags(args: &[String]) -> Result<Option<FetchFlags>, u8> {
             "--progress" => no_progress = Some(false),
             arg if arg.starts_with("--out=") => {
                 out_dir = Some(PathBuf::from(arg.trim_start_matches("--out=")));
+            }
+            arg if arg.starts_with("--out-dir=") => {
+                out_dir = Some(PathBuf::from(arg.trim_start_matches("--out-dir=")));
+            }
+            arg if arg.starts_with("--cache-base=") => {
+                out_dir = Some(PathBuf::from(arg.trim_start_matches("--cache-base=")));
             }
             arg if arg.starts_with("--") => {
                 eprintln!("aegis-boot fetch: unknown option '{arg}'");
@@ -552,6 +562,84 @@ mod tests {
         .expect("parse ok")
         .expect("not --help");
         assert_eq!(parsed.no_progress, Some(false));
+    }
+
+    // ---- #541: --out / --out-dir / --cache-base aliases -------------------
+
+    #[test]
+    fn parse_flags_accepts_out_flag_split_form() {
+        let p = parse_flags(&[
+            "--out".to_string(),
+            "/tmp/aegis".to_string(),
+            "ubuntu-24.04-live-server".to_string(),
+        ])
+        .expect("parse ok")
+        .expect("not --help");
+        assert_eq!(
+            p.out_dir.as_deref(),
+            Some(std::path::Path::new("/tmp/aegis"))
+        );
+    }
+
+    #[test]
+    fn parse_flags_accepts_out_dir_alias_split_form() {
+        // #541: --out-dir is a fetch alias for --out so muscle memory from
+        // `aegis-boot flash --out-dir` doesn't get a usage error here.
+        let p = parse_flags(&[
+            "--out-dir".to_string(),
+            "/tmp/aegis-od".to_string(),
+            "ubuntu-24.04-live-server".to_string(),
+        ])
+        .expect("parse ok")
+        .expect("not --help");
+        assert_eq!(
+            p.out_dir.as_deref(),
+            Some(std::path::Path::new("/tmp/aegis-od"))
+        );
+    }
+
+    #[test]
+    fn parse_flags_accepts_cache_base_alias_split_form() {
+        // #541: --cache-base alias from `aegis-boot fetch-trust-chain`.
+        let p = parse_flags(&[
+            "--cache-base".to_string(),
+            "/tmp/aegis-cb".to_string(),
+            "ubuntu-24.04-live-server".to_string(),
+        ])
+        .expect("parse ok")
+        .expect("not --help");
+        assert_eq!(
+            p.out_dir.as_deref(),
+            Some(std::path::Path::new("/tmp/aegis-cb"))
+        );
+    }
+
+    #[test]
+    fn parse_flags_accepts_out_dir_alias_equals_form() {
+        let p = parse_flags(&[
+            "--out-dir=/tmp/aegis-eq".to_string(),
+            "ubuntu-24.04-live-server".to_string(),
+        ])
+        .expect("parse ok")
+        .expect("not --help");
+        assert_eq!(
+            p.out_dir.as_deref(),
+            Some(std::path::Path::new("/tmp/aegis-eq"))
+        );
+    }
+
+    #[test]
+    fn parse_flags_accepts_cache_base_alias_equals_form() {
+        let p = parse_flags(&[
+            "--cache-base=/tmp/aegis-eq2".to_string(),
+            "ubuntu-24.04-live-server".to_string(),
+        ])
+        .expect("parse ok")
+        .expect("not --help");
+        assert_eq!(
+            p.out_dir.as_deref(),
+            Some(std::path::Path::new("/tmp/aegis-eq2"))
+        );
     }
 
     #[test]
