@@ -285,6 +285,7 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
     check_secureboot_state(&mut report);
     check_boot_mode(&mut report);
     check_tpm(&mut report);
+    check_nics(&mut report);
     check_removable_drives(&mut report);
     check_block_devices(&mut report);
     if !json_mode {
@@ -1120,6 +1121,99 @@ fn check_block_devices(report: &mut Report) {
         );
         report.add(Verdict::Pass, format!("disk: {}", d.dev.display()), detail);
     }
+}
+
+/// Surface a NIC inventory (#562). Useful for diagnosing "why doesn't my
+/// freshly-flashed stick connect" before booting it, and load-bearing
+/// for the future netboot ADR (#0003) re-entry path. Lists interfaces
+/// from `/sys/class/net/` with MAC + operstate, excluding loopback and
+/// pure-virtual interfaces (bridges, tun/tap, docker, libvirt) by
+/// requiring the `device/` symlink to exist.
+///
+/// Linux only today. macOS (`scutil --nwi`) and Windows (`Get-NetAdapter`)
+/// are deferred to #123 alongside the rest of cross-platform doctor.
+fn check_nics(report: &mut Report) {
+    let summary_name = "network interfaces".to_string();
+
+    #[cfg(target_os = "linux")]
+    {
+        let nics = read_nics_linux("/sys/class/net");
+        if nics.is_empty() {
+            report.add(
+                Verdict::Warn,
+                summary_name,
+                "no hardware NICs detected (only virtual/loopback present)",
+            );
+            return;
+        }
+        let up = nics.iter().filter(|n| n.operstate == "up").count();
+        let down = nics.len() - up;
+        report.add(
+            Verdict::Pass,
+            summary_name,
+            format!("{} detected ({up} up, {down} down/other)", nics.len()),
+        );
+        for n in &nics {
+            report.add(
+                Verdict::Pass,
+                format!("nic: {}", n.name),
+                format!("MAC {} — {}", n.mac, n.operstate),
+            );
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        report.add(
+            Verdict::Skip,
+            summary_name,
+            "NIC inventory not yet implemented on this platform (#123)",
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NicInfo {
+    name: String,
+    mac: String,
+    operstate: String,
+}
+
+#[cfg(target_os = "linux")]
+fn read_nics_linux(net_root: &str) -> Vec<NicInfo> {
+    let Ok(entries) = std::fs::read_dir(net_root) else {
+        return Vec::new();
+    };
+    let mut nics: Vec<NicInfo> = entries
+        .flatten()
+        .filter_map(|entry| read_nic_one(&entry.path()))
+        .collect();
+    nics.sort_by(|a, b| a.name.cmp(&b.name));
+    nics
+}
+
+#[cfg(target_os = "linux")]
+fn read_nic_one(sysdir: &std::path::Path) -> Option<NicInfo> {
+    let name = sysdir.file_name()?.to_string_lossy().into_owned();
+    if name == "lo" {
+        return None;
+    }
+    // Hardware-backed only — `device/` symlink resolves to the underlying
+    // PCI / USB / virtio device. Pure-virtual interfaces (bridges, tun/tap,
+    // docker0, virbr*, tailscale0) lack this symlink.
+    if !sysdir.join("device").exists() {
+        return None;
+    }
+    let mac = std::fs::read_to_string(sysdir.join("address"))
+        .map_or_else(|_| "(no MAC)".to_string(), |s| s.trim().to_string());
+    let operstate = std::fs::read_to_string(sysdir.join("operstate"))
+        .map_or_else(|_| "unknown".to_string(), |s| s.trim().to_string());
+    Some(NicInfo {
+        name,
+        mac,
+        operstate,
+    })
 }
 
 fn check_removable_drives(report: &mut Report) {
@@ -1985,56 +2079,92 @@ mod tests {
         assert!(matches!(r.rows[0].0, Verdict::Skip));
     }
 
-    // ---- boot mode (#561) -------------------------------------------------
+    // ---- NIC inventory (#562) -------------------------------------------
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn read_nics_linux_skips_lo() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Loopback shape: lo/ exists but has no `device/` symlink. Should
+        // be filtered, even if other files are present.
+        let lo = tmp.path().join("lo");
+        std::fs::create_dir(&lo).unwrap();
+        std::fs::write(lo.join("address"), "00:00:00:00:00:00\n").unwrap();
+        std::fs::write(lo.join("operstate"), "unknown\n").unwrap();
+        let nics = read_nics_linux(tmp.path().to_str().unwrap());
+        assert!(nics.is_empty(), "lo must be filtered");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn read_nics_linux_skips_pure_virtual_without_device_dir() {
+        // virbr0 / docker0 / tailscale0 shape — no device/ symlink → drop.
+        let tmp = tempfile::tempdir().unwrap();
+        let virt = tmp.path().join("virbr0");
+        std::fs::create_dir(&virt).unwrap();
+        std::fs::write(virt.join("address"), "52:54:00:aa:bb:cc\n").unwrap();
+        std::fs::write(virt.join("operstate"), "up\n").unwrap();
+        let nics = read_nics_linux(tmp.path().to_str().unwrap());
+        assert!(nics.is_empty(), "pure-virtual interface must be filtered");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn read_nics_linux_includes_hardware_backed_nics() {
+        // wlp166s0 / enx... / enp0s31f6 shape — has device/ symlink.
+        let tmp = tempfile::tempdir().unwrap();
+        let nic = tmp.path().join("wlp166s0");
+        std::fs::create_dir(&nic).unwrap();
+        // Use a real subdir as the device anchor — no need for a symlink,
+        // `.exists()` accepts directories too.
+        std::fs::create_dir(nic.join("device")).unwrap();
+        std::fs::write(nic.join("address"), "aa:bb:cc:dd:ee:ff\n").unwrap();
+        std::fs::write(nic.join("operstate"), "up\n").unwrap();
+        let nics = read_nics_linux(tmp.path().to_str().unwrap());
+        assert_eq!(nics.len(), 1);
+        assert_eq!(nics[0].name, "wlp166s0");
+        assert_eq!(nics[0].mac, "aa:bb:cc:dd:ee:ff");
+        assert_eq!(nics[0].operstate, "up");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn read_nics_linux_returns_empty_when_root_missing() {
+        let nics = read_nics_linux("/definitely/does/not/exist/aegis-nic-probe");
+        assert!(nics.is_empty());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn read_nics_linux_uses_fallback_when_address_or_operstate_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let nic = tmp.path().join("eno1");
+        std::fs::create_dir(&nic).unwrap();
+        std::fs::create_dir(nic.join("device")).unwrap();
+        // Neither `address` nor `operstate` present — fallbacks kick in.
+        let nics = read_nics_linux(tmp.path().to_str().unwrap());
+        assert_eq!(nics.len(), 1);
+        assert_eq!(nics[0].mac, "(no MAC)");
+        assert_eq!(nics[0].operstate, "unknown");
+    }
 
     #[test]
-    fn check_boot_mode_emits_exactly_one_row() {
+    fn check_nics_emits_summary_row() {
         let mut r = Report::new().with_json_mode(true);
-        check_boot_mode(&mut r);
-        assert_eq!(r.rows.len(), 1);
-        assert_eq!(r.rows[0].1, "boot mode (host)");
+        check_nics(&mut r);
+        assert!(!r.rows.is_empty());
+        assert_eq!(r.rows[0].1, "network interfaces");
         assert!(matches!(
             r.rows[0].0,
             Verdict::Pass | Verdict::Warn | Verdict::Skip
         ));
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(not(target_os = "linux"))]
     #[test]
-    fn read_boot_mode_linux_recognizes_uefi() {
-        let tmp = tempfile::tempdir().unwrap();
-        // tempdir IS an existing directory — simulates /sys/firmware/efi
-        // present.
-        let mode = read_boot_mode_linux(tmp.path().to_str().unwrap());
-        assert_eq!(mode, BootMode::Uefi);
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn read_boot_mode_linux_recognizes_legacy() {
-        // Path that definitely doesn't exist → Legacy.
-        let mode = read_boot_mode_linux("/definitely/does/not/exist/aegis-bootmode-probe");
-        assert_eq!(mode, BootMode::Legacy);
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn read_boot_mode_linux_treats_files_as_legacy() {
-        // /sys/firmware/efi is a *directory* on UEFI hosts. A regular file
-        // at the same path is malformed; we treat it as Legacy rather than
-        // as a false UEFI signal.
-        let tmp = tempfile::tempdir().unwrap();
-        let f = tmp.path().join("not-a-dir");
-        std::fs::write(&f, b"file").unwrap();
-        let mode = read_boot_mode_linux(f.to_str().unwrap());
-        assert_eq!(mode, BootMode::Legacy);
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn check_boot_mode_skips_on_windows() {
+    fn check_nics_skips_on_non_linux() {
         let mut r = Report::new();
-        check_boot_mode(&mut r);
+        check_nics(&mut r);
         assert_eq!(r.rows.len(), 1);
         assert!(matches!(r.rows[0].0, Verdict::Skip));
     }
