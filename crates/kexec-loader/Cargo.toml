@@ -17,6 +17,7 @@ categories = ["os::linux-apis", "api-bindings"]
 [dependencies]
 thiserror.workspace = true
 libc.workspace = true
+tracing.workspace = true
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 # intentionally empty — crate is Linux-only at runtime. Non-Linux builds

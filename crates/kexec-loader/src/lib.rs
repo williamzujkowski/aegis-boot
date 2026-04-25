@@ -167,13 +167,37 @@ impl OwnedFd {
 #[cfg(target_os = "linux")]
 impl Drop for OwnedFd {
     fn drop(&mut self) {
+        // POSIX: close(2) may be interrupted by a signal and return EINTR,
+        // in which case it should be retried. Other errors (EIO flushing a
+        // buffered device, ENOSPC, etc.) are exceedingly rare on the
+        // O_RDONLY fds opened by this crate but worth a tracing line so a
+        // post-mortem can find them. #598.
+        //
         // SAFETY: fd was obtained from `open(2)` in `open_path` and is not
         // shared. Closing an already-closed or never-opened fd would be UB,
         // but construction paths guarantee `self.0 >= 0` and single-owner.
-        #[allow(unsafe_code)]
-        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
-        unsafe {
-            libc::close(self.0);
+        // The retry loop only re-issues `close` on EINTR — the kernel's
+        // own contract is that the fd is *already* released when EINTR is
+        // returned on Linux, but POSIX leaves the state implementation-
+        // defined; retrying matches the broadly portable advice and is
+        // harmless here because we hold the only reference.
+        loop {
+            #[allow(unsafe_code)]
+            // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+            let rc = unsafe { libc::close(self.0) };
+            if rc == 0 {
+                return;
+            }
+            let err = io::Error::last_os_error();
+            if err.raw_os_error() == Some(libc::EINTR) {
+                continue;
+            }
+            tracing::warn!(
+                fd = self.0,
+                error = %err,
+                "kexec-loader: close() on owned fd failed"
+            );
+            return;
         }
     }
 }
