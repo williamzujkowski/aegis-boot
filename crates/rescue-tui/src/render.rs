@@ -1246,16 +1246,8 @@ fn signer_summary(iso: &iso_probe::DiscoveredIso) -> String {
     }
 }
 
-fn short_hex(hex: &str) -> String {
-    if hex.len() <= 14 {
-        return hex.to_string();
-    }
-    let mut end = 12;
-    while !hex.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &hex[..end])
-}
+// short_hex moved to crates/aegis-core (#556 PoC).
+use aegis_core::short_hex;
 
 /// Pre-wrap a string to `content_width` and append one `Line` per
 /// wrapped row to `out`. Uses `textwrap::wrap` because ratatui's own
@@ -1562,24 +1554,13 @@ fn signature_span<'a>(verification: &iso_probe::SignatureVerification, theme: &T
     }
 }
 
-const KB: u64 = 1024;
-const MB: u64 = KB * 1024;
-const GB: u64 = MB * 1024;
-
-#[allow(clippy::cast_precision_loss)]
+/// Format an optional byte count for the info-pane Size: row. Wraps
+/// `aegis_core::humanize_bytes` and adds the rescue-tui-specific
+/// "(unknown)" sentinel for ISOs whose size couldn't be stat'd.
+/// (#556 proof-of-concept: 4-level ladder logic moved to aegis-core;
+/// only the `Option`-handling glue stays here.)
 fn humanize_size(bytes: Option<u64>) -> String {
-    let Some(b) = bytes else {
-        return "(unknown)".to_string();
-    };
-    if b >= GB {
-        format!("{:.2} GiB", b as f64 / GB as f64)
-    } else if b >= MB {
-        format!("{:.1} MiB", b as f64 / MB as f64)
-    } else if b >= KB {
-        format!("{:.0} KiB", b as f64 / KB as f64)
-    } else {
-        format!("{b} B")
-    }
+    bytes.map_or_else(|| "(unknown)".to_string(), aegis_core::humanize_bytes)
 }
 
 // memtest86+ single-frame evidence: a screenshot of this panel should

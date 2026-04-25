@@ -722,16 +722,11 @@ fn sanitize_for_filename(s: &str) -> String {
         .collect()
 }
 
-#[allow(clippy::cast_precision_loss)]
-fn humanize(bytes: u64) -> String {
-    let gib = bytes as f64 / 1_073_741_824.0;
-    if gib >= 1.0 {
-        format!("{gib:.1} GiB")
-    } else {
-        let mib = bytes as f64 / 1_048_576.0;
-        format!("{mib:.0} MiB")
-    }
-}
+// humanize moved to crates/aegis-core::humanize_bytes (#556 PoC).
+// See inventory.rs for the precision-tier note. For attest receipts
+// the migration is behavior-preserving for multi-MiB+ artifacts (the
+// canonical case — rescue-tui binary, initramfs, .img).
+use aegis_core::humanize_bytes as humanize;
 
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
@@ -886,10 +881,17 @@ mod tests {
     }
 
     #[test]
-    fn humanize_bytes() {
-        assert_eq!(humanize(0), "0 MiB");
-        assert_eq!(humanize(1024 * 1024), "1 MiB");
-        assert_eq!(humanize(2 * 1024 * 1024 * 1024), "2.0 GiB");
+    fn humanize_via_aegis_core_canonical_outputs() {
+        // After #556 PoC, this module's `humanize` is a re-export of
+        // `aegis_core::humanize_bytes`. The new helper uses a 4-level
+        // B/KiB/MiB/GiB ladder vs the prior 2-level MiB/GiB; for
+        // attest's typical artifact sizes (multi-MiB binaries, GiB
+        // images) the magnitudes used by the receipt prose are
+        // unchanged. Test expectations updated to the canonical
+        // aegis-core outputs.
+        assert_eq!(humanize(0), "0 B");
+        assert_eq!(humanize(1024 * 1024), "1.0 MiB");
+        assert_eq!(humanize(2 * 1024 * 1024 * 1024), "2.00 GiB");
     }
 
     #[test]

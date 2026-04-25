@@ -399,17 +399,9 @@ fn run_scan_mode(mount_arg: Option<&str>) -> Result<(), u8> {
     Ok(())
 }
 
-/// Truncate a hex digest to 12 chars + ellipsis for CLI output.
-fn short_hex(s: &str) -> String {
-    if s.len() <= 14 {
-        return s.to_string();
-    }
-    let mut end = 12;
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &s[..end])
-}
+// short_hex moved to crates/aegis-core (#556 PoC). Keep the local
+// re-export so existing call sites in this module compile unchanged.
+use aegis_core::short_hex;
 
 /// Per-run classification of every `.iso` file found during a scan.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -1555,16 +1547,12 @@ impl crate::userfacing::UserFacing for AddError {
     }
 }
 
-#[allow(clippy::cast_precision_loss)]
-fn humanize(bytes: u64) -> String {
-    let gib = bytes as f64 / 1_073_741_824.0;
-    if gib >= 1.0 {
-        format!("{gib:.1} GiB")
-    } else {
-        let mib = bytes as f64 / 1_048_576.0;
-        format!("{mib:.0} MiB")
-    }
-}
+// humanize moved to crates/aegis-core::humanize_bytes (#556 PoC). The
+// new helper uses a 4-level B/KiB/MiB/GiB ladder vs the prior 2-level
+// MiB/GiB ladder; for inventory-sized objects (ISOs, multi-MiB+) the
+// output of the relevant magnitudes is the same up to ±1 decimal of
+// precision in the GiB tier (now 2 decimals, was 1).
+use aegis_core::humanize_bytes as humanize;
 
 #[cfg(test)]
 #[allow(

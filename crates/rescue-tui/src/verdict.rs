@@ -412,14 +412,11 @@ impl MediaVerdict {
     }
 }
 
-/// Truncate a long hex digest to the first 12 chars with an ellipsis —
-/// keeps the `HashMismatch` reason line readable in narrow terminals.
-fn short_hex(hex: &str) -> String {
-    if hex.len() <= 14 {
-        return hex.to_string();
-    }
-    format!("{}…", &hex[..12])
-}
+// short_hex moved to crates/aegis-core (#556 PoC). The aegis-core
+// version is UTF-8-safe at the boundary; the previous local impl
+// raw-sliced `&hex[..12]` which would panic on non-ASCII input. Hex
+// digests are ASCII in practice so the change is behavior-preserving.
+use aegis_core::short_hex;
 
 /// Extension trait on [`iso_parser::Distribution`] giving a short,
 /// capitalized display label for reason strings.
