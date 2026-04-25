@@ -438,16 +438,27 @@ fn parse_args(args: &[String]) -> Result<ParsedArgs, u8> {
             arg if arg.starts_with("--url=") => {
                 p.url = Some(arg["--url=".len()..].to_string());
             }
-            "--out" => {
+            // #541: --out / --out-dir / --cache-base are interchangeable
+            // across the four output-writing subcommands. fetch-image's
+            // canonical name is --out (its argument is a single output
+            // file path, not a directory, but the alias still works as
+            // operators expect).
+            "--out" | "--out-dir" | "--cache-base" => {
                 i += 1;
                 let Some(v) = args.get(i) else {
-                    eprintln!("aegis-boot fetch-image: --out requires a path");
+                    eprintln!("aegis-boot fetch-image: {a} requires a path");
                     return Err(2);
                 };
                 p.out = Some(PathBuf::from(v));
             }
             arg if arg.starts_with("--out=") => {
                 p.out = Some(PathBuf::from(&arg["--out=".len()..]));
+            }
+            arg if arg.starts_with("--out-dir=") => {
+                p.out = Some(PathBuf::from(&arg["--out-dir=".len()..]));
+            }
+            arg if arg.starts_with("--cache-base=") => {
+                p.out = Some(PathBuf::from(&arg["--cache-base=".len()..]));
             }
             "--sha256" => {
                 i += 1;
@@ -713,6 +724,36 @@ mod tests {
         let p = parse_args(&args).unwrap();
         assert_eq!(p.url.as_deref(), Some("https://example.com/img"));
         assert!(p.expected_sha256.is_some());
+    }
+
+    // ---- #541: --out-dir / --cache-base aliases for fetch-image --out -----
+
+    #[test]
+    fn parse_args_accepts_out_dir_alias_split_form() {
+        let args = vec!["--out-dir".to_string(), "/tmp/aegis-fi".to_string()];
+        let p = parse_args(&args).unwrap();
+        assert_eq!(p.out, Some(PathBuf::from("/tmp/aegis-fi")));
+    }
+
+    #[test]
+    fn parse_args_accepts_cache_base_alias_split_form() {
+        let args = vec!["--cache-base".to_string(), "/tmp/aegis-fi-cb".to_string()];
+        let p = parse_args(&args).unwrap();
+        assert_eq!(p.out, Some(PathBuf::from("/tmp/aegis-fi-cb")));
+    }
+
+    #[test]
+    fn parse_args_accepts_out_dir_alias_eq_form() {
+        let args = vec!["--out-dir=/tmp/aegis-fi-eq".to_string()];
+        let p = parse_args(&args).unwrap();
+        assert_eq!(p.out, Some(PathBuf::from("/tmp/aegis-fi-eq")));
+    }
+
+    #[test]
+    fn parse_args_accepts_cache_base_alias_eq_form() {
+        let args = vec!["--cache-base=/tmp/aegis-fi-cb-eq".to_string()];
+        let p = parse_args(&args).unwrap();
+        assert_eq!(p.out, Some(PathBuf::from("/tmp/aegis-fi-cb-eq")));
     }
 
     #[test]

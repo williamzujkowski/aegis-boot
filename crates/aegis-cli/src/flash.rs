@@ -75,16 +75,27 @@ fn parse_args(args: &[String]) -> Result<ParsedArgs<'_>, u8> {
             "--no-progress" => p.no_progress = true,
             "--no-expand" => p.no_expand = true,
             "--direct-install" => p.direct_install = true,
-            "--out-dir" => {
+            // #541: --out / --out-dir / --cache-base are interchangeable
+            // across the four output-writing subcommands. Operators with
+            // muscle memory from `curl -o`, `cp --target-directory`, or
+            // `tar -C` get the obvious-on-first-guess behavior.
+            flag @ ("--out-dir" | "--out" | "--cache-base") => {
+                let flag_owned = flag.to_string();
                 i += 1;
                 let Some(v) = args.get(i) else {
-                    eprintln!("aegis-boot flash: --out-dir requires a path argument");
+                    eprintln!("aegis-boot flash: {flag_owned} requires a path argument");
                     return Err(2);
                 };
                 p.out_dir = Some(PathBuf::from(v));
             }
             arg if arg.starts_with("--out-dir=") => {
                 p.out_dir = Some(PathBuf::from(&arg["--out-dir=".len()..]));
+            }
+            arg if arg.starts_with("--out=") => {
+                p.out_dir = Some(PathBuf::from(&arg["--out=".len()..]));
+            }
+            arg if arg.starts_with("--cache-base=") => {
+                p.out_dir = Some(PathBuf::from(&arg["--cache-base=".len()..]));
             }
             "--image" => {
                 i += 1;
@@ -2703,6 +2714,42 @@ mod tests {
         let argv = vec![String::from("--out-dir=/tmp/x")];
         let p = parse_args(&argv).unwrap();
         assert_eq!(p.out_dir, Some(PathBuf::from("/tmp/x")));
+    }
+
+    // ---- #541: --out / --cache-base aliases for flash --out-dir -----------
+
+    #[test]
+    fn parse_args_accepts_out_alias_split_form() {
+        // #541: muscle memory from `aegis-boot fetch --out` should work
+        // here too without re-reading the help.
+        let argv = vec![String::from("--out"), String::from("/tmp/aegis-flash")];
+        let p = parse_args(&argv).unwrap();
+        assert_eq!(p.out_dir, Some(PathBuf::from("/tmp/aegis-flash")));
+    }
+
+    #[test]
+    fn parse_args_accepts_cache_base_alias_split_form() {
+        // #541: muscle memory from `aegis-boot fetch-trust-chain --cache-base`.
+        let argv = vec![
+            String::from("--cache-base"),
+            String::from("/tmp/aegis-flash-cb"),
+        ];
+        let p = parse_args(&argv).unwrap();
+        assert_eq!(p.out_dir, Some(PathBuf::from("/tmp/aegis-flash-cb")));
+    }
+
+    #[test]
+    fn parse_args_accepts_out_alias_eq_form() {
+        let argv = vec![String::from("--out=/tmp/aegis-flash-eq")];
+        let p = parse_args(&argv).unwrap();
+        assert_eq!(p.out_dir, Some(PathBuf::from("/tmp/aegis-flash-eq")));
+    }
+
+    #[test]
+    fn parse_args_accepts_cache_base_alias_eq_form() {
+        let argv = vec![String::from("--cache-base=/tmp/aegis-flash-cb2")];
+        let p = parse_args(&argv).unwrap();
+        assert_eq!(p.out_dir, Some(PathBuf::from("/tmp/aegis-flash-cb2")));
     }
 
     #[test]

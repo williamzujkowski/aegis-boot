@@ -304,15 +304,23 @@ fn parse_args(args: &[String]) -> Result<Args, u8> {
     while let Some(a) = iter.next() {
         match a.as_str() {
             "-h" | "--help" => out.help_requested = true,
-            "--cache-base" => {
+            // #541: --out / --out-dir / --cache-base are interchangeable
+            // across the four output-writing subcommands.
+            "--cache-base" | "--out" | "--out-dir" => {
                 let v = iter.next().ok_or_else(|| {
-                    eprintln!("aegis-boot fetch-trust-chain: --cache-base requires an argument");
+                    eprintln!("aegis-boot fetch-trust-chain: {a} requires an argument");
                     2u8
                 })?;
                 out.cache_base = Some(PathBuf::from(v));
             }
             s if s.starts_with("--cache-base=") => {
                 out.cache_base = Some(PathBuf::from(&s["--cache-base=".len()..]));
+            }
+            s if s.starts_with("--out=") => {
+                out.cache_base = Some(PathBuf::from(&s["--out=".len()..]));
+            }
+            s if s.starts_with("--out-dir=") => {
+                out.cache_base = Some(PathBuf::from(&s["--out-dir=".len()..]));
             }
             s if s.starts_with('-') => {
                 eprintln!("aegis-boot fetch-trust-chain: unknown flag {s:?}");
@@ -478,6 +486,59 @@ mod tests {
         ];
         let out = parse_args(&args).unwrap();
         assert_eq!(out.cache_base.as_deref(), Some(Path::new("/tmp/cache")));
+    }
+
+    // ---- #541: --out / --out-dir aliases for fetch-trust-chain --cache-base
+
+    #[test]
+    fn parse_args_accepts_out_alias_split_form() {
+        let args = vec![
+            "--out".to_string(),
+            "/tmp/aegis-bf".to_string(),
+            "https://example.invalid/".to_string(),
+        ];
+        let out = parse_args(&args).unwrap();
+        assert_eq!(out.cache_base.as_deref(), Some(Path::new("/tmp/aegis-bf")));
+    }
+
+    #[test]
+    fn parse_args_accepts_out_dir_alias_split_form() {
+        let args = vec![
+            "--out-dir".to_string(),
+            "/tmp/aegis-bf-od".to_string(),
+            "https://example.invalid/".to_string(),
+        ];
+        let out = parse_args(&args).unwrap();
+        assert_eq!(
+            out.cache_base.as_deref(),
+            Some(Path::new("/tmp/aegis-bf-od"))
+        );
+    }
+
+    #[test]
+    fn parse_args_accepts_out_alias_eq_form() {
+        let args = vec![
+            "--out=/tmp/aegis-bf-eq".to_string(),
+            "https://example.invalid/".to_string(),
+        ];
+        let out = parse_args(&args).unwrap();
+        assert_eq!(
+            out.cache_base.as_deref(),
+            Some(Path::new("/tmp/aegis-bf-eq"))
+        );
+    }
+
+    #[test]
+    fn parse_args_accepts_out_dir_alias_eq_form() {
+        let args = vec![
+            "--out-dir=/tmp/aegis-bf-od-eq".to_string(),
+            "https://example.invalid/".to_string(),
+        ];
+        let out = parse_args(&args).unwrap();
+        assert_eq!(
+            out.cache_base.as_deref(),
+            Some(Path::new("/tmp/aegis-bf-od-eq"))
+        );
     }
 
     #[test]
