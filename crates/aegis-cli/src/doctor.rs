@@ -283,6 +283,7 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
     check_trust_anchor(&mut report);
     check_cosign_optional(&mut report);
     check_secureboot_state(&mut report);
+    check_tpm(&mut report);
     check_removable_drives(&mut report);
     if !json_mode {
         println!();
@@ -882,6 +883,127 @@ fn read_secureboot() -> Option<bool> {
     None
 }
 
+/// Surface TPM presence + version from sysfs on Linux. This is a host-side
+/// informational check: an operator workstation does not need a TPM to flash
+/// a stick, but the trust flows that rescue-tui exercises on the target
+/// (PCR 12 measurement, unsealed-key policy) assume a TPM 2.0 is present
+/// somewhere in the fleet. Surfacing host TPM state here helps an operator
+/// who is flashing on the same box they will boot.
+///
+/// Detection on Linux reads `/sys/class/tpm/`. When populated, each `tpmN`
+/// entry has a `tpm_version_major` pseudo-file containing `"1"` or `"2"`.
+/// Older kernels (< 4.12) expose the device but not the version file; we
+/// surface that as Warn rather than pretending we know the version.
+///
+/// macOS and Windows skip with a note — the TUI-side attestation flow has
+/// no Windows implementation yet (issue #123), and T2/Apple-Silicon TPM
+/// equivalents require `system_profiler` parsing that we have not yet
+/// invested in.
+fn check_tpm(report: &mut Report) {
+    let name = "TPM (host)".to_string();
+
+    #[cfg(target_os = "linux")]
+    {
+        match read_tpm_linux() {
+            TpmState::Present { version } => report.add(
+                Verdict::Pass,
+                name,
+                match version {
+                    TpmVersion::V2 => "TPM 2.0 present".to_string(),
+                    TpmVersion::V1_2 => {
+                        "TPM 1.2 present (note: rescue-tui attestation assumes 2.0)".to_string()
+                    }
+                    TpmVersion::Unknown => {
+                        "TPM present (version unreadable on this kernel)".to_string()
+                    }
+                },
+            ),
+            TpmState::SysfsEmpty => report.add(
+                Verdict::Warn,
+                name,
+                "sysfs /sys/class/tpm/ exists but no device — check firmware TPM enable",
+            ),
+            TpmState::SysfsAbsent => report.add(
+                Verdict::Skip,
+                name,
+                "kernel does not expose /sys/class/tpm (module not loaded or built without TPM)",
+            ),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        report.add(
+            Verdict::Skip,
+            name,
+            "macOS TPM detection not implemented (T2/Apple-Silicon equivalents — #123)",
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        report.add(
+            Verdict::Skip,
+            name,
+            "Windows TPM detection not implemented (Get-Tpm WMI — #123)",
+        );
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        report.add(Verdict::Skip, name, "unrecognized target_os");
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TpmVersion {
+    V1_2,
+    V2,
+    Unknown,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TpmState {
+    Present { version: TpmVersion },
+    SysfsEmpty,
+    SysfsAbsent,
+}
+
+#[cfg(target_os = "linux")]
+fn read_tpm_linux() -> TpmState {
+    read_tpm_from("/sys/class/tpm")
+}
+
+#[cfg(target_os = "linux")]
+fn read_tpm_from(sysfs_root: &str) -> TpmState {
+    let Ok(entries) = std::fs::read_dir(sysfs_root) else {
+        return TpmState::SysfsAbsent;
+    };
+    // First `tpm*` entry wins. We don't enumerate multiple TPMs because that
+    // is vanishingly rare on operator workstations, and the report row is
+    // scalar.
+    for entry in entries.flatten() {
+        let fname = entry.file_name();
+        let name = fname.to_string_lossy();
+        if !name.starts_with("tpm") {
+            continue;
+        }
+        let version_path = entry.path().join("tpm_version_major");
+        let version = match std::fs::read_to_string(&version_path) {
+            Ok(s) => match s.trim() {
+                "1" => TpmVersion::V1_2,
+                "2" => TpmVersion::V2,
+                _ => TpmVersion::Unknown,
+            },
+            Err(_) => TpmVersion::Unknown,
+        };
+        return TpmState::Present { version };
+    }
+    TpmState::SysfsEmpty
+}
+
 fn check_removable_drives(report: &mut Report) {
     let drives = detect::list_removable_drives();
     let name = "removable USB drives".to_string();
@@ -1192,6 +1314,7 @@ fn extract_disk_guid(out: &str) -> Option<String> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::missing_panics_doc)]
 mod tests {
     use super::*;
     use crate::inventory::IsoEntry;
@@ -1640,5 +1763,107 @@ mod tests {
             na.contains("apt-get") && na.contains("dnf") && na.contains("pacman"),
             "remedy must list the three common distro families, got: {na}"
         );
+    }
+
+    // ---- TPM check (#559) ---------------------------------------------------
+
+    #[test]
+    fn check_tpm_emits_exactly_one_row() {
+        // Shape guarantee: every host check contributes exactly one row.
+        // Whatever the local environment looks like, the row count must
+        // be 1 so the summary accounting stays honest.
+        let mut r = Report::new().with_json_mode(true);
+        check_tpm(&mut r);
+        assert_eq!(r.rows.len(), 1, "check_tpm must emit exactly one row");
+        assert_eq!(r.rows[0].1, "TPM (host)");
+        assert!(
+            matches!(r.rows[0].0, Verdict::Pass | Verdict::Warn | Verdict::Skip),
+            "TPM verdict must be Pass/Warn/Skip (never Fail on host), got {:?}",
+            r.rows[0].0
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn read_tpm_from_missing_sysfs_returns_absent() {
+        // A path that definitely does not exist — covers the case where the
+        // kernel was built without TPM support (or the module has not
+        // loaded).
+        let state = read_tpm_from("/definitely/does/not/exist/aegis-tpm-probe");
+        assert_eq!(state, TpmState::SysfsAbsent);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn read_tpm_from_empty_dir_returns_empty() {
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        let state = read_tpm_from(tmp.path().to_str().expect("utf-8 tmpdir"));
+        assert_eq!(state, TpmState::SysfsEmpty);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn read_tpm_from_parses_v2_device() {
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        let dev = tmp.path().join("tpm0");
+        std::fs::create_dir(&dev).expect("create tpm0");
+        std::fs::write(dev.join("tpm_version_major"), "2\n").expect("write version");
+        let state = read_tpm_from(tmp.path().to_str().expect("utf-8 tmpdir"));
+        assert_eq!(
+            state,
+            TpmState::Present {
+                version: TpmVersion::V2
+            }
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn read_tpm_from_parses_v1_2_device() {
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        let dev = tmp.path().join("tpm0");
+        std::fs::create_dir(&dev).expect("create tpm0");
+        std::fs::write(dev.join("tpm_version_major"), "1").expect("write version");
+        let state = read_tpm_from(tmp.path().to_str().expect("utf-8 tmpdir"));
+        assert_eq!(
+            state,
+            TpmState::Present {
+                version: TpmVersion::V1_2
+            }
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn read_tpm_from_present_without_version_file_returns_unknown() {
+        // Older kernels (< 4.12) expose the device without tpm_version_major.
+        // We must surface presence with an Unknown version, not claim v2.
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        std::fs::create_dir(tmp.path().join("tpm0")).expect("create tpm0");
+        let state = read_tpm_from(tmp.path().to_str().expect("utf-8 tmpdir"));
+        assert_eq!(
+            state,
+            TpmState::Present {
+                version: TpmVersion::Unknown
+            }
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn read_tpm_from_ignores_non_tpm_entries() {
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        std::fs::create_dir(tmp.path().join("stray-dir")).expect("create stray");
+        let state = read_tpm_from(tmp.path().to_str().expect("utf-8 tmpdir"));
+        assert_eq!(state, TpmState::SysfsEmpty);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn check_tpm_skips_on_non_linux() {
+        let mut r = Report::new();
+        check_tpm(&mut r);
+        assert_eq!(r.rows.len(), 1);
+        assert!(matches!(r.rows[0].0, Verdict::Skip));
     }
 }
