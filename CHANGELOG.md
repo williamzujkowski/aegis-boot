@@ -4,6 +4,27 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 
 ## [Unreleased]
 
+### UX/UI review pass — operator surface polish (epic #537)
+
+Four-agent parallel review of the operator surface (rescue-tui, CLI subcommands, user docs, error-message contract) found 18 actionable issues. Tier-1 (bugs + quick correctness wins) shipped as five focused PRs; Tier-3/4 (rescue-tui polish, longer-horizon) filed as tracking issues for future work.
+
+- **#538 / PR #549** — `fetch_image::try_cosign_verify` no longer calls `std::process::exit(1)` directly. Returns `Result<(), String>` so the caller composes cleanly + the failure path is unit-testable. Behavior unchanged for operators.
+- **#539 / PR #550** — `COSIGN_IDENTITY_REGEX` tightened from `refs/tags/.+$` to `refs/tags/v.+$`, matching the verification recipe in `docs/RELEASE_NOTES_FOOTER.md`. Every actual release is `v0.N.M`-prefixed; the bare form was looser than necessary. New regression test pins the `v.+$` suffix.
+- **#540 / PR #551** — `aegis-boot add` with no args now prints `aegis-boot add: missing required <iso-or-slug> argument.` to stderr **before** the help text. Mirrors the pattern `fetch` already uses on missing-slug. Resolves the case where a first-time operator saw only help and could mistake exit 2 for success.
+- **#543 / PR #552** — `aegis-boot add --help` restructured: USAGE → OPTIONS → EXAMPLES → BEHAVIOR. The `--folder`, `--description`, `--version`, `--category`, `--scan` flags were previously buried in narrative paragraphs; now visible in a flat OPTIONS list with one-line descriptions. `docs/reference/CLI_SYNOPSIS.md` regenerated to match.
+- **#542 / PR #553** — `crate::userfacing::eprint_with_next(subcommand, message, hint)` helper introduced for fail-fast subcommands that don't warrant a full `UserFacing` typed-error impl. Wired into three `flash` failure paths (`--image not a file`, `device not found`, `no removable USB drives detected`). Each now emits the `aegis-boot <sub>: <msg>\nNEXT ACTION: <hint>\n` shape that operators have grown to expect from `doctor`. Decision driven by an 80%-approve consensus_vote on the lighter-helper-vs-full-Report-extraction tradeoff (Architect, Security, AI/ML, PM all approved; Contrarian's "use a thin trait extension instead" framing shaped the final API).
+
+Tier-3/4 follow-ups (tracking only, not shipped):
+
+- **#544** rescue-tui cmdline editor Home/End/Ctrl+A/Ctrl+E
+- **#545** rescue-tui Shift+↑↓ chord to scroll info pane without losing list-pane focus
+- **#546** rescue-tui Enter-over-blocked-row explanation modal
+- **#547** progress indicator on slow `init --profile panic-room` fetches (~5 GiB silent today)
+- **#548** rescue-tui `v` (verify-now) result export to `AEGIS_ISOS/verify-log/` for audit trails
+- **#541** unify `--out` / `--out-dir` / `--cache-base` flag naming across subcommands
+
+The audit also verified the documentation is broadly accurate — only the cosign regex / docs drift was found, and that landed in the same pass.
+
 ### macOS `--direct-install` adapter (closes #418)
 
 Native `aegis-boot flash --direct-install disk5` now works on macOS. Six PRs across five phases build the pure-fn + cfg-gated subprocess layer on top of `diskutil` (partition + mount + unmount), plain `cp` + `/bin/sync` (ESP staging), and parsed `diskutil info` output (preflight safety gate). Sibling of the Windows direct-install adapter from #419 — same four-stage pipeline shape, minus the BitLocker stage and minus a separate format stage (`diskutil partitionDisk` formats in the same call).
