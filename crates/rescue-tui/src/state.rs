@@ -987,6 +987,19 @@ impl AppState {
         }
     }
 
+    /// Return a reference to the ISO currently under verify-now, if
+    /// the screen is `Verifying`. Used by main.rs to write the
+    /// audit-log line (#548) before `verify_finish` transitions
+    /// state away from the Verifying screen.
+    #[must_use]
+    pub fn iso_being_verified(&self) -> Option<&DiscoveredIso> {
+        if let Screen::Verifying { selected, .. } = self.screen {
+            self.isos.get(selected)
+        } else {
+            None
+        }
+    }
+
     /// Worker finished. Update the ISO's `hash_verification` in place
     /// and transition back to the Confirm screen on the same ISO so
     /// the operator sees the refreshed verdict. (#89)

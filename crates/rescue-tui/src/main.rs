@@ -286,6 +286,26 @@ where
                         state.verify_tick(bytes, total);
                     }
                     Ok(VerifyMsg::Done(Ok(outcome))) => {
+                        // #548 UX T4B: append an audit-log line for the
+                        // operator-initiated verify, regardless of
+                        // verdict. Best-effort — the operator already
+                        // sees the verdict in the TUI; the JSONL line
+                        // is for post-mortem / "I checked this ISO
+                        // before boot" evidence.
+                        if let Some(iso_path) =
+                            state.iso_being_verified().map(|i| i.iso_path.clone())
+                        {
+                            match save_verify_audit_log(&iso_path, &outcome) {
+                                Ok(path) => tracing::info!(
+                                    path = %path.display(),
+                                    "verify-now: audit-log line written"
+                                ),
+                                Err(e) => tracing::warn!(
+                                    error = %e,
+                                    "verify-now: audit-log write failed (continuing)"
+                                ),
+                            }
+                        }
                         state.verify_finish(outcome);
                         active_verify = None;
                         break;
@@ -832,6 +852,92 @@ fn trust_verdict_for_text(iso: &iso_probe::DiscoveredIso) -> &'static str {
     "gray"
 }
 
+/// Convert a Unix epoch (seconds, UTC) to `(year, month, day)` using
+/// Howard Hinnant's "civil from days" algorithm. Battle-tested,
+/// branch-only-on-sign, no leap-year edge-case bugs. We carry the
+/// math inline rather than pull in `chrono` / `time` because rescue-tui
+/// is a tiny initramfs binary and the only place we need calendar
+/// arithmetic is the daily-rotated verify-audit-log filename. (#548)
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::similar_names
+)]
+fn epoch_to_civil_date(epoch_secs: u64) -> (i32, u32, u32) {
+    let z = (epoch_secs / 86_400) as i64 + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    // (z - era * 146_097) is non-negative for any post-1970 epoch; the cast
+    // sign-loss lint fires on the type widening but the value is bounded.
+    let day_of_era = (z - era * 146_097) as u64;
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era as i64 + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_phase = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_phase + 2) / 5 + 1;
+    let month = if month_phase < 10 {
+        month_phase + 3
+    } else {
+        month_phase - 9
+    };
+    let year_adjusted = if month <= 2 { year + 1 } else { year };
+    (year_adjusted as i32, month as u32, day as u32)
+}
+
+/// Append a one-line JSONL record to the verify-audit log when a
+/// verify-now action completes. Symmetric counterpart to F10 evidence
+/// save (#92) on the Error screen — the success-path equivalent. (#548)
+///
+/// Location: `/run/media/aegis-isos/verify-log/<YYYY-MM-DD>.jsonl`
+/// (per-day rotation), falling back to `/tmp/aegis-verify-log/...` if
+/// the `AEGIS_ISOS` partition isn't mounted writable. Best-effort —
+/// returns the path on success, an error string on failure (caller
+/// just logs and continues; the operator already saw the verdict in
+/// the TUI).
+///
+/// JSON record shape:
+/// `{"timestamp_epoch": 1700000000, "iso_path": "...", "outcome": {...}}`
+/// where `outcome` is the serialized [`iso_probe::HashVerification`].
+fn save_verify_audit_log(
+    iso_path: &std::path::Path,
+    outcome: &iso_probe::HashVerification,
+) -> Result<PathBuf, String> {
+    use std::io::Write;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let ts_epoch = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs();
+    let (year, month, day) = epoch_to_civil_date(ts_epoch);
+    let filename = format!("{year:04}-{month:02}-{day:02}.jsonl");
+    let record = serde_json::json!({
+        "timestamp_epoch": ts_epoch,
+        "iso_path": iso_path.display().to_string(),
+        "outcome": outcome,
+    });
+    let line = format!("{record}\n");
+    for base in ["/run/media/aegis-isos", "/tmp/aegis-verify-log"] {
+        let dir = std::path::Path::new(base).join("verify-log");
+        if std::fs::create_dir_all(&dir).is_err() {
+            continue;
+        }
+        let out = dir.join(&filename);
+        let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&out)
+        else {
+            continue;
+        };
+        if f.write_all(line.as_bytes()).is_err() {
+            continue;
+        }
+        return Ok(out);
+    }
+    Err("no writable target (tried /run/media/aegis-isos, /tmp/aegis-verify-log)".into())
+}
+
 /// Write an error-screen evidence snapshot to the `AEGIS_ISOS` data
 /// partition so the operator can retrieve it after reboot. Best-effort
 /// — returns the path on success, an error message on failure.
@@ -1140,6 +1246,50 @@ mod tests {
                 PathBuf::from("/c"),
             ]
         );
+    }
+
+    // ---- epoch_to_civil_date (#548 verify-audit-log) -----------------
+
+    #[test]
+    fn epoch_to_civil_date_unix_epoch() {
+        // 1970-01-01 00:00:00 UTC.
+        assert_eq!(epoch_to_civil_date(0), (1970, 1, 1));
+    }
+
+    #[test]
+    fn epoch_to_civil_date_known_dates() {
+        // Sanity-check several known epoch boundaries to pin Hinnant's
+        // algorithm against any future refactor that introduces an
+        // off-by-one in the leap-year math.
+        // 2000-01-01 00:00:00 = 946_684_800
+        assert_eq!(epoch_to_civil_date(946_684_800), (2000, 1, 1));
+        // 2000-02-29 00:00:00 = 951_782_400 (a Y2k leap day)
+        assert_eq!(epoch_to_civil_date(951_782_400), (2000, 2, 29));
+        // 2024-02-29 00:00:00 = 1_709_164_800 (recent leap day)
+        assert_eq!(epoch_to_civil_date(1_709_164_800), (2024, 2, 29));
+        // 2026-04-25 00:00:00 = 1_777_075_200 (today, around when this PR
+        // was authored — pins the audit-log filename format under CI's
+        // synthetic SOURCE_DATE_EPOCH if anyone wires that through).
+        assert_eq!(epoch_to_civil_date(1_777_075_200), (2026, 4, 25));
+    }
+
+    #[test]
+    fn epoch_to_civil_date_intra_day_returns_same_ymd() {
+        // Any timestamp within the same UTC day must yield the same YMD —
+        // the audit-log file rotates per-day, not per-second.
+        let d_2026_04_25 = epoch_to_civil_date(1_777_075_200); // midnight
+        let d_2026_04_25_noon = epoch_to_civil_date(1_777_075_200 + 12 * 3600);
+        let d_2026_04_25_2359 = epoch_to_civil_date(1_777_075_200 + 86_399);
+        assert_eq!(d_2026_04_25, d_2026_04_25_noon);
+        assert_eq!(d_2026_04_25, d_2026_04_25_2359);
+    }
+
+    #[test]
+    fn epoch_to_civil_date_rolls_over_at_utc_midnight() {
+        let last_sec_of_day = epoch_to_civil_date(1_777_075_200 + 86_399);
+        let first_sec_of_next = epoch_to_civil_date(1_777_075_200 + 86_400);
+        assert_eq!(last_sec_of_day, (2026, 4, 25));
+        assert_eq!(first_sec_of_next, (2026, 4, 26));
     }
 
     fn fake_iso_at(path: &str) -> iso_probe::DiscoveredIso {
