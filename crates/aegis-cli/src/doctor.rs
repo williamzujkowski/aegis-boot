@@ -286,6 +286,7 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
     check_boot_mode(&mut report);
     check_tpm(&mut report);
     check_nics(&mut report);
+    check_smart(&mut report);
     check_removable_drives(&mut report);
     check_block_devices(&mut report);
     if !json_mode {
@@ -1172,6 +1173,102 @@ fn check_nics(report: &mut Report) {
     }
 }
 
+/// Hint-level SMART check (#563). Read-only — never triggers long
+/// self-tests or write probes. Walks persistent block devices under
+/// `/sys/block/`, runs `smartctl -H -j` (which emits the health verdict
+/// in JSON), parses `smart_status.passed`, and aggregates one row.
+///
+/// Disks that don't expose SMART (most USB thumb drives, virtio disks,
+/// loop devices) silently drop out of the aggregate — they are not a
+/// failure. The exit code is unchanged regardless of SMART verdict; the
+/// row is informational so an operator gets a "consider replacing"
+/// hint without having the doctor block on a wear-out warning.
+///
+/// `smartctl` ships in `smartmontools`. When absent, the row is Skip
+/// with an apt/dnf/pacman remediation hint — the most common no-SMART
+/// path for new operators.
+fn check_smart(report: &mut Report) {
+    let summary_name = "SMART (host disks)".to_string();
+
+    #[cfg(target_os = "linux")]
+    {
+        let Some(smartctl_path) = which("smartctl") else {
+            report.add(
+                Verdict::Skip,
+                summary_name,
+                "install `smartmontools` to enable SMART hints \
+                 (apt: smartmontools; dnf: smartmontools; pacman: smartmontools)",
+            );
+            return;
+        };
+
+        let devices = list_smart_candidates_linux("/sys/block");
+        if devices.is_empty() {
+            report.add(
+                Verdict::Skip,
+                summary_name,
+                "no persistent block devices found (loop/ram/optical excluded)",
+            );
+            return;
+        }
+
+        let mut passing = 0_usize;
+        let mut warning = 0_usize;
+        let mut unsupported = 0_usize;
+        let mut warning_devs: Vec<String> = Vec::new();
+        for dev in &devices {
+            match query_smart_health(&smartctl_path, dev) {
+                SmartHealth::Pass => passing += 1,
+                SmartHealth::Warn => {
+                    warning += 1;
+                    warning_devs.push(dev.clone());
+                }
+                SmartHealth::Unsupported => unsupported += 1,
+            }
+        }
+
+        if warning > 0 {
+            report.add_with_next(
+                Verdict::Warn,
+                summary_name,
+                format!(
+                    "{warning} of {} disks reporting SMART warnings: {}",
+                    devices.len(),
+                    warning_devs.join(", "),
+                ),
+                "run `sudo smartctl -a <device>` on the warning device(s) and consider replacement \
+                 before the next failure",
+            );
+        } else if passing > 0 {
+            report.add(
+                Verdict::Pass,
+                summary_name,
+                format!(
+                    "{passing} disk(s) passing SMART, {unsupported} without SMART (USB / virtio / etc.)",
+                ),
+            );
+        } else {
+            report.add(
+                Verdict::Skip,
+                summary_name,
+                format!(
+                    "no disks expose SMART ({} candidate(s) checked, all unsupported)",
+                    devices.len(),
+                ),
+            );
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        report.add(
+            Verdict::Skip,
+            summary_name,
+            "SMART check not yet implemented on this platform (#123)",
+        );
+    }
+}
+
 #[cfg(target_os = "linux")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct NicInfo {
@@ -1214,6 +1311,70 @@ fn read_nic_one(sysdir: &std::path::Path) -> Option<NicInfo> {
         mac,
         operstate,
     })
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SmartHealth {
+    Pass,
+    Warn,
+    Unsupported,
+}
+
+#[cfg(target_os = "linux")]
+fn list_smart_candidates_linux(sysfs_block_root: &str) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(sysfs_block_root) else {
+        return Vec::new();
+    };
+    let mut devs: Vec<String> = entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with("sd")
+                || name.starts_with("nvme")
+                || name.starts_with("vd")
+                || name.starts_with("xvd")
+                || name.starts_with("mmcblk")
+            {
+                Some(format!("/dev/{name}"))
+            } else {
+                None
+            }
+        })
+        .collect();
+    devs.sort();
+    devs
+}
+
+#[cfg(target_os = "linux")]
+fn query_smart_health(smartctl: &Path, device: &str) -> SmartHealth {
+    let Ok(out) = Command::new(smartctl).args(["-H", "-j", device]).output() else {
+        return SmartHealth::Unsupported;
+    };
+    // smartctl emits its JSON regardless of exit code; the bits we care
+    // about are inside the body. A non-zero exit alone is not enough to
+    // call the disk a failure (e.g. exit 4 means no SMART support).
+    parse_smart_health_json(&out.stdout)
+}
+
+#[cfg(target_os = "linux")]
+fn parse_smart_health_json(stdout: &[u8]) -> SmartHealth {
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(stdout) else {
+        return SmartHealth::Unsupported;
+    };
+    // Path: smart_status.passed (bool). Absent → device doesn't support SMART.
+    let Some(passed) = value
+        .get("smart_status")
+        .and_then(|s| s.get("passed"))
+        .and_then(serde_json::Value::as_bool)
+    else {
+        return SmartHealth::Unsupported;
+    };
+    if passed {
+        SmartHealth::Pass
+    } else {
+        SmartHealth::Warn
+    }
 }
 
 fn check_removable_drives(report: &mut Report) {
@@ -2154,6 +2315,93 @@ mod tests {
         check_nics(&mut r);
         assert!(!r.rows.is_empty());
         assert_eq!(r.rows[0].1, "network interfaces");
+        assert!(matches!(
+            r.rows[0].0,
+            Verdict::Pass | Verdict::Warn | Verdict::Skip
+        ));
+    }
+
+    // ---- SMART hint check (#563) ----------------------------------------
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn parse_smart_health_passing_status() {
+        let json = br#"{"smart_status":{"passed":true},"model_name":"X"}"#;
+        assert_eq!(parse_smart_health_json(json), SmartHealth::Pass);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn parse_smart_health_warning_status() {
+        // smartctl reports passed=false when SMART threshold has been
+        // crossed. That's our Warn signal.
+        let json = br#"{"smart_status":{"passed":false}}"#;
+        assert_eq!(parse_smart_health_json(json), SmartHealth::Warn);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn parse_smart_health_missing_field_is_unsupported() {
+        // USB sticks / virtio disks: smartctl emits valid JSON but
+        // `smart_status` is absent. Not a failure — just no signal.
+        let json = br#"{"model_name":"Cruzer","smartctl":{"exit_status":4}}"#;
+        assert_eq!(parse_smart_health_json(json), SmartHealth::Unsupported);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn parse_smart_health_invalid_json_is_unsupported() {
+        let json = b"not-json";
+        assert_eq!(parse_smart_health_json(json), SmartHealth::Unsupported);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn parse_smart_health_non_bool_passed_is_unsupported() {
+        // Defensive: smartctl future-version drift.
+        let json = br#"{"smart_status":{"passed":"yes"}}"#;
+        assert_eq!(parse_smart_health_json(json), SmartHealth::Unsupported);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn list_smart_candidates_keeps_persistent_disks() {
+        let tmp = tempfile::tempdir().unwrap();
+        for keep in ["sda", "nvme0n1", "vda", "mmcblk0", "xvdc"] {
+            std::fs::create_dir(tmp.path().join(keep)).unwrap();
+        }
+        for drop in ["loop0", "ram0", "dm-0", "sr0", "zram0"] {
+            std::fs::create_dir(tmp.path().join(drop)).unwrap();
+        }
+        let candidates = list_smart_candidates_linux(tmp.path().to_str().unwrap());
+        assert_eq!(candidates.len(), 5, "five persistent prefixes kept");
+        for keep in [
+            "/dev/sda",
+            "/dev/nvme0n1",
+            "/dev/vda",
+            "/dev/mmcblk0",
+            "/dev/xvdc",
+        ] {
+            assert!(
+                candidates.iter().any(|d| d == keep),
+                "expected {keep} in {candidates:?}"
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn list_smart_candidates_returns_empty_when_root_missing() {
+        let devs = list_smart_candidates_linux("/definitely/does/not/exist/aegis-smart-probe");
+        assert!(devs.is_empty());
+    }
+
+    #[test]
+    fn check_smart_emits_summary_row() {
+        let mut r = Report::new().with_json_mode(true);
+        check_smart(&mut r);
+        assert!(!r.rows.is_empty());
+        assert_eq!(r.rows[0].1, "SMART (host disks)");
         assert!(matches!(
             r.rows[0].0,
             Verdict::Pass | Verdict::Warn | Verdict::Skip
