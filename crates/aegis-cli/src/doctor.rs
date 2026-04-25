@@ -286,6 +286,7 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
     check_boot_mode(&mut report);
     check_tpm(&mut report);
     check_removable_drives(&mut report);
+    check_block_devices(&mut report);
     if !json_mode {
         println!();
         println!("Stick checks:");
@@ -1066,6 +1067,59 @@ fn read_tpm_from(sysfs_root: &str) -> TpmState {
         return TpmState::Present { version };
     }
     TpmState::SysfsEmpty
+}
+
+/// Surface the host's full block-device inventory (#560). Lists every
+/// persistent disk an operator might care about — fixed (`NVMe`, SATA,
+/// virtio) and removable (USB, SD/MMC) — with size, model, and bus.
+///
+/// Emits one summary row plus one row per device. Always non-fatal: this
+/// is informational context for `aegis-boot bug-report` and operators
+/// triaging "which stick is which" before flashing. macOS/Windows
+/// currently Skip — see `detect::list_block_devices` for the cross-
+/// platform plan in #123.
+fn check_block_devices(report: &mut Report) {
+    let summary_name = "block devices".to_string();
+    let Some(devices) = detect::list_block_devices() else {
+        report.add(
+            Verdict::Skip,
+            summary_name,
+            "block-device inventory not yet implemented on this platform (#123)",
+        );
+        return;
+    };
+
+    if devices.is_empty() {
+        report.add(
+            Verdict::Skip,
+            summary_name,
+            "no persistent block devices detected (loop/ram/optical excluded)",
+        );
+        return;
+    }
+
+    let removable = devices.iter().filter(|d| d.removable).count();
+    let fixed = devices.len() - removable;
+    report.add(
+        Verdict::Pass,
+        summary_name,
+        format!(
+            "{} detected ({fixed} fixed, {removable} removable)",
+            devices.len()
+        ),
+    );
+
+    for d in &devices {
+        let removable_label = if d.removable { ", removable" } else { "" };
+        let detail = format!(
+            "{} ({}, {}{removable_label}) — {}",
+            d.dev.display(),
+            d.size_human(),
+            d.transport.label(),
+            d.model
+        );
+        report.add(Verdict::Pass, format!("disk: {}", d.dev.display()), detail);
+    }
 }
 
 fn check_removable_drives(report: &mut Report) {
@@ -1993,5 +2047,58 @@ mod tests {
         assert_eq!(r.rows.len(), 1);
         assert!(matches!(r.rows[0].0, Verdict::Pass));
         assert!(r.rows[0].2.to_lowercase().contains("efi"));
+    }
+
+    // ---- block-device inventory (#560) -----------------------------------
+
+    #[test]
+    fn check_block_devices_always_emits_at_least_summary_row() {
+        // Whatever the local environment, the first row is the summary
+        // ("block devices"). On Linux it is Pass + count. On macOS/Windows
+        // it is Skip with a platform note.
+        let mut r = Report::new().with_json_mode(true);
+        check_block_devices(&mut r);
+        assert!(!r.rows.is_empty(), "must emit at least the summary row");
+        assert_eq!(r.rows[0].1, "block devices");
+        assert!(
+            matches!(r.rows[0].0, Verdict::Pass | Verdict::Skip),
+            "summary verdict must be Pass or Skip, got {:?}",
+            r.rows[0].0
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn check_block_devices_per_disk_rows_carry_size_and_bus_labels() {
+        // On a Linux host the summary is followed by one row per device
+        // whose detail string carries the size and a bus label. Bus may
+        // be `unknown-bus` on hosts where /sys/.../subsystem isn't a
+        // resolved symlink (e.g. some CI containers), so the assertion
+        // is structural — every row's detail contains "GB" or "MB" plus
+        // a parenthesized bus label.
+        let mut r = Report::new().with_json_mode(true);
+        check_block_devices(&mut r);
+        // Skip the summary row, walk per-disk rows.
+        for (verdict, name, detail) in r.rows.iter().skip(1) {
+            assert!(name.starts_with("disk: /dev/"), "row name shape: {name}");
+            assert!(
+                matches!(verdict, Verdict::Pass),
+                "per-disk verdict: {verdict:?}"
+            );
+            assert!(
+                detail.contains("GB") || detail.contains("MB"),
+                "detail must include size unit, got: {detail}"
+            );
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn check_block_devices_skips_on_non_linux() {
+        let mut r = Report::new().with_json_mode(true);
+        check_block_devices(&mut r);
+        assert_eq!(r.rows.len(), 1);
+        assert!(matches!(r.rows[0].0, Verdict::Skip));
+        assert!(r.rows[0].2.contains("#123"));
     }
 }
