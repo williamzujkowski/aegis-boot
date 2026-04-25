@@ -27,17 +27,14 @@ jobs:
 
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
-      # #615: cache the apt-installed signed boot chain + image tooling.
-      # First run populates the cache (~5-15s); subsequent runs hit it
-      # and complete in <2s. Cache key auto-derived from the packages
-      # list, so version drift invalidates correctly.
       - name: Install signed boot chain + image tooling
-        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05  # v1.6.0
-        with:
-          packages: qemu-system-x86 ovmf shim-signed grub-efi-amd64-signed linux-image-virtual mtools dosfstools exfatprogs gdisk busybox-static cpio
-          version: '1.0'
-      - name: Make kernel/initrd readable for mcopy
         run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 ovmf \
+            shim-signed grub-efi-amd64-signed linux-image-virtual \
+            mtools dosfstools exfatprogs gdisk \
+            busybox-static cpio
           # Kernels mode 0600; we need them readable for mcopy.
           # linux-image-virtual is a meta-package that pulls -generic on
           # modern Ubuntu; chmod all vmlinuz+initrd files conservatively.

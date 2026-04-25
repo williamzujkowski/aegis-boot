@@ -25,16 +25,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
-      # #615: cache the apt-installed QEMU + OVMF (foundation smoke
-      # only — minimal package set; full signed chain lives in the
-      # second job below).
       - name: Install QEMU + OVMF (with MS-enrolled vars)
-        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05  # v1.6.0
-        with:
-          packages: qemu-system-x86 ovmf
-          version: '1.0'
-      - name: Verify OVMF SecBoot artifacts present
         run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 ovmf
           ls -l /usr/share/OVMF/OVMF_CODE_4M.secboot.fd \
                 /usr/share/OVMF/OVMF_VARS_4M.ms.fd
 
@@ -52,17 +47,14 @@ jobs:
 
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
-      # #615: cache the apt-installed signed boot chain + tooling. Note
-      # this job uses linux-image-generic (vs -virtual elsewhere) — the
-      # full SB E2E needs the same kernel-image variant the rescue-tui
-      # eventually loads, not the lighter virtual one.
       - name: Install signed boot chain + tooling
-        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05  # v1.6.0
-        with:
-          packages: qemu-system-x86 ovmf shim-signed grub-efi-amd64-signed linux-image-generic mtools dosfstools exfatprogs gdisk busybox-static cpio
-          version: '1.0'
-      - name: Make kernel/initrd readable for mcopy
         run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 ovmf \
+            shim-signed grub-efi-amd64-signed linux-image-generic \
+            mtools dosfstools exfatprogs gdisk \
+            busybox-static cpio
           # Kernels under /boot are typically 0600; SB E2E needs them readable.
           sudo chmod 0644 /boot/vmlinuz-*-generic /boot/initrd.img-*-generic || true
 
