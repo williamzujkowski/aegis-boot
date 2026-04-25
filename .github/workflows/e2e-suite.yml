@@ -1,0 +1,184 @@
+name: E2E suite (shared-build)
+
+# #580 Phase 2 — shared-artifact pattern. The standalone E2E workflows
+# (kexec-e2e, ovmf-secboot, direct-install-e2e, mkusb, qemu-smoke,
+# update-rotate-e2e) each rebuild rescue-tui + initramfs.cpio.gz from
+# scratch. This workflow produces those artifacts ONCE in a `build-shared`
+# job and feeds them to consumer jobs via `needs:` + actions/download-artifact.
+#
+# Phase 2a (this commit): canary qemu-smoke job. Existing
+# .github/workflows/qemu-smoke.yml is intentionally LEFT IN PLACE so both
+# pipelines run per PR for ~5 PRs of observation. Once the new path is
+# proven (CPU-min savings real, no flake-rate regression), Phase 2b
+# retires qemu-smoke.yml in a single follow-up PR.
+#
+# Phases 2b–2f migrate one E2E at a time, complexity-ascending:
+# kexec-e2e → mkusb → direct-install-e2e → update-rotate-e2e → ovmf-secboot.
+#
+# RISK NOTE (Architect's condition on consensus_vote 2026-04-25):
+# `build-shared` is a single point of failure for downstream consumers
+# once migration completes. A flaky toolchain install would block the
+# entire E2E suite instead of one workflow. Mitigations:
+#   - retention-days: 1 (consumer-side artifact rot is bounded)
+#   - if `build-shared` fails, downstream jobs skip cleanly via `needs:`
+#   - the standalone workflows stay as a fallback during 2a-2f rollout
+#
+# CANARY EXIT CRITERIA (DevEx + Architect's conditions):
+# Retire the standalone qemu-smoke.yml after EITHER:
+#   - 5 consecutive merged PRs where both pipelines pass with parity, OR
+#   - explicit maintainer go-ahead based on observation.
+# Whichever lands first.
+
+on:
+  push:
+    branches: [main]
+    # Same paths-ignore as kexec-e2e.yml et al — docs-only PRs skip
+    # the whole suite (#580 Phase 1).
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'LICENSE*'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'LICENSE*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Producer job. Builds the artifacts every consumer needs:
+  # rescue-tui release binary + deterministic initramfs.cpio.gz.
+  # Uses Swatinem/rust-cache to keep cargo registry + git caches
+  # warm across runs (~/.cargo only — NOT target/, to stay well
+  # under the 10 GB GHA cache quota with 6 future consumers).
+  build-shared:
+    name: Build shared artifacts (rescue-tui + initramfs)
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
+
+      - name: Install initramfs build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends busybox-static cpio
+
+      - name: Install Rust toolchain (pinned)
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain 1.88.0 --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: rust-cache (registry + git only — see comment)
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
+        with:
+          # cache-targets: false would skip target/ — but Swatinem
+          # already excludes it by default for non-binary crates.
+          # Including only the workspace members we actually build
+          # in this job keeps the cache tight.
+          workspaces: ". -> target"
+          # Distinguish the cache from per-workflow caches in other
+          # jobs so this job's first build doesn't poison their keys.
+          shared-key: e2e-shared-build
+
+      - name: Build rescue-tui (release)
+        env:
+          SOURCE_DATE_EPOCH: "1700000000"
+        run: cargo build --release -p rescue-tui
+
+      - name: Build initramfs (out/initramfs.cpio.gz)
+        env:
+          SOURCE_DATE_EPOCH: "1700000000"
+        run: ./scripts/build-initramfs.sh
+
+      - name: Stage shared artifacts
+        run: |
+          # The producer assembles a flat layout for consumers:
+          #   shared/rescue-tui              (release binary)
+          #   shared/initramfs.cpio.gz       (deterministic image)
+          #   shared/initramfs.cpio.gz.sha256 (for integrity check)
+          # Consumers reposition into target/release/ and out/ so
+          # existing scripts/*.sh keep working unchanged.
+          mkdir -p shared
+          cp target/release/rescue-tui                shared/rescue-tui
+          cp out/initramfs.cpio.gz                    shared/initramfs.cpio.gz
+          cp out/initramfs.cpio.gz.sha256             shared/initramfs.cpio.gz.sha256
+          ls -lh shared/
+
+      - name: Upload shared artifacts
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
+        with:
+          name: e2e-shared-build
+          path: shared/
+          # Consumers fire in the same workflow run; 1 day is more
+          # than enough headroom + avoids artifact-storage bloat.
+          retention-days: 1
+          if-no-files-found: error
+
+  # First consumer (canary). Mirror of qemu-smoke.yml but with the
+  # build steps replaced by an actions/download-artifact step. If this
+  # passes consistently for ~5 PRs, qemu-smoke.yml is retired in
+  # Phase 2b (single-PR `git rm`).
+  qemu-smoke-shared:
+    name: Boot initramfs under QEMU (shared-build canary)
+    needs: build-shared
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
+
+      - name: Install QEMU + kernel runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 \
+            linux-image-generic \
+            busybox-static \
+            cpio
+          # linux-image-generic installs vmlinuz under /boot, typically
+          # 0644 on GHA runners. Verify readability up front. Same logic
+          # as the standalone qemu-smoke.yml.
+          ls -l /boot/vmlinuz-*-generic | tee /tmp/kernels.txt
+          KERNEL=$(ls -1 /boot/vmlinuz-*-generic 2>/dev/null | sort | tail -1)
+          if [ -z "$KERNEL" ] || [ ! -r "$KERNEL" ]; then
+            echo "No readable kernel; attempting chmod"
+            sudo chmod 0644 /boot/vmlinuz-*-generic || true
+            KERNEL=$(ls -1 /boot/vmlinuz-*-generic 2>/dev/null | sort | tail -1)
+          fi
+          echo "KERNEL=$KERNEL" >> "$GITHUB_ENV"
+
+      - name: Download shared artifacts
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5
+        with:
+          name: e2e-shared-build
+          path: shared/
+
+      - name: Reposition artifacts to expected paths
+        run: |
+          # The shared producer staged a flat layout; reposition into
+          # target/release/ + out/ so scripts/qemu-smoke.sh + the rest
+          # of the toolchain see the artifacts at the same paths the
+          # standalone workflows produce inline.
+          mkdir -p target/release out
+          mv shared/rescue-tui                  target/release/rescue-tui
+          mv shared/initramfs.cpio.gz           out/initramfs.cpio.gz
+          mv shared/initramfs.cpio.gz.sha256    out/initramfs.cpio.gz.sha256
+          chmod +x target/release/rescue-tui
+          ls -lh target/release/rescue-tui out/initramfs.cpio.gz
+
+      - name: QEMU smoke boot
+        env:
+          TIMEOUT_SECONDS: "90"
+        run: ./scripts/qemu-smoke.sh
