@@ -41,6 +41,14 @@ jobs:
     permissions:
       contents: write
       id-token: write
+    # SLSA L2 build provenance (#487): the downstream `provenance`
+    # job consumes these subject hashes via `needs.<...>.outputs.<...>`.
+    # Scope per maintainer alignment: `.img` + static-musl binary only
+    # (not macOS arm64, not rescue-tui, not initramfs/SBOM — those are
+    # already cosign-signed; SLSA provenance focuses on the two assets
+    # an operator actually flashes from).
+    outputs:
+      slsa-subjects: ${{ steps.slsa-hashes.outputs.subjects }}
 
     steps:
       - name: Checkout
@@ -190,6 +198,26 @@ jobs:
           ls -lh out/
           echo "--- SHA256SUMS ---"
           cat out/SHA256SUMS
+
+      # ---------- SLSA L2 subjects (#487) ---------------------------
+      # Reuse the just-written SHA256SUMS file to compute the
+      # base64-encoded subject list the SLSA generator workflow
+      # consumes. Filtering to the two assets in scope means a
+      # rescue-tui or SBOM hash change doesn't drag the SLSA
+      # provenance into a re-attest cycle.
+      - name: Compute SLSA subjects from SHA256SUMS
+        id: slsa-hashes
+        run: |
+          cd out
+          # Format produced by `sha256sum` is "<hex>  <filename>" —
+          # exactly what slsa-github-generator's base64-subjects
+          # input expects after base64-encoding (no -w0 wrapping
+          # would still work, but -w0 keeps the GHA $GITHUB_OUTPUT
+          # line single-line which simplifies later debugging).
+          SUBJECTS=$(grep -E ' (aegis-boot-x86_64-linux|aegis-boot\.img)$' SHA256SUMS | base64 -w0)
+          echo "subjects=$SUBJECTS" >> "$GITHUB_OUTPUT"
+          echo "--- SLSA subjects (decoded for log readability) ---"
+          grep -E ' (aegis-boot-x86_64-linux|aegis-boot\.img)$' SHA256SUMS
 
       # ---------- Cosign keyless sign --------------------------------
       # Each artifact gets a .sig (signature) + .pem (certificate)
@@ -433,6 +461,55 @@ jobs:
             out/aegis-boot-aarch64-apple-darwin.sha256 \
             out/aegis-boot-aarch64-apple-darwin.sig \
             out/aegis-boot-aarch64-apple-darwin.pem
+
+  # ---------------------------------------------------------------------
+  # SLSA L2 build provenance for the .img + static-musl binary (#487).
+  # ---------------------------------------------------------------------
+  # `slsa-framework/slsa-github-generator` is the modern, sigstore-backed
+  # path for producing in-toto provenance. The generator runs in an
+  # isolated reusable-workflow context so the provenance hash is signed
+  # without the build job ever touching the signing key — a strict
+  # separation that's load-bearing for the SLSA L2/L3 builder claim.
+  #
+  # Scope (per maintainer alignment 2026-04-25 in #487):
+  #   * aegis-boot-x86_64-linux  (static-musl operator CLI)
+  #   * aegis-boot.img           (the signed-chain disk image)
+  # macOS arm64 binary, rescue-tui, initramfs, and SBOM all retain
+  # cosign keyless signing only — SLSA provenance is additive on top
+  # of cosign for the two highest-stakes artifacts an operator flashes.
+  #
+  # PINNING NOTE: The SLSA generator MUST be tag-pinned (not SHA-pinned)
+  # because GitHub's OIDC trust policy for reusable workflows uses the
+  # tag/branch ref in the issuer claim — pinning to a SHA would still
+  # work mechanically but bypasses the slsa-framework's own trust
+  # boundary, defeating the point. This is a documented exception to
+  # the workspace's general "@<sha>  # vN" hash-pinning convention.
+  # See: https://github.com/slsa-framework/slsa-github-generator#installation
+  #
+  # Verification (operator-side, after the release):
+  #   slsa-verifier verify-artifact <artifact-path> \
+  #     --provenance-path <provenance>.intoto.jsonl \
+  #     --source-uri github.com/aegis-boot/aegis-boot \
+  #     --source-tag <tag>
+  provenance:
+    name: SLSA L2 provenance (img + static-musl binary)
+    needs: build-and-release
+    permissions:
+      actions: read       # required by the generator to read workflow run details for the provenance subject
+      id-token: write     # required for OIDC token used to fetch a Sigstore signing certificate
+      contents: write     # required by upload-assets: the generator gh-release-uploads the provenance file
+    # v2.1.0 (2025-02-24) is the latest stable as of this PR. Bumping
+    # is a one-line change; tracking the slsa-framework releases is
+    # appropriate but doesn't gate this lap.
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: "${{ needs.build-and-release.outputs.slsa-subjects }}"
+      upload-assets: true
+      # Single-line provenance covering both subjects. Operators run
+      # `slsa-verifier verify-artifact` against either artifact +
+      # this provenance file; the generator verifies the artifact's
+      # sha matches one of the listed subjects.
+      provenance-name: aegis-boot.intoto.jsonl
 
   # Bumps Formula/aegis-boot.rb on main when a new tag is pushed. Skipped
   # for workflow_dispatch (which is the manual-backfill path — bumping
