@@ -411,6 +411,28 @@ where
             }
         }
 
+        // Shift+↑ / Shift+↓ on the List screen scrolls the info pane while
+        // keeping list-pane focus, mirroring tig/gitui/lazygit. Without
+        // this chord the operator has to Tab away from the list, scroll,
+        // then Tab back — losing their selection cursor. Intercept BEFORE
+        // the main match so the unmodified KeyCode::Up/Down arms route to
+        // the focused pane (existing behavior). (#545)
+        if matches!(state.screen, Screen::List { .. })
+            && key.modifiers.contains(KeyModifiers::SHIFT)
+        {
+            match key.code {
+                KeyCode::Up => {
+                    state.move_info_scroll(-1);
+                    continue;
+                }
+                KeyCode::Down => {
+                    state.move_info_scroll(1);
+                    continue;
+                }
+                _ => {}
+            }
+        }
+
         match (&state.screen, key.code) {
             // Tab toggles focus between the list pane and the info pane
             // on the List screen only. Shift+Tab is treated the same

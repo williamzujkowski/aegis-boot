@@ -1984,6 +1984,24 @@ mod tests {
     }
 
     #[test]
+    fn move_info_scroll_does_not_change_pane_focus() {
+        // #545: Shift+↑ / Shift+↓ on List should scroll info pane WITHOUT
+        // moving focus off the list. The keybinding (in main.rs) calls
+        // `move_info_scroll` directly; this test pins the contract that
+        // the function does NOT mutate `pane`. If a future refactor adds
+        // pane-toggle side effects here, this test catches the regression
+        // and forces the keybinding to be reconsidered.
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        let pane_before = s.pane;
+        s.move_info_scroll(3);
+        s.move_info_scroll(-1);
+        assert_eq!(
+            s.pane, pane_before,
+            "info-scroll must not mutate pane focus (Shift+arrow contract)"
+        );
+    }
+
+    #[test]
     fn move_selection_resets_info_scroll() {
         // Per-ISO scroll state would confuse operators; resetting on
         // selection change matches gitui's pattern.
