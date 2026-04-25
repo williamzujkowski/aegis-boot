@@ -68,6 +68,7 @@ pub fn list_block_devices() -> Option<Vec<BlockDevice>> {
 /// per device. Includes both removable (USB sticks, SD cards) and fixed
 /// (`NVMe`, SATA SSDs) media — `removable` distinguishes them.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
 pub struct BlockDevice {
     /// Block device path (e.g. `/dev/nvme0n1`, `/dev/sda`).
     pub dev: PathBuf,
@@ -84,7 +85,7 @@ pub struct BlockDevice {
 impl BlockDevice {
     /// Human-readable capacity (mirrors `Drive::size_human`).
     #[must_use]
-    #[allow(clippy::cast_precision_loss)]
+    #[allow(clippy::cast_precision_loss, dead_code)]
     pub fn size_human(&self) -> String {
         let gb = self.size_bytes as f64 / 1_073_741_824.0;
         if gb >= 1.0 {
@@ -100,7 +101,13 @@ impl BlockDevice {
 /// prefix or — for SCSI/SATA `sd*` devices — the resolved
 /// `device/subsystem` symlink target. `Unknown` when neither yields a
 /// definitive answer; the doctor row still surfaces the device.
+///
+/// `dead_code` is allowed because the constructor lives in the
+/// Linux-only `detect::linux` module — on macOS/Windows the variants are
+/// reachable through public API but never constructed in-tree, which the
+/// dead-code lint flags. The enum is part of the cross-platform surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum BlockDeviceTransport {
     Nvme,
     Sata,
@@ -114,6 +121,7 @@ pub enum BlockDeviceTransport {
 impl BlockDeviceTransport {
     /// Lowercase short label suitable for inline doctor-row prose.
     #[must_use]
+    #[allow(dead_code)]
     pub fn label(self) -> &'static str {
         match self {
             BlockDeviceTransport::Nvme => "nvme",
