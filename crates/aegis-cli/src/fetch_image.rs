@@ -91,9 +91,12 @@ fn try_run(args: &[String]) -> Result<PathBuf, u8> {
     };
 
     if !is_safe_https_url(&url) {
-        eprintln!(
-            "aegis-boot fetch-image: refusing URL '{url}' — only https:// URLs are accepted \
-             (signed-chain integrity assumes TLS)."
+        crate::userfacing::eprint_with_next(
+            "fetch-image",
+            format!(
+                "refusing URL '{url}' — only https:// URLs are accepted (signed-chain integrity assumes TLS)"
+            ),
+            "pass an https:// URL via --url, or run without --url to use the latest official release",
         );
         return Err(2);
     }
@@ -122,12 +125,14 @@ fn try_run(args: &[String]) -> Result<PathBuf, u8> {
     if let Some(expected) = parsed.expected_sha256.as_deref() {
         let got = compute_sha256(&out_path)?;
         if !got.eq_ignore_ascii_case(expected) {
-            eprintln!("aegis-boot fetch-image: sha256 mismatch");
-            eprintln!("  expected: {expected}");
-            eprintln!("  got:      {got}");
             // Remove the file so a second run doesn't accidentally
             // skip the download + believe the cached bytes.
             let _ = std::fs::remove_file(&out_path);
+            crate::userfacing::eprint_with_next(
+                "fetch-image",
+                format!("sha256 mismatch — expected {expected}, got {got}"),
+                "confirm --url points at the release that produced --sha256 (release-page checksums + a fresh `--url` per release pair to the same hash)",
+            );
             return Err(1);
         }
         eprintln!("aegis-boot fetch-image: sha256 verified");
@@ -149,7 +154,11 @@ fn try_run(args: &[String]) -> Result<PathBuf, u8> {
     if parsed.cosign_disabled {
         eprintln!("aegis-boot fetch-image: cosign verification skipped (--no-cosign)");
     } else if let Err(detail) = try_cosign_verify(&url, &out_path) {
-        eprintln!("aegis-boot fetch-image: {detail}");
+        crate::userfacing::eprint_with_next(
+            "fetch-image",
+            detail,
+            "confirm --url points at an official release on github.com/aegis-boot/aegis-boot. For air-gapped / offline contexts where Sigstore lookups would fail, pass --no-cosign (sha256 still verifies if --sha256 is supplied)",
+        );
         return Err(1);
     }
 
