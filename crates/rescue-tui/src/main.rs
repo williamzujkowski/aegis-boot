@@ -69,6 +69,39 @@ fn tracing_subscriber_init() {
     }
 }
 
+/// Persist a Tier B parse-failure log (#347 Phase 3b). Best-effort —
+/// writes to `/run/media/aegis-isos` first (the live `AEGIS_ISOS`
+/// mount), falls back to `/tmp/aegis-tier-b-log` if that's not
+/// writable. Never blocks rescue-tui startup; tracing carries the
+/// diagnostic if every base fails. Lifted out of `run()` so that fn
+/// stays under clippy's 100-line cap.
+fn persist_tier_b_log(failed: &[iso_probe::FailedIso]) {
+    if failed.is_empty() {
+        return;
+    }
+    for base in ["/run/media/aegis-isos", "/tmp/aegis-tier-b-log"] {
+        let dir = std::path::Path::new(base);
+        match tier_b_log::write_failure_log(failed, dir) {
+            Ok(Some(path)) => {
+                tracing::info!(
+                    path = %path.display(),
+                    count = failed.len(),
+                    "tier-b: parse-failure log written"
+                );
+                return;
+            }
+            Ok(None) => return, // empty list, guarded above; defensive
+            Err(e) => {
+                tracing::debug!(
+                    base = base,
+                    error = %e,
+                    "tier-b: write attempt failed; trying next base"
+                );
+            }
+        }
+    }
+}
+
 /// Count the number of `.iso` files present under any of `roots`.
 /// Depth-limited walk (max 3 levels) since `AEGIS_ISOS` is a flat
 /// layout in practice; goes 3 deep to catch operators who nested one
@@ -158,35 +191,7 @@ fn run(roots: &[PathBuf]) -> Result<u8, Box<dyn std::error::Error>> {
     }
     let counted_but_not_attempted = on_disk_iso_count.saturating_sub(isos.len() + failed.len());
     let skipped = failed.len() + counted_but_not_attempted;
-    // #347 Tier B: persist a structured JSONL log of every parse-failed
-    // ISO so operators pulling the stick post-rescue can troubleshoot
-    // why specific ISOs didn't surface, without needing journald
-    // capture. Best-effort, parallel pattern to verify-now audit log
-    // (#548) — writes go to `/run/media/aegis-isos` (the live AEGIS_ISOS
-    // mount); tmp fallback if that path isn't writable.
-    if !failed.is_empty() {
-        for base in ["/run/media/aegis-isos", "/tmp/aegis-tier-b-log"] {
-            let dir = std::path::Path::new(base);
-            match tier_b_log::write_failure_log(&failed, dir) {
-                Ok(Some(path)) => {
-                    tracing::info!(
-                        path = %path.display(),
-                        count = failed.len(),
-                        "tier-b: parse-failure log written"
-                    );
-                    break;
-                }
-                Ok(None) => break, // empty list, but we guarded above; defensive
-                Err(e) => {
-                    tracing::debug!(
-                        base = base,
-                        error = %e,
-                        "tier-b: write attempt failed; trying next base"
-                    );
-                }
-            }
-        }
-    }
+    persist_tier_b_log(&failed);
     // Startup banner to stderr — mirrored via tracing::info! so structured
     // consumers (journald, CI smoke greps) see the same signal as humans
     // reading the serial console directly.

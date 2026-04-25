@@ -142,7 +142,7 @@ impl ConsentKind {
     pub fn title(&self) -> &'static str {
         match self {
             Self::InstallerCanEraseDisks => "Confirm: installer can erase disks",
-            Self::Tier4ForceBoot => "Confirm: force boot of unparseable ISO",
+            Self::Tier4ForceBoot => "Confirm: force boot of unparsable ISO",
         }
     }
 
