@@ -1872,28 +1872,55 @@ fn run_dd(args: &[String], total_bytes: u64, no_progress: bool) -> Result<(), St
 
 // ---- dd progress capture (#244 PR3) -----------------------------------------
 
-/// Parse a single line from `dd status=progress` stderr and return the
-/// "bytes copied" count, or `None` if the line doesn't match. GNU dd's
-/// format is:
+/// Classification of a single line read from `dd status=progress` stderr.
+///
+/// Distinguishing "didn't look like a progress line" from "looked like one
+/// but the byte count was malformed" lets the reader thread tell whether
+/// progress tracking has been silently lost (locale change, dd format
+/// drift, pipe corruption) vs simply skipping over `records in/out`
+/// summaries. Without this split, a malformed line is indistinguishable
+/// from a non-progress line and the bar freezes for the rest of the write
+/// with no operator-visible signal. #600.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[derive(Debug, PartialEq, Eq)]
+enum DdProgress {
+    /// Line parsed as a progress record — push the byte count.
+    Progress(u64),
+    /// Line did not contain ` bytes`; almost certainly the
+    /// `N+M records in/out` summary or an error message. Skip silently.
+    NotProgress,
+    /// Line contained ` bytes` but the prefix did not parse as a u64.
+    /// Probably a dd format change or pipe corruption — caller should
+    /// surface a one-shot warning so the operator knows the bar is no
+    /// longer authoritative.
+    Malformed,
+}
+
+/// Parse a single line from `dd status=progress` stderr. GNU dd's format is:
 ///
 /// ```text
 /// 12345 bytes (12 kB, 12 KiB) copied, 1.234 s, 10.0 MB/s
 /// ```
 ///
 /// We only care about the leading integer. Anything before ` bytes`
-/// that parses as `u64` wins; everything else returns `None`. Ignoring
-/// the trailing rate/time means one parser works across all dd
-/// locales (the rate field uses locale-specific decimal separators on
-/// some systems, while the leading integer is always C-locale).
+/// that parses as `u64` wins. Ignoring the trailing rate/time means one
+/// parser works across all dd locales (the rate field uses locale-specific
+/// decimal separators on some systems, while the leading integer is
+/// always C-locale).
 // Not cfg-gated so the unit tests run on every CI job (macOS + Linux).
 // Only the runner that invokes it (`run_dd_with_progress`) is
 // Linux-only; the parser itself is a pure-string helper. Suppress
 // dead-code on non-Linux where no caller wires it up.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-fn parse_dd_progress_line(line: &str) -> Option<u64> {
+fn parse_dd_progress_line(line: &str) -> DdProgress {
     let trimmed = line.trim();
-    let (num, _rest) = trimmed.split_once(" bytes")?;
-    num.trim().parse().ok()
+    let Some((num, _rest)) = trimmed.split_once(" bytes") else {
+        return DdProgress::NotProgress;
+    };
+    match num.trim().parse() {
+        Ok(n) => DdProgress::Progress(n),
+        Err(_) => DdProgress::Malformed,
+    }
 }
 
 /// Run `sudo dd ...` with a reader thread draining its stderr into an
@@ -1950,14 +1977,43 @@ fn run_dd_with_progress(args: &[String], total_bytes: u64) -> Result<(), String>
     let reader_thread = std::thread::spawn(move || {
         let mut reader = std::io::BufReader::new(stderr);
         let mut buf: Vec<u8> = Vec::with_capacity(256);
+        // #600: emit a single warn line when the parser first encounters
+        // a `<garbage> bytes ...` shape it can't decode. Continued
+        // malformed lines are silently swallowed so we don't spam the
+        // operator's terminal during a multi-GB write.
+        let mut malformed_warned = false;
         loop {
             buf.clear();
             match reader.read_until(b'\r', &mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(_) => {
                     let line = String::from_utf8_lossy(&buf);
-                    if let Some(bytes) = parse_dd_progress_line(&line) {
-                        pb_thread.set_position(bytes);
+                    match parse_dd_progress_line(&line) {
+                        DdProgress::Progress(bytes) => pb_thread.set_position(bytes),
+                        DdProgress::NotProgress => {}
+                        DdProgress::Malformed => {
+                            if !malformed_warned {
+                                malformed_warned = true;
+                                // Cap the echoed line so an unbounded
+                                // garbage stream can't flood the terminal.
+                                let preview: String = line.trim().chars().take(80).collect();
+                                eprintln!(
+                                    "warning: dd progress format unrecognized \
+                                     ({preview:?}); progress tracking disabled, \
+                                     write continues"
+                                );
+                                // Switch to a spinner so the bar keeps
+                                // animating; operator sees motion + the
+                                // warning above explains the missing ETA.
+                                pb_thread.set_style(
+                                    ProgressStyle::with_template(
+                                        "{spinner} dd writing… {bytes_per_sec:>12} \
+                                         (no ETA available)",
+                                    )
+                                    .unwrap_or_else(|_| ProgressStyle::default_spinner()),
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -2629,28 +2685,34 @@ mod tests {
     fn parse_dd_progress_line_extracts_bytes_copied() {
         // Canonical GNU dd status=progress format.
         let line = "12345 bytes (12 kB, 12 KiB) copied, 1.234 s, 10.0 MB/s";
-        assert_eq!(parse_dd_progress_line(line), Some(12345));
+        assert_eq!(parse_dd_progress_line(line), DdProgress::Progress(12345));
     }
 
     #[test]
     fn parse_dd_progress_line_handles_large_values() {
         // ~30 GB stick; bytes count overflows u32 — must be parsed as u64.
         let line = "32010928128 bytes (32 GB, 30 GiB) copied, 98.234 s, 325 MB/s";
-        assert_eq!(parse_dd_progress_line(line), Some(32_010_928_128));
+        assert_eq!(
+            parse_dd_progress_line(line),
+            DdProgress::Progress(32_010_928_128)
+        );
     }
 
     #[test]
     fn parse_dd_progress_line_tolerates_leading_and_trailing_whitespace() {
         let line = "  \r  2147483648 bytes (2.1 GB) copied, 20 s, 107 MB/s\r  ";
-        assert_eq!(parse_dd_progress_line(line), Some(2_147_483_648));
+        assert_eq!(
+            parse_dd_progress_line(line),
+            DdProgress::Progress(2_147_483_648)
+        );
     }
 
     #[test]
-    fn parse_dd_progress_line_rejects_non_progress_output() {
-        // dd also emits the final `N+M records in/out` summary lines;
-        // those don't start with a byte count + " bytes" pattern, so
-        // the parser should return None and leave the progress bar at
-        // its last good position.
+    fn parse_dd_progress_line_classifies_non_progress_output_as_not_progress() {
+        // dd also emits the final `N+M records in/out` summary lines and
+        // error messages; none contain ` bytes`, so they should be
+        // NotProgress and leave the bar at its last good position
+        // (no malformed warning).
         for line in [
             "123+0 records in",
             "123+0 records out",
@@ -2660,16 +2722,31 @@ mod tests {
         ] {
             assert_eq!(
                 parse_dd_progress_line(line),
-                None,
-                "line should not parse: {line:?}"
+                DdProgress::NotProgress,
+                "line should be NotProgress: {line:?}"
             );
         }
     }
 
+    /// #600 regression: a line containing ` bytes` whose prefix is not a
+    /// valid `u64` must classify as `Malformed` (not silently `NotProgress`)
+    /// so the reader thread can emit a one-shot warning rather than letting
+    /// the progress bar freeze undetectably for the rest of the write.
     #[test]
-    fn parse_dd_progress_line_rejects_non_numeric_prefix() {
-        let line = "abc bytes copied, 1 s, 1 MB/s";
-        assert_eq!(parse_dd_progress_line(line), None);
+    fn parse_dd_progress_line_classifies_malformed_byte_prefix() {
+        for line in [
+            "abc bytes copied, 1 s, 1 MB/s",
+            // Locale leak: thousands separator confuses parse::<u64>.
+            "12,345 bytes (12 kB) copied, 1 s, 10 MB/s",
+            // Negative or non-decimal prefix.
+            "-7 bytes copied, 1 s, 1 MB/s",
+        ] {
+            assert_eq!(
+                parse_dd_progress_line(line),
+                DdProgress::Malformed,
+                "line should be Malformed (has ` bytes` but bad prefix): {line:?}"
+            );
+        }
     }
 
     // ---- #247 PR3 FlashError shared-suggestion invariant -----------------
