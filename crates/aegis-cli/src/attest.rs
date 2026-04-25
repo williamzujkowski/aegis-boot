@@ -881,10 +881,17 @@ mod tests {
     }
 
     #[test]
-    fn humanize_bytes() {
-        assert_eq!(humanize(0), "0 MiB");
-        assert_eq!(humanize(1024 * 1024), "1 MiB");
-        assert_eq!(humanize(2 * 1024 * 1024 * 1024), "2.0 GiB");
+    fn humanize_via_aegis_core_canonical_outputs() {
+        // After #556 PoC, this module's `humanize` is a re-export of
+        // `aegis_core::humanize_bytes`. The new helper uses a 4-level
+        // B/KiB/MiB/GiB ladder vs the prior 2-level MiB/GiB; for
+        // attest's typical artifact sizes (multi-MiB binaries, GiB
+        // images) the magnitudes used by the receipt prose are
+        // unchanged. Test expectations updated to the canonical
+        // aegis-core outputs.
+        assert_eq!(humanize(0), "0 B");
+        assert_eq!(humanize(1024 * 1024), "1.0 MiB");
+        assert_eq!(humanize(2 * 1024 * 1024 * 1024), "2.00 GiB");
     }
 
     #[test]
