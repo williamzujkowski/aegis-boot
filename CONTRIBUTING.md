@@ -15,6 +15,16 @@ The exact test count drifts every release — `cargo test --workspace 2>&1 | gre
 
 Prereqs are listed at the top of [`scripts/dev-test.sh`](./scripts/dev-test.sh) and in [`docs/LOCAL_TESTING.md`](./docs/LOCAL_TESTING.md).
 
+For an opt-in pre-push hook that runs the fast subset of `tools/local-ci.sh` (~9s, cargo fmt + check + clippy + lib tests):
+
+```bash
+tools/install-hooks.sh           # install (idempotent)
+tools/install-hooks.sh --status  # check whether installed
+tools/install-hooks.sh --uninstall
+```
+
+Bypass the hook for a WIP push: `git push --no-verify`. The hook is opt-in by design — CI remains the merge gate, and some workflows (intentionally test-broken feature branches, doc-only WIP commits) want to push without the gate. The script refuses to clobber a custom `.git/hooks/pre-push` you've installed yourself.
+
 The operator-facing CLI lives in [`crates/aegis-cli`](./crates/aegis-cli) (binary `aegis-boot`). When working on the operator surface, exercise it directly: `cargo run -p aegis-bootctl -- flash --help`. Don't add operator-facing flags without updating [`docs/CLI.md`](./docs/CLI.md).
 
 ## Workflow
