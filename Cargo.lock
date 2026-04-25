@@ -6,6 +6,7 @@ version = 4
 name = "aegis-bootctl"
 version = "0.17.0"
 dependencies = [
+ "aegis-core",
  "aegis-trust",
  "aegis-wire-formats",
  "hex",
@@ -19,6 +20,10 @@ dependencies = [
  "thiserror",
  "windows",
 ]
+
+[[package]]
+name = "aegis-core"
+version = "0.17.0"
 
 [[package]]
 name = "aegis-fitness"
@@ -966,6 +971,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 name = "rescue-tui"
 version = "0.17.0"
 dependencies = [
+ "aegis-core",
  "aegis-wire-formats",
  "crossterm",
  "hex",

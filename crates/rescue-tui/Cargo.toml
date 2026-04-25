@@ -26,6 +26,10 @@ name = "tui-screenshots"
 path = "src/bin/tui_screenshots.rs"
 
 [dependencies]
+# #556 PoC: shared utility helpers (short_hex, humanize_bytes) lifted
+# out of render.rs / verdict.rs so future ecosystem crates have a DRY
+# home for cross-cutting primitives.
+aegis-core = { path = "../aegis-core", version = "0.17" }
 aegis-wire-formats = { path = "../aegis-wire-formats", version = "0.17" }
 iso-probe = { path = "../iso-probe" }
 kexec-loader = { path = "../kexec-loader" }

@@ -722,16 +722,11 @@ fn sanitize_for_filename(s: &str) -> String {
         .collect()
 }
 
-#[allow(clippy::cast_precision_loss)]
-fn humanize(bytes: u64) -> String {
-    let gib = bytes as f64 / 1_073_741_824.0;
-    if gib >= 1.0 {
-        format!("{gib:.1} GiB")
-    } else {
-        let mib = bytes as f64 / 1_048_576.0;
-        format!("{mib:.0} MiB")
-    }
-}
+// humanize moved to crates/aegis-core::humanize_bytes (#556 PoC).
+// See inventory.rs for the precision-tier note. For attest receipts
+// the migration is behavior-preserving for multi-MiB+ artifacts (the
+// canonical case — rescue-tui binary, initramfs, .img).
+use aegis_core::humanize_bytes as humanize;
 
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
