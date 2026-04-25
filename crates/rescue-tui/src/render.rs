@@ -1348,6 +1348,45 @@ fn draw_confirm(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: u
             Span::raw("   "),
             signature_span(&iso.signature_verification, &state.theme),
         ]),
+        // #558 per-axis breakdown. The combined `Verdict:` line at the
+        // top of the Confirm screen down-shifts to the worse-of-two; the
+        // breakdown here lets operators see which axis the verdict came
+        // from. Source = origin trust (sidecar + minisig); Media = bytes
+        // match recorded hash. See verdict.rs for the mapping table.
+        {
+            let src = crate::verdict::TrustVerdict::source_verdict(iso);
+            Line::from(vec![
+                Span::styled("Source:   ", Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    src.label(),
+                    Style::default()
+                        .fg(src.color(&state.theme))
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                Span::styled(
+                    "(origin trust — sidecar + minisig)",
+                    Style::default().add_modifier(Modifier::DIM),
+                ),
+            ])
+        },
+        {
+            let med = crate::verdict::TrustVerdict::media_verdict(iso);
+            Line::from(vec![
+                Span::styled("Media:    ", Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    med.label(),
+                    Style::default()
+                        .fg(med.color(&state.theme))
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                Span::styled(
+                    "(bytes-on-stick vs recorded hash)",
+                    Style::default().add_modifier(Modifier::DIM),
+                ),
+            ])
+        },
         Line::from(""),
         // Per-screen action hint kept inline to make BLOCKED state
         // unmissable; full keybind list is in the persistent footer.

@@ -243,6 +243,173 @@ impl TrustVerdict {
             reason: failed.reason.clone(),
         }
     }
+
+    /// Origin-trust axis (#558). "Did this ISO come from a trustworthy
+    /// place?" Computed from the ISO's signature + hash sidecar signals.
+    /// Independent of [`Self::media_verdict`]; the combined
+    /// [`Self::from_discovered`] continues to be the boot-gating verdict.
+    pub(crate) fn source_verdict(iso: &DiscoveredIso) -> SourceVerdict {
+        SourceVerdict::from_iso(iso)
+    }
+
+    /// Storage-integrity axis (#558). "Do the on-stick ISO bytes match
+    /// the most-recent recorded hash (sidecar or verify-now)?" The
+    /// verify-now flow (#548) is the operator-driven path that turns
+    /// `Unverified` into `Verified` (or surfaces `Mismatch` as a tamper
+    /// signal).
+    pub(crate) fn media_verdict(iso: &DiscoveredIso) -> MediaVerdict {
+        MediaVerdict::from_iso(iso)
+    }
+}
+
+/// Origin-trust axis. Captures the question "is the ISO's claimed
+/// content vouched for by something we recognize?" Independent of
+/// whether the on-stick bytes match — that's [`MediaVerdict`].
+///
+/// Mapping from `iso-probe` signals (see [`SourceVerdict::from_iso`]):
+///
+/// | iso-probe state                                                  | SourceVerdict     |
+/// | ---------------------------------------------------------------- | ----------------- |
+/// | `SignatureVerification::Verified` (key in `AEGIS_TRUSTED_KEYS`)  | `Verified`        |
+/// | `HashVerification::Verified` (sidecar matches; no signature)     | `Verified`        |
+/// | `SignatureVerification::Forged`                                  | `Tampered`        |
+/// | `SignatureVerification::KeyNotTrusted`                           | `KeyNotTrusted`   |
+/// | nothing else passes                                              | `Bare`            |
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SourceVerdict {
+    /// A trusted attestation (signature or sidecar) vouches for the
+    /// claimed ISO content.
+    Verified,
+    /// A signature parses but the signing key is not in
+    /// `AEGIS_TRUSTED_KEYS`. The bytes may be intact, but no party we
+    /// recognize attests them.
+    KeyNotTrusted,
+    /// A signature parses against a recognized key BUT the signed
+    /// digest does not match what's on disk. Strong tamper signal at
+    /// the source layer (the publisher's claim disagrees with reality).
+    Tampered,
+    /// No verification material at all (no `.sha256`, no `.minisig`).
+    Bare,
+}
+
+impl SourceVerdict {
+    /// Compute from [`DiscoveredIso`] signals. Order of precedence
+    /// matters: a forged signature wins over a signature-verified
+    /// branch (defense in depth — the more-suspicious result surfaces).
+    pub(crate) fn from_iso(iso: &DiscoveredIso) -> Self {
+        use HashVerification as H;
+        use SignatureVerification as S;
+        // Tamper signals first.
+        if matches!(iso.signature_verification, S::Forged { .. }) {
+            return Self::Tampered;
+        }
+        // Trust signals next.
+        if matches!(iso.signature_verification, S::Verified { .. })
+            || matches!(iso.hash_verification, H::Verified { .. })
+        {
+            return Self::Verified;
+        }
+        // Untrusted-but-parseable signature.
+        if matches!(iso.signature_verification, S::KeyNotTrusted { .. }) {
+            return Self::KeyNotTrusted;
+        }
+        // No verification material present (or hash mismatch with no
+        // sig — the bytes-vs-recorded divergence is reported on the
+        // Media axis, not Source).
+        Self::Bare
+    }
+
+    /// One-word ASCII label for monochrome / serial / braille displays.
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Verified => "VERIFIED",
+            Self::KeyNotTrusted => "UNTRUSTED KEY",
+            Self::Tampered => "TAMPERED",
+            Self::Bare => "UNVERIFIED",
+        }
+    }
+
+    /// Color from the active theme. 16-color-safe.
+    pub(crate) fn color(self, theme: &Theme) -> Color {
+        match self {
+            Self::Verified => theme.success,
+            Self::KeyNotTrusted => theme.warning,
+            Self::Tampered => theme.error,
+            Self::Bare => Color::Gray,
+        }
+    }
+}
+
+/// Storage-integrity axis. Captures the question "do the on-stick ISO
+/// bytes match the most-recent recorded hash?"
+///
+/// "Recorded hash" can come from two places:
+/// 1. The sibling `.sha256` / minisig sidecar checked at discovery time.
+/// 2. The verify-now (#548) operator flow, which recomputes the hash
+///    at boot time and updates [`DiscoveredIso::hash_verification`] in
+///    place.
+///
+/// Mapping from `iso-probe` signals (see [`MediaVerdict::from_iso`]):
+///
+/// | iso-probe state                                | `MediaVerdict`   |
+/// | ---------------------------------------------- | --------------- |
+/// | `SignatureVerification::Verified`              | `Verified`      |
+/// | `SignatureVerification::Forged`                | `Mismatch`      |
+/// | `HashVerification::Verified`                   | `Verified`      |
+/// | `HashVerification::Mismatch`                   | `Mismatch`      |
+/// | otherwise                                      | `Unverified`    |
+///
+/// `Verified` requires either a passing signature (which transitively
+/// vouches for the bytes) or a matching sidecar sha. `Mismatch` is the
+/// tamper-detection signal at the storage layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MediaVerdict {
+    /// On-stick bytes match the recorded hash (sidecar or verify-now).
+    Verified,
+    /// On-stick bytes differ from the recorded hash. Strong tamper
+    /// signal at the storage layer.
+    Mismatch,
+    /// No recorded hash to compare against, or the bytes haven't been
+    /// re-hashed since discovery. The verify-now flow (#548) is the
+    /// operator-driven path that resolves this state.
+    Unverified,
+}
+
+impl MediaVerdict {
+    pub(crate) fn from_iso(iso: &DiscoveredIso) -> Self {
+        use HashVerification as H;
+        use SignatureVerification as S;
+        // Signature checks are computed against bytes — a passing
+        // signature implies the bytes match the signer's claim, which
+        // is exactly the Media-axis property.
+        if matches!(iso.signature_verification, S::Verified { .. }) {
+            return Self::Verified;
+        }
+        if matches!(iso.signature_verification, S::Forged { .. }) {
+            return Self::Mismatch;
+        }
+        match &iso.hash_verification {
+            H::Verified { .. } => Self::Verified,
+            H::Mismatch { .. } => Self::Mismatch,
+            _ => Self::Unverified,
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Verified => "VERIFIED",
+            Self::Mismatch => "MISMATCH",
+            Self::Unverified => "UNVERIFIED",
+        }
+    }
+
+    pub(crate) fn color(self, theme: &Theme) -> Color {
+        match self {
+            Self::Verified => theme.success,
+            Self::Mismatch => theme.error,
+            Self::Unverified => Color::Gray,
+        }
+    }
 }
 
 /// Truncate a long hex digest to the first 12 chars with an ellipsis —
@@ -512,6 +679,352 @@ mod tests {
         );
         let v = TrustVerdict::from_discovered(&iso, SecureBootStatus::Enforcing);
         assert!(matches!(v, TrustVerdict::HashMismatch { .. }));
+    }
+
+    // ---- #558 Source/Media verdict split (additive) -------------------
+
+    /// #558 migration property: every ISO fixture produces the SAME
+    /// 6-tier `TrustVerdict::from_discovered()` result before and after
+    /// the split. The new accessors are additive — they don't change
+    /// boot-gating or the canonical tier label.
+    ///
+    /// Pinned by exhaustive matrix below. If a future refactor breaks
+    /// this, every consumer of the combined verdict is also broken;
+    /// the panic message names the offending fixture so triage is one
+    /// step instead of three.
+    #[test]
+    fn from_discovered_combined_unchanged_after_split() {
+        let cases: &[(_, _, Vec<_>, _, SecureBootStatus, &str)] = &[
+            (
+                HashVerification::NotPresent,
+                SignatureVerification::Verified {
+                    key_id: "x".to_string(),
+                    sig_path: PathBuf::from("/x.minisig"),
+                },
+                vec![],
+                Distribution::Debian,
+                SecureBootStatus::Enforcing,
+                "OperatorAttested",
+            ),
+            (
+                HashVerification::Verified {
+                    digest: "h".to_string(),
+                    source: "/x.sha256".to_string(),
+                },
+                SignatureVerification::NotPresent,
+                vec![],
+                Distribution::Arch,
+                SecureBootStatus::Disabled,
+                "OperatorAttested",
+            ),
+            (
+                HashVerification::NotPresent,
+                SignatureVerification::KeyNotTrusted {
+                    key_id: "x".to_string(),
+                },
+                vec![],
+                Distribution::Debian,
+                SecureBootStatus::Enforcing,
+                "KeyNotTrusted",
+            ),
+            (
+                HashVerification::NotPresent,
+                SignatureVerification::NotPresent,
+                vec![],
+                Distribution::Debian,
+                SecureBootStatus::Enforcing,
+                "BareUnverified",
+            ),
+            (
+                HashVerification::Mismatch {
+                    expected: "a".repeat(64),
+                    actual: "b".repeat(64),
+                    source: "/x.sha256".to_string(),
+                },
+                SignatureVerification::NotPresent,
+                vec![],
+                Distribution::Debian,
+                SecureBootStatus::Enforcing,
+                "HashMismatch",
+            ),
+            (
+                HashVerification::NotPresent,
+                SignatureVerification::Forged {
+                    sig_path: PathBuf::from("/x.minisig"),
+                },
+                vec![],
+                Distribution::Debian,
+                SecureBootStatus::Enforcing,
+                "HashMismatch",
+            ),
+            (
+                HashVerification::NotPresent,
+                SignatureVerification::NotPresent,
+                vec![Quirk::NotKexecBootable],
+                Distribution::Windows,
+                SecureBootStatus::Enforcing,
+                "SecureBootBlocked",
+            ),
+        ];
+        for (hash, sig, quirks, distro, sb, expected_tier) in cases {
+            let iso = iso_with(hash.clone(), sig.clone(), quirks.clone(), *distro);
+            let v = TrustVerdict::from_discovered(&iso, *sb);
+            let actual_tier = match v {
+                TrustVerdict::OperatorAttested => "OperatorAttested",
+                TrustVerdict::BareUnverified => "BareUnverified",
+                TrustVerdict::KeyNotTrusted => "KeyNotTrusted",
+                TrustVerdict::ParseFailed { .. } => "ParseFailed",
+                TrustVerdict::SecureBootBlocked { .. } => "SecureBootBlocked",
+                TrustVerdict::HashMismatch { .. } => "HashMismatch",
+            };
+            assert_eq!(
+                actual_tier, *expected_tier,
+                "tier drift on fixture: hash={hash:?} sig={sig:?} quirks={quirks:?} sb={sb:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn source_verdict_verified_on_signature_or_hash() {
+        let iso_sig = iso_with(
+            HashVerification::NotPresent,
+            SignatureVerification::Verified {
+                key_id: "k".to_string(),
+                sig_path: PathBuf::from("/x.minisig"),
+            },
+            vec![],
+            Distribution::Debian,
+        );
+        assert_eq!(
+            TrustVerdict::source_verdict(&iso_sig),
+            SourceVerdict::Verified
+        );
+        let iso_hash = iso_with(
+            HashVerification::Verified {
+                digest: "h".to_string(),
+                source: "/x.sha256".to_string(),
+            },
+            SignatureVerification::NotPresent,
+            vec![],
+            Distribution::Arch,
+        );
+        assert_eq!(
+            TrustVerdict::source_verdict(&iso_hash),
+            SourceVerdict::Verified
+        );
+    }
+
+    #[test]
+    fn source_verdict_tampered_when_signature_forged() {
+        let iso = iso_with(
+            HashVerification::NotPresent,
+            SignatureVerification::Forged {
+                sig_path: PathBuf::from("/x.minisig"),
+            },
+            vec![],
+            Distribution::Debian,
+        );
+        assert_eq!(
+            TrustVerdict::source_verdict(&iso),
+            SourceVerdict::Tampered,
+            "forged sig is a tamper signal at the source layer"
+        );
+    }
+
+    #[test]
+    fn source_verdict_key_not_trusted_propagates() {
+        let iso = iso_with(
+            HashVerification::NotPresent,
+            SignatureVerification::KeyNotTrusted {
+                key_id: "k".to_string(),
+            },
+            vec![],
+            Distribution::Debian,
+        );
+        assert_eq!(
+            TrustVerdict::source_verdict(&iso),
+            SourceVerdict::KeyNotTrusted
+        );
+    }
+
+    #[test]
+    fn source_verdict_bare_when_no_material() {
+        let iso = iso_with(
+            HashVerification::NotPresent,
+            SignatureVerification::NotPresent,
+            vec![],
+            Distribution::Debian,
+        );
+        assert_eq!(TrustVerdict::source_verdict(&iso), SourceVerdict::Bare);
+    }
+
+    #[test]
+    fn source_verdict_bare_when_hash_mismatch_alone() {
+        // Hash mismatch with no signature: the bytes-vs-recorded
+        // divergence is a Media-axis problem, NOT a Source-axis one.
+        // The sidecar isn't itself authenticated; we don't know whether
+        // the recorded value or the actual bytes are the canonical one.
+        let iso = iso_with(
+            HashVerification::Mismatch {
+                expected: "a".repeat(64),
+                actual: "b".repeat(64),
+                source: "/x.sha256".to_string(),
+            },
+            SignatureVerification::NotPresent,
+            vec![],
+            Distribution::Debian,
+        );
+        assert_eq!(TrustVerdict::source_verdict(&iso), SourceVerdict::Bare);
+    }
+
+    #[test]
+    fn media_verdict_verified_on_signature_or_hash() {
+        let iso_sig = iso_with(
+            HashVerification::NotPresent,
+            SignatureVerification::Verified {
+                key_id: "k".to_string(),
+                sig_path: PathBuf::from("/x.minisig"),
+            },
+            vec![],
+            Distribution::Debian,
+        );
+        assert_eq!(
+            TrustVerdict::media_verdict(&iso_sig),
+            MediaVerdict::Verified,
+            "passing sig transitively vouches for bytes"
+        );
+        let iso_hash = iso_with(
+            HashVerification::Verified {
+                digest: "h".to_string(),
+                source: "/x.sha256".to_string(),
+            },
+            SignatureVerification::NotPresent,
+            vec![],
+            Distribution::Arch,
+        );
+        assert_eq!(
+            TrustVerdict::media_verdict(&iso_hash),
+            MediaVerdict::Verified
+        );
+    }
+
+    #[test]
+    fn media_verdict_mismatch_on_forged_sig_or_hash_mismatch() {
+        let iso_forged = iso_with(
+            HashVerification::NotPresent,
+            SignatureVerification::Forged {
+                sig_path: PathBuf::from("/x.minisig"),
+            },
+            vec![],
+            Distribution::Debian,
+        );
+        assert_eq!(
+            TrustVerdict::media_verdict(&iso_forged),
+            MediaVerdict::Mismatch,
+            "forged sig means bytes diverged from signer's claim"
+        );
+        let iso_mismatch = iso_with(
+            HashVerification::Mismatch {
+                expected: "a".repeat(64),
+                actual: "b".repeat(64),
+                source: "/x.sha256".to_string(),
+            },
+            SignatureVerification::NotPresent,
+            vec![],
+            Distribution::Debian,
+        );
+        assert_eq!(
+            TrustVerdict::media_verdict(&iso_mismatch),
+            MediaVerdict::Mismatch
+        );
+    }
+
+    #[test]
+    fn media_verdict_unverified_when_no_recorded_hash() {
+        // No sidecar, no sig, nothing to compare bytes against.
+        let iso = iso_with(
+            HashVerification::NotPresent,
+            SignatureVerification::NotPresent,
+            vec![],
+            Distribution::Debian,
+        );
+        assert_eq!(TrustVerdict::media_verdict(&iso), MediaVerdict::Unverified);
+    }
+
+    /// Orthogonality demo: green source + red media = "publisher signed
+    /// these bytes but on-stick bytes diverge" (= forged sig). Distinct
+    /// from the inverse combinations the existing tier model collapses.
+    #[test]
+    fn source_and_media_axes_are_orthogonal() {
+        // Tampered + Mismatch — sig says X but bytes hash to Y.
+        let forged = iso_with(
+            HashVerification::NotPresent,
+            SignatureVerification::Forged {
+                sig_path: PathBuf::from("/x.minisig"),
+            },
+            vec![],
+            Distribution::Debian,
+        );
+        assert_eq!(
+            TrustVerdict::source_verdict(&forged),
+            SourceVerdict::Tampered
+        );
+        assert_eq!(TrustVerdict::media_verdict(&forged), MediaVerdict::Mismatch);
+
+        // Bare + Mismatch — sidecar disagrees with bytes; no sig to authenticate.
+        let bare_mismatch = iso_with(
+            HashVerification::Mismatch {
+                expected: "a".repeat(64),
+                actual: "b".repeat(64),
+                source: "/x.sha256".to_string(),
+            },
+            SignatureVerification::NotPresent,
+            vec![],
+            Distribution::Debian,
+        );
+        assert_eq!(
+            TrustVerdict::source_verdict(&bare_mismatch),
+            SourceVerdict::Bare
+        );
+        assert_eq!(
+            TrustVerdict::media_verdict(&bare_mismatch),
+            MediaVerdict::Mismatch
+        );
+
+        // Bare + Unverified — no sidecar, no sig, no claim either way.
+        let pure_bare = iso_with(
+            HashVerification::NotPresent,
+            SignatureVerification::NotPresent,
+            vec![],
+            Distribution::Debian,
+        );
+        assert_eq!(
+            TrustVerdict::source_verdict(&pure_bare),
+            SourceVerdict::Bare
+        );
+        assert_eq!(
+            TrustVerdict::media_verdict(&pure_bare),
+            MediaVerdict::Unverified
+        );
+    }
+
+    #[test]
+    fn source_and_media_labels_non_empty_for_every_variant() {
+        for s in [
+            SourceVerdict::Verified,
+            SourceVerdict::KeyNotTrusted,
+            SourceVerdict::Tampered,
+            SourceVerdict::Bare,
+        ] {
+            assert!(!s.label().is_empty());
+        }
+        for m in [
+            MediaVerdict::Verified,
+            MediaVerdict::Mismatch,
+            MediaVerdict::Unverified,
+        ] {
+            assert!(!m.label().is_empty());
+        }
     }
 
     #[test]
