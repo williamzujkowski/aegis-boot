@@ -283,6 +283,7 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
     check_trust_anchor(&mut report);
     check_cosign_optional(&mut report);
     check_secureboot_state(&mut report);
+    check_boot_mode(&mut report);
     check_tpm(&mut report);
     check_removable_drives(&mut report);
     if !json_mode {
@@ -881,6 +882,69 @@ fn read_secureboot() -> Option<bool> {
         }
     }
     None
+}
+
+/// Surface UEFI vs Legacy boot mode (#561). On Linux the canonical signal
+/// is the existence of `/sys/firmware/efi/`: if the directory is present,
+/// the kernel was booted in UEFI mode; if absent, in Legacy/BIOS mode.
+///
+/// BIOS vendor / version / release date are already surfaced by
+/// `check_machine_identity` (DMI fields `bios_vendor`, `bios_version`,
+/// `bios_date`), so this function deliberately does not duplicate them —
+/// boot-mode is the gap, and that is what we add here.
+///
+/// The verdict is informational only. Legacy boot is supported by aegis-boot
+/// (the rescue-tui flow degrades gracefully without UEFI) but Secure Boot
+/// requires UEFI — we surface that hint when the host is Legacy.
+fn check_boot_mode(report: &mut Report) {
+    let name = "boot mode (host)".to_string();
+
+    #[cfg(target_os = "linux")]
+    {
+        match read_boot_mode_linux("/sys/firmware/efi") {
+            BootMode::Uefi => report.add(Verdict::Pass, name, "UEFI"),
+            BootMode::Legacy => report.add(
+                Verdict::Warn,
+                name,
+                "Legacy/BIOS — Secure Boot requires UEFI; reboot the host with UEFI firmware enabled",
+            ),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        report.add(Verdict::Pass, name, "EFI (Apple — all Macs boot via EFI)");
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        report.add(
+            Verdict::Skip,
+            name,
+            "Windows boot-mode detection not implemented (Get-ComputerInfo BiosFirmwareType — #123)",
+        );
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        report.add(Verdict::Skip, name, "unrecognized target_os");
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BootMode {
+    Uefi,
+    Legacy,
+}
+
+#[cfg(target_os = "linux")]
+fn read_boot_mode_linux(efi_root: &str) -> BootMode {
+    if std::path::Path::new(efi_root).is_dir() {
+        BootMode::Uefi
+    } else {
+        BootMode::Legacy
+    }
 }
 
 /// Surface TPM presence + version from sysfs on Linux. This is a host-side
@@ -1865,5 +1929,69 @@ mod tests {
         check_tpm(&mut r);
         assert_eq!(r.rows.len(), 1);
         assert!(matches!(r.rows[0].0, Verdict::Skip));
+    }
+
+    // ---- boot mode (#561) -------------------------------------------------
+
+    #[test]
+    fn check_boot_mode_emits_exactly_one_row() {
+        let mut r = Report::new().with_json_mode(true);
+        check_boot_mode(&mut r);
+        assert_eq!(r.rows.len(), 1);
+        assert_eq!(r.rows[0].1, "boot mode (host)");
+        assert!(matches!(
+            r.rows[0].0,
+            Verdict::Pass | Verdict::Warn | Verdict::Skip
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn read_boot_mode_linux_recognizes_uefi() {
+        let tmp = tempfile::tempdir().unwrap();
+        // tempdir IS an existing directory — simulates /sys/firmware/efi
+        // present.
+        let mode = read_boot_mode_linux(tmp.path().to_str().unwrap());
+        assert_eq!(mode, BootMode::Uefi);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn read_boot_mode_linux_recognizes_legacy() {
+        // Path that definitely doesn't exist → Legacy.
+        let mode = read_boot_mode_linux("/definitely/does/not/exist/aegis-bootmode-probe");
+        assert_eq!(mode, BootMode::Legacy);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn read_boot_mode_linux_treats_files_as_legacy() {
+        // /sys/firmware/efi is a *directory* on UEFI hosts. A regular file
+        // at the same path is malformed; we treat it as Legacy rather than
+        // as a false UEFI signal.
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("not-a-dir");
+        std::fs::write(&f, b"file").unwrap();
+        let mode = read_boot_mode_linux(f.to_str().unwrap());
+        assert_eq!(mode, BootMode::Legacy);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn check_boot_mode_skips_on_windows() {
+        let mut r = Report::new();
+        check_boot_mode(&mut r);
+        assert_eq!(r.rows.len(), 1);
+        assert!(matches!(r.rows[0].0, Verdict::Skip));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn check_boot_mode_passes_on_macos() {
+        let mut r = Report::new();
+        check_boot_mode(&mut r);
+        assert_eq!(r.rows.len(), 1);
+        assert!(matches!(r.rows[0].0, Verdict::Pass));
+        assert!(r.rows[0].2.to_lowercase().contains("efi"));
     }
 }
