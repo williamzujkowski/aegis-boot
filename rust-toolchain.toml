@@ -1,0 +1,10 @@
+# Pinning Rust to a specific stable so local + CI converge. Without
+# this file, local rustc was floating to the latest stable (1.95 at
+# the time of this commit) while CI pinned 1.88, surfacing clippy
+# lint divergence (e.g. collapsible_if). Bumping CI to 1.95 closes
+# that gap. Keep this in sync with rust-version in workspace
+# Cargo.toml. (#634-series follow-up)
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

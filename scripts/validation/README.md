@@ -7,7 +7,7 @@ Reusable scripts for exercising the cross-reboot-persistence paths against real 
 - Linux host with libvirt / QEMU + OVMF SecBoot 4M firmware (`/usr/share/OVMF/OVMF_CODE_4M.secboot.fd` and `OVMF_VARS_4M.ms.fd`)
 - Passwordless sudo (for `/dev/sda` raw access + mount/umount)
 - A removable USB stick the operator is willing to overwrite (the harness documents the device path; it does NOT auto-detect)
-- Rust toolchain capable of building `aegis-bootctl` + `rescue-tui` at MSRV 1.88+
+- Rust toolchain capable of building `aegis-bootctl` + `rescue-tui` at MSRV 1.95+
 
 The harness follows the 9-step procedure in [`docs/validation/REAL_HARDWARE_REPORT_132.md`](../../docs/validation/REAL_HARDWARE_REPORT_132.md).
 
@@ -44,7 +44,7 @@ Reports `PASS=N CORRUPT=M` summary.
 ```bash
 # 1. Build the harness binary + build aegis-boot artifacts
 cd <repo-root>
-rustup run 1.88.0 cargo build --release -p aegis-bootctl -p rescue-tui
+rustup run 1.95.0 cargo build --release -p aegis-bootctl -p rescue-tui
 rustc scripts/validation/save_smoke.rs -O -o /tmp/save_smoke
 bash scripts/build-initramfs.sh
 

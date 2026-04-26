@@ -84,14 +84,14 @@ require_rust() {
     require_cmd cargo "install rust toolchain via rustup (https://rustup.rs)"
 }
 
-# Run cargo against CI's pinned toolchain (1.88.0) when available, falling
+# Run cargo against CI's pinned toolchain (1.95.0) when available, falling
 # back to the default toolchain. We use a function rather than a string flag
 # because passing an empty +<toolchain> argument to cargo would be
-# interpreted as a positional and fail. CI uses 1.88.0 — matching it
+# interpreted as a positional and fail. CI uses 1.95.0 — matching it
 # locally avoids "looks fine here, fails there" lint surprises.
 cargo_run() {
-    if rustup toolchain list 2>/dev/null | grep -q "1.88.0"; then
-        cargo +1.88.0 "$@"
+    if rustup toolchain list 2>/dev/null | grep -q "1.95.0"; then
+        cargo +1.95.0 "$@"
     else
         cargo "$@"
     fi
@@ -105,9 +105,9 @@ warn_about_toolchain_once() {
         return
     fi
     _TOOLCHAIN_WARNED=1
-    if ! rustup toolchain list 2>/dev/null | grep -q "1.88.0"; then
-        echo "warn: Rust 1.88.0 toolchain not installed; using default toolchain" >&2
-        echo "  hint: \`rustup toolchain install 1.88.0\` to match CI's lint set exactly" >&2
+    if ! rustup toolchain list 2>/dev/null | grep -q "1.95.0"; then
+        echo "warn: Rust 1.95.0 toolchain not installed; using default toolchain" >&2
+        echo "  hint: \`rustup toolchain install 1.95.0\` to match CI's lint set exactly" >&2
     fi
 }
 

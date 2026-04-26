@@ -132,12 +132,12 @@ pub(crate) fn classify_bitlocker_status(stdout: &str) -> BitLockerStatus {
         }
         // Conversion Status line looks like:
         //   Conversion Status:    Fully Decrypted
-        if let Some((key, val)) = trimmed.split_once(':') {
-            if key.trim().eq_ignore_ascii_case("Conversion Status") {
-                saw_conversion_line = true;
-                if val.trim().eq_ignore_ascii_case("Fully Decrypted") {
-                    fully_decrypted_count += 1;
-                }
+        if let Some((key, val)) = trimmed.split_once(':')
+            && key.trim().eq_ignore_ascii_case("Conversion Status")
+        {
+            saw_conversion_line = true;
+            if val.trim().eq_ignore_ascii_case("Fully Decrypted") {
+                fully_decrypted_count += 1;
             }
         }
     }

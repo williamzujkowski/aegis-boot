@@ -158,10 +158,10 @@ pub fn run(args: &[String]) -> ExitCode {
         }
     }
 
-    if !parsed.skip_doctor {
-        if let Err(code) = doctor_preflight(device.as_deref(), parsed.yes) {
-            return ExitCode::from(code);
-        }
+    if !parsed.skip_doctor
+        && let Err(code) = doctor_preflight(device.as_deref(), parsed.yes)
+    {
+        return ExitCode::from(code);
     }
 
     // The wizard's serial-confirmation IS the destructive consent gate.

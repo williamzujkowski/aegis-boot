@@ -144,7 +144,7 @@ Splitting the two means: the operator can swap ISO sets without touching the sig
 ## Build pipeline
 
 ```
-   source ──► cargo build (Rust 1.88, pinned)
+   source ──► cargo build (Rust 1.95, pinned)
             └─► rescue-tui binary
 
    rescue-tui + busybox + /init script + ldd-resolved libs

@@ -223,7 +223,7 @@ fn try_run(args: &[String]) -> Result<BundlePaths, u8> {
         1u8
     })?;
 
-    let seen = load_seen_epoch().map(|s| s.epoch).unwrap_or(0);
+    let seen = load_seen_epoch().map_or(0, |s| s.epoch);
 
     let base = parsed.cache_base.unwrap_or_else(cache_base);
     fs::create_dir_all(&base).map_err(|e| {

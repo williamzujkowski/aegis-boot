@@ -1994,7 +1994,7 @@ mod tests {
             s.contains("MISSING"),
             "missing existence marker for non-existent path in: {s}",
         );
-        assert!(s.contains("/tmp"), "missing scanned path 2 in: {s}",);
+        assert!(s.contains("/tmp"), "missing scanned path 2 in: {s}");
         assert!(
             s.contains("exists"),
             "missing existence marker for existing path in: {s}",

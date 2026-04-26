@@ -221,7 +221,7 @@ pub(crate) fn plan_write(
         return Err(WritePlanError::ImplausibleSectorSize(sector_bytes));
     }
     let s = u64::from(sector_bytes);
-    if offset % s != 0 {
+    if !offset.is_multiple_of(s) {
         return Err(WritePlanError::OffsetNotSectorAligned {
             offset,
             sector_bytes,
@@ -234,7 +234,7 @@ pub(crate) fn plan_write(
     // up to 65 KiB), so this division is exact. Guard it anyway — a
     // future tweak that makes the chunk size non-power-of-two would
     // otherwise silently round down.
-    if chunk_bytes % s != 0 {
+    if !chunk_bytes.is_multiple_of(s) {
         return Err(WritePlanError::ChunkNotSectorAligned {
             chunk_bytes: WRITE_CHUNK_BYTES,
             sector_bytes,

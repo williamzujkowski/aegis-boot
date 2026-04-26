@@ -82,8 +82,8 @@ jobs:
         # Match the exact MSRV the rest of CI pins to so a Windows
         # pass here means Linux will agree on the toolchain surface.
         run: |
-          rustup toolchain install 1.88.0 --profile minimal --component clippy
-          rustup default 1.88.0
+          rustup toolchain install 1.95.0 --profile minimal --component clippy
+          rustup default 1.95.0
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
         with:

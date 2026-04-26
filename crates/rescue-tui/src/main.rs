@@ -253,10 +253,8 @@ fn run(roots: &[PathBuf]) -> Result<u8, Box<dyn std::error::Error>> {
     // TERM=dumb. Renders a numbered menu to stdout and reads a
     // line from stdin — no alt-screen, no cursor positioning, no
     // escape sequences that would confuse assistive tech.
-    let text_mode_requested = env::var("AEGIS_A11Y")
-        .map(|v| v.eq_ignore_ascii_case("text"))
-        .unwrap_or(false)
-        || env::var("TERM").map(|v| v == "dumb").unwrap_or(false);
+    let text_mode_requested = env::var("AEGIS_A11Y").is_ok_and(|v| v.eq_ignore_ascii_case("text"))
+        || env::var("TERM").is_ok_and(|v| v == "dumb");
     if text_mode_requested {
         return run_text_mode(&mut state);
     }
@@ -566,12 +564,12 @@ where
             (Screen::List { .. }, KeyCode::Char('/')) => state.open_filter(),
             (Screen::List { .. }, KeyCode::Char('s')) => state.cycle_sort(),
             (Screen::List { selected }, KeyCode::Char('v')) => {
-                if let Some(real_idx) = state.real_index(*selected) {
-                    if let Some(iso) = state.isos.get(real_idx) {
-                        let rx = spawn_verify_worker(iso.iso_path.clone());
-                        state.begin_verify(real_idx);
-                        active_verify = Some(rx);
-                    }
+                if let Some(real_idx) = state.real_index(*selected)
+                    && let Some(iso) = state.isos.get(real_idx)
+                {
+                    let rx = spawn_verify_worker(iso.iso_path.clone());
+                    state.begin_verify(real_idx);
+                    active_verify = Some(rx);
                 }
             }
             (Screen::Confirm { selected }, KeyCode::Char('v')) => {

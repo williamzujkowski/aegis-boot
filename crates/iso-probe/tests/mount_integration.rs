@@ -20,8 +20,7 @@ fn have_xorriso() -> bool {
     Command::new("xorriso")
         .arg("-version")
         .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+        .is_ok_and(|o| o.status.success())
 }
 
 /// Build a tiny ISO9660 image at `out` containing `casper/vmlinuz` +

@@ -175,15 +175,15 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
     }
 
     // Validate --image path up front so we fail before asking for confirmation.
-    if let Some(path) = prebuilt_image.as_ref() {
-        if !path.is_file() {
-            crate::userfacing::eprint_with_next(
-                "flash",
-                format!("--image path is not a file: {}", path.display()),
-                "check the path, or run `aegis-boot fetch-image` to download the pre-built signed .img",
-            );
-            return Err(1);
-        }
+    if let Some(path) = prebuilt_image.as_ref()
+        && !path.is_file()
+    {
+        crate::userfacing::eprint_with_next(
+            "flash",
+            format!("--image path is not a file: {}", path.display()),
+            "check the path, or run `aegis-boot fetch-image` to download the pre-built signed .img",
+        );
+        return Err(1);
     }
 
     // Windows --direct-install path: skips the Linux drive-selection
@@ -916,8 +916,7 @@ fn write_manifest_stage(
         .map_err(|e| stage_err(format!("compute ESP file hashes: {e}")))?;
     let sequence = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(1);
+        .map_or(1, |d| d.as_secs());
     let tool_version = env!("CARGO_PKG_VERSION");
     let manifest = build_manifest(tool_version, sequence, device, esp_files);
     let body =
@@ -968,8 +967,7 @@ fn write_host_side_attestation(body: &[u8], disk_guid: &str) -> Result<PathBuf, 
     // re-flashes without needing a UUID generator.
     let ts_secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(1);
+        .map_or(1, |d| d.as_secs());
     let id = if disk_guid.is_empty() {
         "unknown".to_string()
     } else {
@@ -2870,7 +2868,7 @@ mod tests {
     #[test]
     fn format_elapsed_renders_over_minute_in_m_and_padded_seconds() {
         use std::time::Duration;
-        assert_eq!(format_elapsed(Duration::from_secs(60)), "1m 00s");
+        assert_eq!(format_elapsed(Duration::from_mins(1)), "1m 00s");
         assert_eq!(format_elapsed(Duration::from_secs(64)), "1m 04s");
         assert_eq!(format_elapsed(Duration::from_secs(124)), "2m 04s");
         assert_eq!(format_elapsed(Duration::from_secs(3_605)), "60m 05s");
@@ -3039,8 +3037,7 @@ mod tests {
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
+                .map_or(0, |d| d.as_nanos())
         ));
         std::fs::create_dir_all(&tmp).unwrap();
 

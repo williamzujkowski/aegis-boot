@@ -218,10 +218,10 @@ pub(crate) fn parse_diskutil_info(output: &str) -> Result<DiskInfo, DiskInfoPars
 fn find_field(output: &str, key: &'static str) -> Result<String, DiskInfoParseError> {
     for line in output.lines() {
         let trimmed = line.trim_start();
-        if let Some(rest) = trimmed.strip_prefix(key) {
-            if let Some(value) = rest.strip_prefix(':') {
-                return Ok(value.trim().to_string());
-            }
+        if let Some(rest) = trimmed.strip_prefix(key)
+            && let Some(value) = rest.strip_prefix(':')
+        {
+            return Ok(value.trim().to_string());
         }
     }
     Err(DiskInfoParseError::MissingField { field: key })

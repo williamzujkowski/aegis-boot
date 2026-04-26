@@ -224,7 +224,7 @@ pub(crate) fn try_run_add(args: &[String]) -> Result<(), u8> {
         }
     };
 
-    let iso_size = std::fs::metadata(&iso_arg).map(|m| m.len()).unwrap_or(0);
+    let iso_size = std::fs::metadata(&iso_arg).map_or(0, |m| m.len());
     println!(
         "Adding {} ({}) to {}",
         iso_filename,
@@ -994,11 +994,11 @@ fn parse_add_args(args: &[String]) -> Result<AddArgs, u8> {
         eprintln!("aegis-boot add: missing required <iso-file> argument");
         return Err(2);
     };
-    if let Some(ref f) = folder {
-        if let Err(reason) = validate_folder_name(f) {
-            eprintln!("aegis-boot add: --folder {f:?}: {reason}");
-            return Err(2);
-        }
+    if let Some(ref f) = folder
+        && let Err(reason) = validate_folder_name(f)
+    {
+        eprintln!("aegis-boot add: --folder {f:?}: {reason}");
+        return Err(2);
     }
     Ok(AddArgs {
         iso_path,
@@ -1306,7 +1306,7 @@ fn scan_isos_recursive(root: &Path, dir: &Path, depth: usize, out: &mut Vec<IsoE
         if !file_type.is_file() {
             continue;
         }
-        let size = e.metadata().map(|m| m.len()).unwrap_or(0);
+        let size = e.metadata().map_or(0, |m| m.len());
         let is_iso = Path::new(&name)
             .extension()
             .and_then(|s| s.to_str())

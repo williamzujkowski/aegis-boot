@@ -394,10 +394,10 @@ impl SecureBootStatus {
             for entry in entries.flatten() {
                 let name = entry.file_name();
                 let name_s = name.to_string_lossy();
-                if name_s.starts_with("SecureBoot-") {
-                    if let Some(s) = Self::read_sb_bit(&entry.path()) {
-                        return s;
-                    }
+                if name_s.starts_with("SecureBoot-")
+                    && let Some(s) = Self::read_sb_bit(&entry.path())
+                {
+                    return s;
                 }
             }
         }
@@ -877,10 +877,10 @@ impl AppState {
     /// for defence in depth in case that invariant ever changes.
     pub fn move_to_first(&mut self) {
         let has_view = !self.visible_entries().is_empty();
-        if let Screen::List { selected } = &mut self.screen {
-            if has_view {
-                *selected = 0;
-            }
+        if let Screen::List { selected } = &mut self.screen
+            && has_view
+        {
+            *selected = 0;
         }
     }
 
@@ -888,10 +888,10 @@ impl AppState {
     /// is always the rescue-shell entry.
     pub fn move_to_last(&mut self) {
         let view_len = self.visible_entries().len();
-        if let Screen::List { selected } = &mut self.screen {
-            if view_len > 0 {
-                *selected = view_len - 1;
-            }
+        if let Screen::List { selected } = &mut self.screen
+            && view_len > 0
+        {
+            *selected = view_len - 1;
         }
     }
 

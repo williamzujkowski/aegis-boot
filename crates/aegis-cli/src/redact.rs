@@ -66,8 +66,7 @@ impl Redactor {
         // identical nanos. The counter closes that gap).
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_nanos());
         let pid = u128::from(std::process::id());
         let counter = u128::from(CONSTRUCTION_COUNTER.fetch_add(1, Ordering::Relaxed));
         let mixed = nanos

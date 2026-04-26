@@ -496,14 +496,14 @@ fn parse_args(args: &[String]) -> Result<ParsedArgs, u8> {
         }
         i += 1;
     }
-    if let Some(s) = p.expected_sha256.as_deref() {
-        if !is_valid_sha256_hex(s) {
-            eprintln!(
-                "aegis-boot fetch-image: --sha256 must be 64 hex chars (got {} chars)",
-                s.len()
-            );
-            return Err(2);
-        }
+    if let Some(s) = p.expected_sha256.as_deref()
+        && !is_valid_sha256_hex(s)
+    {
+        eprintln!(
+            "aegis-boot fetch-image: --sha256 must be 64 hex chars (got {} chars)",
+            s.len()
+        );
+        return Err(2);
     }
     Ok(p)
 }

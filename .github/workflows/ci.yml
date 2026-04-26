@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust: [stable, "1.88.0"]
+        rust: [stable, "1.95.0"]
     defaults:
       run:
         working-directory: crates/iso-parser
@@ -45,8 +45,8 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Install Rust
         run: |
-          rustup toolchain install 1.88.0 --profile minimal --component rustfmt,clippy
-          rustup override set 1.88.0
+          rustup toolchain install 1.95.0 --profile minimal --component rustfmt,clippy
+          rustup override set 1.95.0
           rustup target add x86_64-apple-darwin
           rustup target add x86_64-pc-windows-gnu
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
@@ -77,8 +77,8 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Install Rust
         run: |
-          rustup toolchain install 1.88.0 --profile minimal --component rustfmt,clippy
-          rustup override set 1.88.0
+          rustup toolchain install 1.95.0 --profile minimal --component rustfmt,clippy
+          rustup override set 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
       - name: Format + lint rescue-tui
         run: |
@@ -108,7 +108,7 @@ jobs:
       - name: Install Rust toolchain (pinned)
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain 1.88.0 --profile minimal --component rustfmt,clippy
+            | sh -s -- -y --default-toolchain 1.95.0 --profile minimal --component rustfmt,clippy
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
       - name: Format + lint aegis-cli on native macOS
@@ -159,7 +159,7 @@ jobs:
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Install Rust
-        run: rustup toolchain install 1.88.0 --profile minimal && rustup override set 1.88.0
+        run: rustup toolchain install 1.95.0 --profile minimal && rustup override set 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
       - name: Run fitness audit (threshold 80)
         # Stage 8 of dev-test.sh — repo + scripts + docs hygiene.
@@ -188,7 +188,7 @@ jobs:
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Install Rust
-        run: rustup toolchain install 1.88.0 --profile minimal && rustup override set 1.88.0
+        run: rustup toolchain install 1.95.0 --profile minimal && rustup override set 1.95.0
       - name: Install cargo-cyclonedx
         run: cargo install cargo-cyclonedx --locked --version 0.5.7
       - name: Generate SBOM
@@ -275,7 +275,7 @@ jobs:
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Install Rust
-        run: rustup toolchain install 1.88.0 --profile minimal && rustup override set 1.88.0
+        run: rustup toolchain install 1.95.0 --profile minimal && rustup override set 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
       - run: cargo run -p aegis-bootctl --bin constants-docgen --features docgen --locked -- --check
 
@@ -290,7 +290,7 @@ jobs:
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Install Rust
-        run: rustup toolchain install 1.88.0 --profile minimal && rustup override set 1.88.0
+        run: rustup toolchain install 1.95.0 --profile minimal && rustup override set 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
       - run: cargo run -p aegis-bootctl --bin trust-anchors-docgen --features docgen --locked -- --check
 
@@ -308,7 +308,7 @@ jobs:
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Install Rust
-        run: rustup toolchain install 1.88.0 --profile minimal && rustup override set 1.88.0
+        run: rustup toolchain install 1.95.0 --profile minimal && rustup override set 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
       - name: Build aegis-boot binary
         run: cargo build -p aegis-bootctl --release --locked
@@ -328,7 +328,7 @@ jobs:
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Install Rust
-        run: rustup toolchain install 1.88.0 --profile minimal && rustup override set 1.88.0
+        run: rustup toolchain install 1.95.0 --profile minimal && rustup override set 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
       - run: cargo run -p aegis-wire-formats --features schema --bin aegis-wire-formats-schema-docgen --locked -- --check
 
@@ -345,6 +345,6 @@ jobs:
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Install Rust
-        run: rustup toolchain install 1.88.0 --profile minimal && rustup override set 1.88.0
+        run: rustup toolchain install 1.95.0 --profile minimal && rustup override set 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
       - run: cargo run -p rescue-tui --bin tiers-docgen --locked -- --check

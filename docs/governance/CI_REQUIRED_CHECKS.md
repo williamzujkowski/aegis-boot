@@ -55,7 +55,7 @@ enforcing. If the maintainer wants the "CI is the merge gate"
 guarantee, the next governance pass should:
 
 1. Identify the minimum set of required checks (probably:
-   `Test (Rust 1.88.0)`, `Test (Rust stable)`, `rescue-tui clippy`,
+   `Test (Rust 1.95.0)`, `Test (Rust stable)`, `rescue-tui clippy`,
    `aegis-fitness audit`, plus the doc-drift checks).
 2. Decide whether reviewer approval is also required.
 3. Set the rules via `gh api repos/.../branches/main/protection`.

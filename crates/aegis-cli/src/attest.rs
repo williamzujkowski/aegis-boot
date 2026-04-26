@@ -644,31 +644,30 @@ fn current_kernel() -> String {
 }
 
 fn current_sb_state() -> String {
-    if let Ok(out) = Command::new("mokutil").arg("--sb-state").output() {
-        if out.status.success() {
-            let stdout = String::from_utf8_lossy(&out.stdout).to_lowercase();
-            if stdout.contains("secureboot enabled") {
-                return "enforcing".to_string();
-            }
-            if stdout.contains("secureboot disabled") {
-                return "disabled".to_string();
-            }
+    if let Ok(out) = Command::new("mokutil").arg("--sb-state").output()
+        && out.status.success()
+    {
+        let stdout = String::from_utf8_lossy(&out.stdout).to_lowercase();
+        if stdout.contains("secureboot enabled") {
+            return "enforcing".to_string();
+        }
+        if stdout.contains("secureboot disabled") {
+            return "disabled".to_string();
         }
     }
     // Fallback to efivar.
     if let Ok(entries) = fs::read_dir("/sys/firmware/efi/efivars") {
         for e in entries.flatten() {
             let name = e.file_name();
-            if name.to_string_lossy().starts_with("SecureBoot-") {
-                if let Ok(bytes) = fs::read(e.path()) {
-                    if bytes.len() >= 5 {
-                        return if bytes[4] == 1 {
-                            "enforcing".to_string()
-                        } else {
-                            "disabled".to_string()
-                        };
-                    }
-                }
+            if name.to_string_lossy().starts_with("SecureBoot-")
+                && let Ok(bytes) = fs::read(e.path())
+                && bytes.len() >= 5
+            {
+                return if bytes[4] == 1 {
+                    "enforcing".to_string()
+                } else {
+                    "disabled".to_string()
+                };
             }
         }
     }

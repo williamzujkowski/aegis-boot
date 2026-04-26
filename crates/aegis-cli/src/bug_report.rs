@@ -210,20 +210,20 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         return ExitCode::from(1);
     }
 
-    if opts.redact {
-        if let Some(path) = opts.dump_mapping_to {
-            if let Err(msg) = std::fs::write(&path, redactor.dump_mapping()) {
-                eprintln!(
-                    "aegis-boot bug-report: failed to write mapping to {}: {msg}",
-                    path.display()
-                );
-                return ExitCode::from(1);
-            }
+    if opts.redact
+        && let Some(path) = opts.dump_mapping_to
+    {
+        if let Err(msg) = std::fs::write(&path, redactor.dump_mapping()) {
             eprintln!(
-                "aegis-boot bug-report: redaction mapping written to {} (keep LOCAL)",
+                "aegis-boot bug-report: failed to write mapping to {}: {msg}",
                 path.display()
             );
+            return ExitCode::from(1);
         }
+        eprintln!(
+            "aegis-boot bug-report: redaction mapping written to {} (keep LOCAL)",
+            path.display()
+        );
     }
 
     ExitCode::SUCCESS

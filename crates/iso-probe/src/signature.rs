@@ -112,7 +112,7 @@ where
 {
     match find_expected_hash(iso_path) {
         ExpectedHashResult::Found(expected) => {
-            let total = std::fs::metadata(iso_path).map(|m| m.len()).unwrap_or(0);
+            let total = std::fs::metadata(iso_path).map_or(0, |m| m.len());
             let actual = sha256_of_file_with_progress(iso_path, total, &mut on_progress)?;
             if actual == expected.hash.to_ascii_lowercase() {
                 Ok(HashVerification::Verified {
@@ -221,13 +221,13 @@ fn find_expected_hash(iso_path: &Path) -> ExpectedHashResult {
         return ExpectedHashResult::NotFound;
     };
     for line in sums.lines() {
-        if let Some((hash, fname)) = parse_sha256sums_line(line) {
-            if fname == basename {
-                return ExpectedHashResult::Found(ExpectedHash {
-                    hash,
-                    source: sums_path.display().to_string(),
-                });
-            }
+        if let Some((hash, fname)) = parse_sha256sums_line(line)
+            && fname == basename
+        {
+            return ExpectedHashResult::Found(ExpectedHash {
+                hash,
+                source: sums_path.display().to_string(),
+            });
         }
     }
     ExpectedHashResult::NotFound
@@ -275,7 +275,7 @@ fn is_sha256_hex(s: &str) -> bool {
 /// hash in ~GB/s on NVMe; buffered at 64 KiB (same as the per-iso
 /// verification path).
 pub fn compute_iso_sha256(path: &Path) -> std::io::Result<String> {
-    let total = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    let total = std::fs::metadata(path).map_or(0, |m| m.len());
     sha256_of_file_with_progress(path, total, &mut |_, _| {})
 }
 

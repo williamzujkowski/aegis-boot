@@ -262,10 +262,10 @@ pub(crate) fn filter_for(
         if !k.screens.is_empty() && !k.screens.contains(&screen) {
             return false;
         }
-        if let Some(required) = k.pane {
-            if required != pane {
-                return false;
-            }
+        if let Some(required) = k.pane
+            && required != pane
+        {
+            return false;
         }
         true
     })

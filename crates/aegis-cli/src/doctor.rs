@@ -859,15 +859,15 @@ fn check_secureboot_state(report: &mut Report) {
 }
 
 fn read_secureboot() -> Option<bool> {
-    if let Ok(out) = Command::new("mokutil").arg("--sb-state").output() {
-        if out.status.success() {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            if stdout.to_lowercase().contains("secureboot enabled") {
-                return Some(true);
-            }
-            if stdout.to_lowercase().contains("secureboot disabled") {
-                return Some(false);
-            }
+    if let Ok(out) = Command::new("mokutil").arg("--sb-state").output()
+        && out.status.success()
+    {
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        if stdout.to_lowercase().contains("secureboot enabled") {
+            return Some(true);
+        }
+        if stdout.to_lowercase().contains("secureboot disabled") {
+            return Some(false);
         }
     }
     // Fallback: read efivar directly. Format is 4 bytes header + 1 byte value.
@@ -876,12 +876,11 @@ fn read_secureboot() -> Option<bool> {
         for e in entries.flatten() {
             let name = e.file_name();
             let name_s = name.to_string_lossy();
-            if name_s.starts_with("SecureBoot-") {
-                if let Ok(bytes) = std::fs::read(e.path()) {
-                    if bytes.len() >= 5 {
-                        return Some(bytes[4] == 1);
-                    }
-                }
+            if name_s.starts_with("SecureBoot-")
+                && let Ok(bytes) = std::fs::read(e.path())
+                && bytes.len() >= 5
+            {
+                return Some(bytes[4] == 1);
             }
         }
     }

@@ -20,7 +20,7 @@ tools/local-ci.sh thumb-drive --confirm-write /dev/sdX  # real USB (operator-onl
 tools/local-ci.sh all          # full suite sans thumb-drive (~12 min)
 ```
 
-Each subcommand wraps the same `scripts/*.sh` that the corresponding `.github/workflows/*.yml` runs in CI — no reimplementation, just a friendlier dispatcher with prerequisite checks. Toolchain auto-pins to `cargo +1.88.0` if available so local lints match CI's lint set exactly.
+Each subcommand wraps the same `scripts/*.sh` that the corresponding `.github/workflows/*.yml` runs in CI — no reimplementation, just a friendlier dispatcher with prerequisite checks. Toolchain auto-pins to `cargo +1.95.0` if available so local lints match CI's lint set exactly.
 
 ### Decision tree — what to run before pushing
 
@@ -57,8 +57,8 @@ After Phase 1 of [#580](https://github.com/aegis-boot/aegis-boot/issues/580), th
 | ------------------------------------------------------------- | ------------------------------------------------------------------ |
 | `qemu-system-x86_64` not found                                | `apt-get install qemu-system-x86` (or distro equivalent)           |
 | OVMF firmware not found                                       | `apt-get install ovmf` — check `/usr/share/OVMF/` paths            |
-| `cargo +1.88.0` not installed (warns once per run)            | `rustup toolchain install 1.88.0` — matches CI's pinned toolchain  |
-| `quick` clippy fails locally but green on CI                  | newer Rust on host adds lints CI's 1.88.0 doesn't have — run with the pin |
+| `cargo +1.95.0` not installed (warns once per run)            | `rustup toolchain install 1.95.0` — matches CI's pinned toolchain  |
+| `quick` clippy fails locally but green on CI                  | newer Rust on host adds lints CI's 1.95.0 doesn't have — run with the pin |
 | `kexec` / `ovmf-secboot` hangs                                | `TIMEOUT_SECONDS=300 tools/local-ci.sh kexec` (default 180s); also check `/boot/vmlinuz-*` is mode 0644 (mcopy needs to read it) |
 | `thumb-drive` aborts with "not flagged removable"             | by design — refusing NVMe even with `--confirm-write`. Use `lsblk` to find the USB; ensure it's the right `/dev/sdX` |
 

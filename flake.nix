@@ -2,10 +2,12 @@
   description = "aegis-boot — signed UEFI Secure Boot rescue environment";
 
   inputs = {
-    # Pinned to a stable channel with rust ≥1.88 (our MSRV). Rust 1.88
-    # released 2025-06-23, so nixos-25.05 may ship 1.87 — use 25.11
-    # (frozen Nov 2025) which ships 1.88+. Avoids nixos-unstable churn
-    # (python/sphinx breakage observed mid-PR #406).
+    # Pinned to a stable channel with rust ≥1.88 (our MSRV). nixos-25.11
+    # currently ships rustc 1.91.x — well above the floor. CI builds
+    # use rustc 1.95 via rust-toolchain.toml; this flake honors
+    # whatever rustc nixos-25.11 happens to ship as long as it ≥ MSRV.
+    # Avoids nixos-unstable churn (python/sphinx breakage observed
+    # mid-PR #406).
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
     flake-utils.url = "github:numtide/flake-utils";
   };

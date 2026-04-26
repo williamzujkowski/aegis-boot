@@ -72,8 +72,8 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Install Rust toolchain (pinned)
         run: |
-          rustup toolchain install 1.88.0 --profile minimal --no-self-update
-          rustup default 1.88.0
+          rustup toolchain install 1.95.0 --profile minimal --no-self-update
+          rustup default 1.95.0
           rustc --version
 
       - name: Mint short-lived crates.io token (OIDC)

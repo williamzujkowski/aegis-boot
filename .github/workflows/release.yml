@@ -91,7 +91,7 @@ jobs:
       - name: Install Rust toolchain (pinned) + musl target
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain 1.88.0 --profile minimal
+            | sh -s -- -y --default-toolchain 1.95.0 --profile minimal
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           "$HOME/.cargo/bin/rustup" target add x86_64-unknown-linux-musl
 
@@ -376,7 +376,7 @@ jobs:
       - name: Install Rust toolchain (pinned)
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain 1.88.0 --profile minimal
+            | sh -s -- -y --default-toolchain 1.95.0 --profile minimal
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           # macos-14 runners are arm64-native, so aarch64-apple-darwin
           # is installed by the rustup bootstrap above. No `rustup target

@@ -180,8 +180,7 @@ fn has_command(name: &str) -> bool {
     Command::new(name)
         .arg("--help")
         .output()
-        .map(|o| o.status.success() || o.status.code() == Some(1))
-        .unwrap_or(false)
+        .is_ok_and(|o| o.status.success() || o.status.code() == Some(1))
 }
 
 fn try_udisksctl_power_off(dev: &Path) -> bool {
@@ -208,7 +207,7 @@ fn try_eject_command(dev: &Path) -> bool {
 
 /// Run a `Command` and return true on successful exit.
 fn run_status(cmd: &mut Command) -> bool {
-    cmd.status().map(|s| s.success()).unwrap_or(false)
+    cmd.status().is_ok_and(|s| s.success())
 }
 
 #[cfg(test)]

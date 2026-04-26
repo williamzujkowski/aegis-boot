@@ -35,17 +35,15 @@ pub fn list_removable_drives() -> Vec<Drive> {
             .unwrap_or_else(|| "(unknown model)".to_string());
         let size_bytes = read_sysfs_int_u64(&sysdir.join("size")).unwrap_or(0) * 512;
         // Count partitions (sdX1, sdX2, ...).
-        let partitions = fs::read_dir(&sysdir)
-            .map(|iter| {
-                iter.flatten()
-                    .filter(|e| {
-                        e.file_name()
-                            .to_string_lossy()
-                            .starts_with(name_str.as_ref())
-                    })
-                    .count()
-            })
-            .unwrap_or(0);
+        let partitions = fs::read_dir(&sysdir).map_or(0, |iter| {
+            iter.flatten()
+                .filter(|e| {
+                    e.file_name()
+                        .to_string_lossy()
+                        .starts_with(name_str.as_ref())
+                })
+                .count()
+        });
 
         drives.push(Drive {
             dev: PathBuf::from(format!("/dev/{name_str}")),
@@ -128,15 +126,15 @@ fn classify_transport(sysdir: &Path, name: &str) -> BlockDeviceTransport {
     // pointing into /sys/bus/{usb,scsi,ata,...}). Read the resolved target's
     // last component as the transport label.
     let subsystem = sysdir.join("device/subsystem");
-    if let Ok(resolved) = fs::read_link(&subsystem) {
-        if let Some(last) = resolved.file_name() {
-            return match last.to_string_lossy().as_ref() {
-                "usb" => BlockDeviceTransport::Usb,
-                "scsi" => BlockDeviceTransport::Scsi,
-                "ata" | "sata" => BlockDeviceTransport::Sata,
-                _ => BlockDeviceTransport::Unknown,
-            };
-        }
+    if let Ok(resolved) = fs::read_link(&subsystem)
+        && let Some(last) = resolved.file_name()
+    {
+        return match last.to_string_lossy().as_ref() {
+            "usb" => BlockDeviceTransport::Usb,
+            "scsi" => BlockDeviceTransport::Scsi,
+            "ata" | "sata" => BlockDeviceTransport::Sata,
+            _ => BlockDeviceTransport::Unknown,
+        };
     }
     BlockDeviceTransport::Unknown
 }

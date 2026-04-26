@@ -84,10 +84,10 @@ fn main() {
         // runtime-loaded list. build.rs doesn't consume it directly,
         // but downstream code pulls it via include_str!, which cargo
         // doesn't track automatically.
-        if let Some(anchors) = path.parent().map(|p| p.join("historical-anchors.json")) {
-            if anchors.is_file() {
-                println!("cargo:rerun-if-changed={}", anchors.display());
-            }
+        if let Some(anchors) = path.parent().map(|p| p.join("historical-anchors.json"))
+            && anchors.is_file()
+        {
+            println!("cargo:rerun-if-changed={}", anchors.display());
         }
     }
 

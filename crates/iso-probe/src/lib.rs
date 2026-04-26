@@ -305,10 +305,10 @@ fn walk_for_iso_size(dir: &Path, filename: &str, depth: u32) -> Option<u64> {
             if ft.is_file() && p.file_name().and_then(|n| n.to_str()) == Some(filename) {
                 return entry.metadata().ok().map(|m| m.len());
             }
-            if ft.is_dir() {
-                if let Some(size) = walk_for_iso_size(&p, filename, depth - 1) {
-                    return Some(size);
-                }
+            if ft.is_dir()
+                && let Some(size) = walk_for_iso_size(&p, filename, depth - 1)
+            {
+                return Some(size);
             }
         }
     }
@@ -321,10 +321,10 @@ fn walk_for_iso_size(dir: &Path, filename: &str, depth: u32) -> Option<u64> {
 /// to find the real file. (#117)
 fn find_iso_size(root: &Path, filename: &str) -> Option<u64> {
     let direct = root.join(filename);
-    if let Ok(m) = std::fs::metadata(&direct) {
-        if m.is_file() {
-            return Some(m.len());
-        }
+    if let Ok(m) = std::fs::metadata(&direct)
+        && m.is_file()
+    {
+        return Some(m.len());
     }
     walk_for_iso_size(root, filename, 3)
 }

@@ -434,7 +434,7 @@ mod tests {
         let r = DirectInstallReceipt {
             preflight_elevation: Some(Duration::from_millis(50)),
             preflight_bitlocker: Some(Duration::from_millis(200)),
-            partition: Some(Duration::from_millis(2000)),
+            partition: Some(Duration::from_secs(2)),
             format_esp: Some(Duration::from_millis(500)),
             format_data: Some(Duration::from_millis(500)),
             stage_esp: Some(Duration::from_millis(800)),
@@ -451,7 +451,7 @@ mod tests {
         let r = DirectInstallReceipt {
             preflight_elevation: Some(Duration::from_millis(50)),
             preflight_bitlocker: Some(Duration::from_millis(200)),
-            partition: Some(Duration::from_millis(2000)),
+            partition: Some(Duration::from_secs(2)),
             format_esp: None,
             format_data: None,
             stage_esp: None,

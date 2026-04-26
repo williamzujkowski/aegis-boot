@@ -45,7 +45,7 @@ RUN sed -i 's/^# deb \(.*universe\)/deb \1/' /etc/apt/sources.list && \
 
 ENV RUSTUP_HOME=/opt/rust/rustup
 ENV CARGO_HOME=/opt/rust/cargo
-ENV RUST_VERSION=1.88.0
+ENV RUST_VERSION=1.95.0
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     | sh -s -- -y \
