@@ -33,17 +33,22 @@ use crate::verdict::TrustVerdict;
 /// ```
 pub fn draw(frame: &mut Frame<'_>, state: &AppState) {
     let area = frame.area();
+    // Phase C layout: drop the dedicated header row entirely. Version
+    // + SB state + TPM state migrate to a session footer rendered at
+    // the bottom of the info pane (see `info_pane_iso_lines`). The
+    // top row was carrying constant session state — the body needs
+    // every row it can get on 80×25 serial / OVMF consoles. The
+    // status bar at the bottom is still the canonical keybinding
+    // reference; only the redundant chrome at the top goes.
     let chrome = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // header banner
             Constraint::Min(3),    // body
-            Constraint::Length(1), // footer
+            Constraint::Length(1), // footer (keybinding hint bar)
         ])
         .split(area);
-    let (header_area, body_area, footer_area) = (chrome[0], chrome[1], chrome[2]);
+    let (body_area, footer_area) = (chrome[0], chrome[1]);
 
-    draw_header(frame, header_area, state);
     draw_body(frame, body_area, state);
     draw_footer(frame, footer_area, state);
 
@@ -263,63 +268,6 @@ fn draw_verifying(
         .wrap(Wrap { trim: false }),
         note_area,
     );
-}
-
-fn draw_header(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
-    let version = env!("CARGO_PKG_VERSION");
-    let sb_color = match state.secure_boot {
-        SecureBootStatus::Enforcing => state.theme.success,
-        SecureBootStatus::Disabled => state.theme.error,
-        SecureBootStatus::Unknown => state.theme.warning,
-    };
-    // Design-review fix #3: TPM colour must reflect TPM state, not be
-    // hardcoded to green. A green "TPM:none" lies to the operator.
-    let tpm_color = match state.tpm {
-        crate::state::TpmStatus::Available => state.theme.success,
-        crate::state::TpmStatus::Absent => state.theme.warning,
-    };
-    // Brand primary (steel blue) for the shield mark. Uses the aegis
-    // brand colour directly — renders across every theme.
-    let brand = ratatui::style::Color::Rgb(0x3B, 0x82, 0xF6);
-
-    // Phase A layout cleanup: the marketing tagline ("Signed boot.
-    // Any ISO. Your keys.") was zero-functional during a rescue boot
-    // and ate ~30 cols of header space; dropped here. The version +
-    // SB + TPM trio remains — those are operator-actionable
-    // ("UNKNOWN SB? My firmware lied about Secure Boot") and survive
-    // through every theme.
-    //
-    // Width-degradation order (TPM is the next to go on serial-narrow
-    // consoles, then SB, then mark+name+version always survive):
-    //   ≥70 cols → ◆ aegis-boot vX.Y.Z   SB:state   TPM:state
-    //   ≥50 cols → ◆ aegis-boot vX.Y.Z   SB:state
-    //   <50 cols → ◆ aegis-boot vX.Y.Z
-    let mut spans = vec![
-        Span::styled(
-            "◆ ",
-            Style::default().fg(brand).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("aegis-boot v{version}"),
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-    ];
-    if area.width >= 50 {
-        spans.push(Span::raw("  "));
-        spans.push(Span::styled(
-            state.secure_boot.summary(),
-            Style::default().fg(sb_color),
-        ));
-    }
-    if area.width >= 70 {
-        spans.push(Span::raw("  "));
-        spans.push(Span::styled(
-            state.tpm.summary(),
-            Style::default().fg(tpm_color),
-        ));
-    }
-    let header = Line::from(spans);
-    frame.render_widget(Paragraph::new(header), area);
 }
 
 fn draw_footer(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
@@ -710,6 +658,61 @@ fn split_list_chrome(_frame: &mut Frame<'_>, area: Rect, _state: &AppState) -> (
     (chunks[0], chunks[1])
 }
 
+/// Adaptive list/info split for the body area.
+///
+/// Below 100 cols the layout flips vertical (list on top, info pane
+/// below) — the 40/60 horizontal split chops kernel cmdlines on
+/// serial/OVMF and centers the verdict banner over a tiny pane. At
+/// or above 100 cols the layout stays horizontal but the list pane
+/// width is `min(longest_label + 12, 40% of body)`; short ISO sets
+/// shrink the list pane so the info pane absorbs the slack for
+/// sha256, cmdline, and signer chain.
+///
+/// Extracted from [`draw_list`] to keep that function under the
+/// workspace `clippy::too_many_lines` gate.
+fn adaptive_list_split(
+    body_area: Rect,
+    entries: &[crate::state::ViewEntry],
+    state: &AppState,
+) -> (Rect, Rect) {
+    use crate::state::ViewEntry;
+    if body_area.width < 100 {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+            .split(body_area);
+        return (chunks[0], chunks[1]);
+    }
+    let longest_label = entries
+        .iter()
+        .map(|e| match e {
+            ViewEntry::Iso(i) => state
+                .isos
+                .get(*i)
+                .map_or(0, |iso| iso.label.chars().count()),
+            ViewEntry::FailedIso(i) => state.failed_isos.get(*i).map_or(0, |f| {
+                f.iso_path
+                    .file_name()
+                    .map_or(0, |n| n.to_string_lossy().chars().count())
+            }),
+            ViewEntry::RescueShell => "rescue shell (busybox) — dropped from rescue-tui"
+                .chars()
+                .count(),
+        })
+        .max()
+        .unwrap_or(20);
+    // +12 cols for status glyph + distro tag + borders. 40% cap so
+    // the info pane never starves on long-label decks.
+    let list_cols_fit = u16::try_from(longest_label.saturating_add(12)).unwrap_or(u16::MAX);
+    let list_cols_max = body_area.width * 40 / 100;
+    let list_cols = list_cols_fit.min(list_cols_max).max(20);
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(list_cols), Constraint::Min(40)])
+        .split(body_area);
+    (chunks[0], chunks[1])
+}
+
 /// Render the top-of-list-chrome info line (filter banner while
 /// editing, else the committed sort/filter hint). Extracted from
 /// [`draw_list`] so that function stays under the clippy
@@ -780,46 +783,7 @@ fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usiz
     //                signer chain.
     let (info_line_area, body_area) = split_list_chrome(frame, area, state);
     let entries = state.visible_entries();
-    let (list_area, info_pane_area) = if body_area.width < 100 {
-        // Compact / vertical layout for narrow terminals.
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            // Cap list at min(8 rows + chrome, 50% of body) so info
-            // pane keeps half the screen even with a long list.
-            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-            .split(body_area);
-        (chunks[0], chunks[1])
-    } else {
-        // Wide / horizontal layout with adaptive list width.
-        let longest_label = entries
-            .iter()
-            .map(|e| match e {
-                ViewEntry::Iso(i) => state
-                    .isos
-                    .get(*i)
-                    .map_or(0, |iso| iso.label.chars().count()),
-                ViewEntry::FailedIso(i) => state.failed_isos.get(*i).map_or(0, |f| {
-                    f.iso_path
-                        .file_name()
-                        .map_or(0, |n| n.to_string_lossy().chars().count())
-                }),
-                ViewEntry::RescueShell => "rescue shell (busybox) — dropped from rescue-tui"
-                    .chars()
-                    .count(),
-            })
-            .max()
-            .unwrap_or(20);
-        // Add ~12 cols for the leading status glyph, distro tag, and
-        // borders. Cap at 40% so the info pane never starves.
-        let list_cols_fit = u16::try_from(longest_label.saturating_add(12)).unwrap_or(u16::MAX);
-        let list_cols_max = body_area.width * 40 / 100;
-        let list_cols = list_cols_fit.min(list_cols_max).max(20);
-        let chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(list_cols), Constraint::Min(40)])
-            .split(body_area);
-        (chunks[0], chunks[1])
-    };
+    let (list_area, info_pane_area) = adaptive_list_split(body_area, &entries, state);
 
     render_list_info_line(frame, info_line_area, state);
 
@@ -886,14 +850,59 @@ fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usiz
     // Info pane — tier-aware summary of the currently-selected row.
     // This is the #458 scaffold: verdict + filename + one-line reason.
     // #459 extends with the full per-tier metadata (sha256, signer,
-    // kernel/initrd, cmdline, quirks, …).
+    // kernel/initrd, cmdline, quirks, …). Phase C: anchor a 1-row
+    // session-state footer at the bottom of the info pane area —
+    // version + Secure Boot + TPM state migrated here from the
+    // dropped top header so the body has more vertical room.
+    let info_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(3), Constraint::Length(1)])
+        .split(info_pane_area);
+    let (info_content_area, session_footer_area) = (info_chunks[0], info_chunks[1]);
     draw_info_pane(
         frame,
-        info_pane_area,
+        info_content_area,
         state,
         selected,
         state.pane == Pane::Info,
     );
+    draw_session_footer(frame, session_footer_area, state);
+}
+
+/// One-row session-state footer at the bottom of the info pane.
+/// Holds the constants that used to live in the dropped top header
+/// row: version, Secure Boot state, TPM state. Color-coded per
+/// [`SecureBootStatus`] / [`crate::state::TpmStatus`] so the operator
+/// can spot a `SB:disabled` or `TPM:none` at a glance without parsing
+/// the line.
+/// (Phase C — fills empty vertical space + reclaims the header row.)
+fn draw_session_footer(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
+    let version = env!("CARGO_PKG_VERSION");
+    let sb_color = match state.secure_boot {
+        SecureBootStatus::Enforcing => state.theme.success,
+        SecureBootStatus::Disabled => state.theme.error,
+        SecureBootStatus::Unknown => state.theme.warning,
+    };
+    let tpm_color = match state.tpm {
+        crate::state::TpmStatus::Available => state.theme.success,
+        crate::state::TpmStatus::Absent => state.theme.warning,
+    };
+    let brand = ratatui::style::Color::Rgb(0x3B, 0x82, 0xF6);
+    let line = Line::from(vec![
+        Span::styled(
+            " ◆ ",
+            Style::default().fg(brand).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("aegis-boot v{version}"),
+            Style::default().add_modifier(Modifier::DIM),
+        ),
+        Span::raw("   "),
+        Span::styled(state.secure_boot.summary(), Style::default().fg(sb_color)),
+        Span::raw("   "),
+        Span::styled(state.tpm.summary(), Style::default().fg(tpm_color)),
+    ]);
+    frame.render_widget(Paragraph::new(line), area);
 }
 
 /// Border style for a pane based on focus state. Focused panes use
