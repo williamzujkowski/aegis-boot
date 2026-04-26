@@ -6,7 +6,7 @@
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Wrap},
 };
@@ -996,17 +996,18 @@ fn info_pane_iso_lines<'a>(
     content_width: usize,
 ) -> Vec<Line<'a>> {
     let verdict = TrustVerdict::from_discovered(iso, state.secure_boot);
-    let mut lines = Vec::with_capacity(14);
+    let mut lines = Vec::with_capacity(15);
 
-    lines.push(Line::from(vec![
-        Span::styled("Verdict:  ", Style::default().add_modifier(Modifier::BOLD)),
-        Span::styled(
-            verdict.label(),
-            Style::default()
-                .fg(verdict.color(&state.theme))
-                .add_modifier(Modifier::BOLD),
-        ),
-    ]));
+    // #632: full-width verdict banner. The verdict is the security
+    // gate of the rescue path — promote it from an inline colored
+    // token to a banner that's the eye's first stop. Bold label on a
+    // themed bg fill. Monochrome theme falls back to plain bold +
+    // bookend (Reset bg = no fill).
+    lines.push(verdict_banner_line(
+        verdict.label(),
+        verdict.color(&state.theme),
+        content_width,
+    ));
     lines.push(labeled("File:     ", filename_str(&iso.iso_path)));
     lines.push(labeled("Size:     ", humanize_size(iso.size_bytes)));
     lines.push(labeled("sha256:   ", hash_summary(iso)));
@@ -1101,16 +1102,13 @@ fn info_pane_failed_lines<'a>(
     content_width: usize,
 ) -> Vec<Line<'a>> {
     let verdict = TrustVerdict::from_failed(failed);
-    let mut lines = Vec::with_capacity(10);
-    lines.push(Line::from(vec![
-        Span::styled("Verdict:  ", Style::default().add_modifier(Modifier::BOLD)),
-        Span::styled(
-            verdict.label(),
-            Style::default()
-                .fg(verdict.color(theme))
-                .add_modifier(Modifier::BOLD),
-        ),
-    ]));
+    let mut lines = Vec::with_capacity(11);
+    // #632: see info_pane_iso_lines for rationale.
+    lines.push(verdict_banner_line(
+        verdict.label(),
+        verdict.color(theme),
+        content_width,
+    ));
     lines.push(labeled("File:     ", filename_str(&failed.iso_path)));
     lines.push(labeled("Path:     ", failed.iso_path.display().to_string()));
     lines.push(labeled("Kind:     ", format!("{:?}", failed.kind)));
@@ -1217,6 +1215,34 @@ fn labeled(label: &str, value: String) -> Line<'_> {
     ])
 }
 
+/// Render the trust verdict as a full-width banner row at the top of
+/// the info pane. (#632)
+///
+/// The banner is the eye's first stop — verdict is the security gate
+/// of the rescue path and must be unmistakable. Bold black text on a
+/// themed background fill spans the available content width with the
+/// label centered between bookend arrows.
+///
+/// Monochrome theme falls back gracefully: `verdict_color` is
+/// `Color::Reset`, which renders as a transparent bg, but the bold
+/// modifier + bookend arrows still give the row enough visual weight
+/// to function as a banner.
+fn verdict_banner_line(label: &str, verdict_color: Color, width: usize) -> Line<'_> {
+    // Compose " ▶ LABEL ◀ " then pad to width with spaces inside the
+    // styled span so the bg fill spans the full pane.
+    let core = format!(" ▶ {label} ◀ ");
+    let core_chars = core.chars().count();
+    let pad = width.saturating_sub(core_chars);
+    let body = format!("{core}{}", " ".repeat(pad));
+    Line::from(Span::styled(
+        body,
+        Style::default()
+            .bg(verdict_color)
+            .fg(Color::Black)
+            .add_modifier(Modifier::BOLD),
+    ))
+}
+
 fn filename_str(p: &std::path::Path) -> String {
     p.file_name().map_or_else(
         || p.display().to_string(),
@@ -1240,7 +1266,10 @@ fn hash_summary(iso: &iso_probe::DiscoveredIso) -> String {
             short_hex(expected),
             short_hex(actual)
         ),
-        H::NotPresent => "—  (no sibling .sha256)".to_string(),
+        // #633: "MISSING" reads as failure at a glance; the prior
+        // em-dash glyph could be misread as a checkmark/bullet under
+        // fbcon glyph fallback.
+        H::NotPresent => "MISSING (no sibling .sha256 found)".to_string(),
         H::Unreadable { reason, .. } => format!("unreadable: {reason}"),
     }
 }
@@ -1253,7 +1282,8 @@ fn signer_summary(iso: &iso_probe::DiscoveredIso) -> String {
         S::KeyNotTrusted { key_id } => format!("{key_id} (✗ not in AEGIS_TRUSTED_KEYS)"),
         S::Forged { .. } => "FORGED signature".to_string(),
         S::Error { reason } => format!("verification error: {reason}"),
-        S::NotPresent => "—  (no sibling .minisig)".to_string(),
+        // #633: see hash_summary for rationale.
+        S::NotPresent => "MISSING (no sibling .minisig found)".to_string(),
     }
 }
 
@@ -1295,18 +1325,24 @@ fn draw_confirm(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: u
     // Trust-tier verdict line. One of the 6 TrustVerdict variants
     // (#457 extends the original GREEN/YELLOW/RED/GRAY model to also
     // surface ParseFailed / SecureBootBlocked / HashMismatch).
+    //
+    // #632 promoted the verdict to a full-width banner — the Confirm
+    // screen is the operator's last stop before kexec, so the trust
+    // state must be the eye's first stop here too. Banner first, then
+    // a "Reason:" row when the verdict carries explanatory text.
     let verdict = trust_verdict(iso, state);
-    let verdict_line = Line::from(vec![
-        Span::styled("Verdict:  ", Style::default().add_modifier(Modifier::BOLD)),
-        Span::styled(
-            verdict.label(),
-            Style::default()
-                .fg(verdict.color(&state.theme))
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("  "),
-        Span::raw(verdict.reason()),
-    ]);
+    let confirm_width = usize::from(area.width).saturating_sub(2).max(20);
+    let verdict_line =
+        verdict_banner_line(verdict.label(), verdict.color(&state.theme), confirm_width);
+    let verdict_reason = verdict.reason();
+    let reason_line = if verdict_reason.is_empty() {
+        None
+    } else {
+        Some(Line::from(vec![
+            Span::styled("Reason:   ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(verdict_reason),
+        ]))
+    };
 
     // TPM PCR 12 measurement preview (#93). Shows exactly what bytes
     // will be extended into PCR 12 before kexec. Truncated to 16 hex
@@ -1328,6 +1364,9 @@ fn draw_confirm(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: u
     // from the ISO's own boot menu. One visual warning line — no
     // extra typed challenge.
     let mut lines: Vec<Line> = vec![verdict_line];
+    if let Some(line) = reason_line {
+        lines.push(line);
+    }
     // #602: audit-log write failure banner. Non-blocking — the verdict
     // and kexec-gate are unaffected; this just signals "the JSONL
     // proof for this verify did not persist," letting the operator
@@ -2025,13 +2064,35 @@ mod tests {
     fn list_screen_renders_info_pane_with_verdict() {
         // The info pane (right side of the 40/60 split) must surface
         // the currently-selected row's verdict label so the operator
-        // sees what tier they're about to act on.
+        // sees what tier they're about to act on. Since #632 the
+        // verdict is rendered as a full-width banner — assert the
+        // bookend arrow + label are present rather than the prior
+        // "Verdict:" inline-token text.
         let iso = fake_iso("ubuntu-live");
         let state = AppState::new(vec![iso]);
         let s = render_to_string(&state);
-        assert!(s.contains("Verdict:"));
         // fake_iso has no sidecar/sig → tier 2 (BareUnverified).
         assert!(s.contains("UNVERIFIED"), "expected Tier 2 label in: {s}");
+        assert!(
+            s.contains("▶ UNVERIFIED ◀"),
+            "expected #632 verdict banner with bookend arrows in: {s}"
+        );
+    }
+
+    #[test]
+    fn missing_sibling_renders_as_word_token_not_glyph() {
+        // #633: reading "—" as a checkmark/bullet is a real risk on
+        // fbcon glyph fallback. Sibling-missing must read as failure
+        // at a glance; the explicit "MISSING" word token does that.
+        let iso = fake_iso("ubuntu-live");
+        let state = AppState::new(vec![iso]);
+        let s = render_to_string(&state);
+        assert!(
+            s.contains("MISSING"),
+            "expected MISSING word token (not a glyph) in: {s}"
+        );
+        // The explanatory parenthetical must still trail the token.
+        assert!(s.contains("no sibling .sha256 found"));
     }
 
     #[test]
@@ -2400,7 +2461,16 @@ mod tests {
         let mut state = AppState::new(vec![fake_iso("debian")]);
         state.confirm_selection();
         let s = render_to_string(&state);
-        for needle in &["Verdict", "casper/vmlinuz", "boot=casper", "GiB"] {
+        // Verdict banner (#632) replaces the "Verdict: ..." inline text;
+        // assert the bookend-arrow form. Reason text + the rest of the
+        // confirm-screen metadata stays.
+        for needle in &[
+            "▶ UNVERIFIED ◀",
+            "Reason:",
+            "casper/vmlinuz",
+            "boot=casper",
+            "GiB",
+        ] {
             assert!(s.contains(needle), "Confirm screen missing {needle}: {s}");
         }
     }
