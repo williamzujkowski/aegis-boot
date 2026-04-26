@@ -8,7 +8,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Gauge, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Wrap},
 };
 
 use crate::keybindings::{self, ScreenKind};
@@ -474,6 +474,9 @@ fn draw_help_overlay(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         )),
     ];
     let block = Block::default().borders(Borders::ALL).title(" Help (#85) ");
+    // Clear underlying buffer cells before rendering the overlay so blank
+    // lines in the help body don't reveal info-pane text underneath. (#629)
+    frame.render_widget(Clear, panel);
     frame.render_widget(
         Paragraph::new(lines)
             .block(block)
@@ -502,6 +505,8 @@ fn draw_confirm_quit_overlay(frame: &mut Frame<'_>, area: Rect, state: &AppState
         )),
     ];
     let block = Block::default().borders(Borders::ALL).title(" Confirm ");
+    // Clear underlying buffer before rendering — see #629.
+    frame.render_widget(Clear, panel);
     frame.render_widget(
         Paragraph::new(lines)
             .block(block)
@@ -542,6 +547,8 @@ fn draw_blocked_toast_overlay(frame: &mut Frame<'_>, area: Rect, state: &AppStat
         )),
     ];
     let block = Block::default().borders(Borders::ALL).title(" Blocked ");
+    // Clear underlying buffer before rendering — see #629.
+    frame.render_widget(Clear, panel);
     frame.render_widget(
         Paragraph::new(lines)
             .block(block)
@@ -557,7 +564,7 @@ fn draw_blocked_toast_overlay(frame: &mut Frame<'_>, area: Rect, state: &AppStat
 /// `[ Consent required ]` title) so the operator reads it as
 /// "decision needed" rather than "boot refused."
 fn draw_consent_overlay(frame: &mut Frame<'_>, area: Rect, state: &AppState, kind: ConsentKind) {
-    use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+    use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
     let prose = kind.prose();
     let title = kind.title();
@@ -594,6 +601,8 @@ fn draw_consent_overlay(frame: &mut Frame<'_>, area: Rect, state: &AppState, kin
     let block = Block::default()
         .borders(Borders::ALL)
         .title(format!(" {title} "));
+    // Clear underlying buffer before rendering — see #629.
+    frame.render_widget(Clear, panel);
     frame.render_widget(
         Paragraph::new(lines)
             .block(block)
@@ -2421,6 +2430,34 @@ mod tests {
         state.open_help();
         let s = render_to_string(&state);
         assert!(s.contains("Keybindings") || s.contains("Help"));
+    }
+
+    #[test]
+    fn render_help_overlay_clears_underlying_info_pane_text() {
+        // #629: the help overlay must opaquely cover the dual-pane base.
+        // Without the Clear widget, ratatui's Paragraph leaves cells
+        // untouched on blank `Line::from("")` rows, and info-pane fields
+        // ("Cmdline", "Initrd", etc.) bleed through.
+        //
+        // Strategy: render with one ISO whose info pane carries a marker
+        // string that's NOT present in the help body. Open help, render,
+        // grep the buffer dump. The marker must be absent.
+        const MARKER: &str = "BLEED_PROBE_XYZZY";
+        let mut iso = fake_iso("a");
+        // Plant the marker in an info-pane field — `cmdline` lands in
+        // the right pane on the List screen.
+        iso.cmdline = Some(MARKER.to_string());
+        let mut state = AppState::new(vec![iso]);
+        state.open_help();
+        let s = render_to_string(&state);
+        assert!(
+            s.contains("Keybindings"),
+            "help overlay didn't render — sanity check failed"
+        );
+        assert!(
+            !s.contains(MARKER),
+            "help overlay leaked info-pane text underneath: marker {MARKER:?} found in render"
+        );
     }
 
     #[test]
