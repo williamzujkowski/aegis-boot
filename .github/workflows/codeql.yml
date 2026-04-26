@@ -67,8 +67,7 @@ jobs:
       # same tree the release binary is built from.
       - name: Install Rust
         if: matrix.language == 'rust'
-        run: rustup toolchain install 1.95.0 --profile minimal && rustup override set 1.95.0
-
+        run: rustup show
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
         if: matrix.language == 'rust'
 

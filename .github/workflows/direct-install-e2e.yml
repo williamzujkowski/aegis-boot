@@ -48,12 +48,8 @@ jobs:
           sudo chmod 0644 /boot/vmlinuz-* /boot/initrd.img-* 2>/dev/null || true
           ls -l /boot/vmlinuz-* /boot/initrd.img-*
 
-      - name: Install Rust toolchain (pinned)
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain 1.95.0 --profile minimal
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: rustup show
       - name: Build aegis-boot CLI + rescue-tui
         env:
           SOURCE_DATE_EPOCH: "1700000000"

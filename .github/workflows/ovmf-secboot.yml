@@ -58,12 +58,8 @@ jobs:
           # Kernels under /boot are typically 0600; SB E2E needs them readable.
           sudo chmod 0644 /boot/vmlinuz-*-generic /boot/initrd.img-*-generic || true
 
-      - name: Install Rust toolchain (pinned)
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain 1.95.0 --profile minimal
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: rustup show
       - name: Build rescue-tui (release)
         env:
           SOURCE_DATE_EPOCH: "1700000000"

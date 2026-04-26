@@ -78,12 +78,11 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
-      - name: Install Rust (MSRV pinned — matches Linux CI)
-        # Match the exact MSRV the rest of CI pins to so a Windows
-        # pass here means Linux will agree on the toolchain surface.
-        run: |
-          rustup toolchain install 1.95.0 --profile minimal --component clippy
-          rustup default 1.95.0
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        # Toolchain version + components come from rust-toolchain.toml
+        # so Windows agrees with Linux on the toolchain surface
+        # without duplicating the version pin here.
+        run: rustup show
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
         with:

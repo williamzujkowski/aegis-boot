@@ -88,12 +88,10 @@ jobs:
           sudo chmod 0644 /boot/vmlinuz-* /boot/initrd.img-* 2>/dev/null || true
           ls -l /boot/vmlinuz-* /boot/initrd.img-*
 
-      - name: Install Rust toolchain (pinned) + musl target
+      - name: Install Rust toolchain (from rust-toolchain.toml) + musl target
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain 1.95.0 --profile minimal
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          "$HOME/.cargo/bin/rustup" target add x86_64-unknown-linux-musl
+          rustup show
+          rustup target add x86_64-unknown-linux-musl
 
       - name: Install cosign
         uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac  # v3
@@ -373,15 +371,13 @@ jobs:
             echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Install Rust toolchain (pinned)
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        # macos-14 runners are arm64-native, so aarch64-apple-darwin
+        # is installed by the rustup bootstrap above. No `rustup target
+        # add` needed — verify the host matches our release target.
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain 1.95.0 --profile minimal
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          # macos-14 runners are arm64-native, so aarch64-apple-darwin
-          # is installed by the rustup bootstrap above. No `rustup target
-          # add` needed — verify the host matches our release target.
-          "$HOME/.cargo/bin/rustc" -vV | grep '^host: aarch64-apple-darwin$'
+          rustup show
+          rustc -vV | grep '^host: aarch64-apple-darwin$'
 
       - name: Install cosign
         uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac  # v3

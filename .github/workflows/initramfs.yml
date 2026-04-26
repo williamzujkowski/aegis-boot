@@ -22,12 +22,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends busybox-static cpio
 
-      - name: Install Rust toolchain (pinned)
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain 1.95.0 --profile minimal
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: rustup show
       - name: Build rescue-tui (release)
         run: cargo build --release -p rescue-tui
 
