@@ -1,10 +1,24 @@
 # rescue-tui visual previews
 
-Terminal-ready ANSI dumps of the new dual-pane rescue-tui (epic #455)
-rendered from in-code fixtures. Regenerate with:
+Two complementary previews live here:
+
+1. **ANSI dumps** (`rescue-tui-preview.ansi`) — fast, deterministic,
+   rendered from in-code fixtures via the `tui-screenshots` binary.
+   Covers all tier states (#477).
+2. **Real-VM PNGs** (`*.png`) — captured from a real boot under
+   QEMU+OVMF SecureBoot via `scripts/capture-tui-screenshots.sh`
+   (#478). Proves the on-VM render matches intent.
+
+Regenerate ANSI dumps with:
 
 ```bash
 cargo run -p rescue-tui --bin tui-screenshots > docs/screenshots/rescue-tui-preview.ansi
+```
+
+Regenerate PNGs with (~5 min, needs sudo for kernel-read + losetup):
+
+```bash
+scripts/capture-tui-screenshots.sh -d ./test-isos
 ```
 
 ## Viewing
@@ -43,15 +57,36 @@ Install `aha`: `sudo apt install aha` (or `brew install aha` on macOS).
 | `09-confirm-screen` | Confirm screen with one-frame evidence for the selected ISO. |
 | `10-trust-challenge` | Typed-confirmation challenge for tier 2/3 boots. |
 
-## Why ANSI files, not PNG
+## PNG scenarios (real-VM capture)
 
-Bin-only, no image dependencies. The fixtures are deterministic
+PNGs are produced by booting the aegis-boot stick image under
+QEMU+OVMF SecureBoot, driving rescue-tui via QMP `send-key`, and
+dumping the VNC framebuffer. Each PNG ~6-15 KB.
+
+| Slug | What it shows |
+| ---- | ------------- |
+| `01-list-default` | Initial list view, default sort: name. |
+| `02-list-sort-cycled` | After `s` — sort cycled to size↓. |
+| `03-confirm` | Confirm-kexec view for the first ISO (GRAY verdict for unsigned). |
+| `04-help` | `?` help overlay — full keybindings reference. |
+| `05-filter-empty` | After `/` — filter input opened, list still full. |
+| `06-filter-typed` | After typing `ub` — list narrowed to "Ubuntu" matches. |
+| `07-second-iso-selected` | After `↓` — second ISO highlighted. |
+
+See `scripts/capture-tui-screenshots.sh` for the full pipeline +
+`docs/screenshots/README.md` for the per-scenario details.
+
+## Why both ANSI and PNG
+
+ANSI dumps are bin-only, no image dependencies, and deterministic
 (no live filesystem / TPM / Secure-Boot reads), so a reviewer gets
-byte-identical output regardless of host. For real-hardware
-screenshots (stick booted in QEMU + OVMF), see
-[LOCAL_TESTING.md](../LOCAL_TESTING.md#iterating-on-specific-tests)
-and the `scripts/qemu-loaded-stick.sh` path — that route requires
-building the initramfs and flashing a stick or image (~10 min).
+byte-identical output regardless of host. They cover all tier states
+including synthetic-only ones (parse-failed, SB-blocked Windows,
+hash mismatch).
+
+PNGs prove that the same code path renders identically on a real
+boot — they're the real-hardware oracle. They're limited to scenarios
+reachable from arbitrary ISO inputs.
 
 ## Updating
 

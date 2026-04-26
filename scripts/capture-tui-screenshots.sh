@@ -59,12 +59,12 @@ Usage: $0 [options]
 
 Captures these scenarios as PNGs:
   01-list-default            initial rescue-tui list view
-  02-list-info-focused       after Tab — info pane focused
-  03-confirm                 after Enter on first ISO
+  02-list-sort-cycled        after s — sort changes from name → size
+  03-confirm                 after Enter on first ISO — Confirm kexec view
   04-help                    after ? — help overlay
   05-filter-empty            after / — filter input opened
   06-filter-typed            after typing 'ub' — filter narrowing
-  07-second-iso-info         after Down + Tab — different ISO selected, info shown
+  07-second-iso-selected     after Down — second ISO highlighted
 USAGE
 }
 
@@ -116,6 +116,12 @@ fi
 log "stick size: ${SIZE_MB} MiB"
 
 # --- Build the base image via mkusb.sh ---------------------------------
+# IMPORTANT: do NOT pass MKUSB_GRUB_DEFAULT=1 here. That env var picks
+# the serial-primary GRUB entry, which puts /init's stderr (and the
+# rescue-tui's render output) on ttyS0. We're capturing the VNC display,
+# so we want entry 0 (default) which leaves the TUI on tty0 = the VNC
+# framebuffer. Mkusb's CI/E2E scripts use serial-primary because they
+# run -nographic; this capture script wants the opposite. (#478)
 log "building base image via scripts/mkusb.sh (sudo may prompt for kernel read)"
 DISK_SIZE_MB="$SIZE_MB" "$ROOT_DIR/scripts/mkusb.sh"
 IMG="$ROOT_DIR/out/aegis-boot.img"
@@ -200,26 +206,34 @@ qemu-system-x86_64 \
 QEMU_PID=$!
 log "QEMU pid: $QEMU_PID"
 
-# --- Wait for rescue-tui ready signal on serial -----------------------
-# rescue-tui prints `aegis-boot rescue-tui starting` to stderr at startup;
-# `-serial file:` captures stderr from /init's exec. Poll for that line
-# before driving keystrokes — typing into a not-yet-ready TUI is a
-# silent flake source.
-log "waiting for rescue-tui ready signal (up to 180s)..."
-for i in $(seq 1 90); do
-    if [[ -f "$SERIAL_LOG" ]] && grep -q "aegis-boot rescue-tui starting" "$SERIAL_LOG" 2>/dev/null; then
-        log "rescue-tui ready (took ~${i}*2s)"
+# --- Wait for kernel ready signal on serial ---------------------------
+# Tricky bit: with the default GRUB entry (entry 0), the kernel cmdline
+# is `console=ttyS0 console=tty0` so the LAST console (= tty0) wins for
+# /init's stderr. That means rescue-tui's own `aegis-boot rescue-tui
+# starting` line goes to tty0 (= VNC framebuffer), NOT ttyS0 = serial.
+# We can't poll for that.
+#
+# What DOES land on serial: the kernel's own boot messages (the kernel
+# writes to BOTH consoles in the cmdline). The "EFI stub: UEFI Secure
+# Boot is enabled." line is consistently the last EFI stub message
+# before the kernel jumps into init. Wait for it, then add a generous
+# grace period for /init script + rescue-tui startup. Total < 30s on
+# this machine. (#478)
+log "waiting for kernel boot signal on serial (up to 60s)..."
+KERNEL_READY_RE='EFI stub: UEFI Secure Boot is enabled'
+for i in $(seq 1 30); do
+    if [[ -f "$SERIAL_LOG" ]] && grep -q "$KERNEL_READY_RE" "$SERIAL_LOG" 2>/dev/null; then
+        log "kernel up (took ~${i}*2s); waiting 8s for /init + rescue-tui startup"
+        sleep 8
         break
     fi
     sleep 2
-    if (( i == 90 )); then
-        warn "rescue-tui ready signal not seen in 180s — capturing whatever's on screen anyway"
+    if (( i == 30 )); then
+        warn "kernel ready signal not seen in 60s — capturing whatever's on screen anyway"
         log "serial tail:"
         tail -40 "$SERIAL_LOG" 2>/dev/null >&2 || true
     fi
 done
-# Extra settle so the first frame is fully painted.
-sleep 3
 
 # --- QMP driver (Python) ----------------------------------------------
 # Single Python helper drives the whole capture sequence. Speaking JSON
@@ -290,12 +304,18 @@ SCENARIOS = [
     # keys have been processed. Reset back to list with `esc` between
     # disjoint sequences.
     ("01-list-default", [], 1.0),
-    ("02-list-info-focused", ["tab"], 0.8),
-    ("03-confirm", ["tab", "ret"], 1.5),  # tab to restore list-pane focus, then Enter
-    ("04-help", ["esc", "shift-slash"], 1.0),  # esc back to list, ? for help
+    # `s` cycles sort: name → size → distro. The info bar's "sort:"
+    # label changes (visible delta), unlike `tab` which only flips
+    # which pane border is highlighted (visually subtle at typical
+    # console resolution). (#478)
+    ("02-list-sort-cycled", ["s"], 0.8),
+    ("03-confirm", ["ret"], 1.5),  # Enter on list opens Confirm screen
+    # `?` = shift+/. QEMU's qcode list has no "shift-slash" — combos
+    # are sent as a list of qcodes pressed simultaneously. (#478)
+    ("04-help", ["esc", ["shift", "slash"]], 1.0),  # esc back to list, ? for help
     ("05-filter-empty", ["esc", "slash"], 0.8),  # esc closes help, / opens filter
     ("06-filter-typed", ["u", "b"], 0.8),
-    ("07-second-iso-info", ["esc", "esc", "down", "tab"], 1.0),  # clear filter, down, focus info
+    ("07-second-iso-selected", ["esc", "esc", "down"], 1.0),  # clear filter, move down
 ]
 
 q = Qmp(QMP_SOCK)
