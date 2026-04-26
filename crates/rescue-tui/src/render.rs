@@ -1081,6 +1081,15 @@ fn info_pane_iso_lines<'a>(
         },
     ));
 
+    // Operator-curated sidecar metadata (#246). The `<iso>.aegis.toml`
+    // sidecar carries fields that ONLY the operator who staged the
+    // stick knows: a friendlier display name, hardware-persona
+    // last-verified hints, free-text notes about firmware quirks.
+    // When present they're high-signal pre-boot context — render
+    // them inline so operators see them on the list-screen info pane
+    // without diving into the toml file.
+    extend_with_sidecar_lines(&mut lines, iso, content_width);
+
     // Tier-specific note. For tier-4/5/6 (which can be reached here if
     // a tier-6 hash mismatch is detected on an otherwise-parseable
     // ISO), render a wrapped reason block.
@@ -1288,6 +1297,54 @@ fn verdict_banner_line(label: &str, verdict_color: Color, width: usize) -> Line<
             .fg(Color::Black)
             .add_modifier(Modifier::BOLD),
     ))
+}
+
+/// Append a "Sidecar" section to the info pane when the selected
+/// ISO has operator-curated metadata in `<iso>.aegis.toml` (#246).
+/// Renders only the populated fields — empty sidecars produce no
+/// output (so the info pane stays compact for un-curated ISOs).
+///
+/// Order chosen to surface highest-signal-first:
+/// `description` (1 line of context) → `category` →
+/// `last_verified_at` (date) → `last_verified_on` (hardware persona)
+/// → `notes` (free text, soft-wrapped to content width). The
+/// `display_name` is intentionally excluded because it's already
+/// used as the list-row label upstream.
+fn extend_with_sidecar_lines(
+    lines: &mut Vec<Line<'_>>,
+    iso: &iso_probe::DiscoveredIso,
+    content_width: usize,
+) {
+    let Some(sidecar) = iso.sidecar.as_ref() else {
+        return;
+    };
+    if sidecar.is_empty() {
+        return;
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Sidecar:",
+        Style::default().add_modifier(Modifier::BOLD),
+    )));
+    if let Some(desc) = sidecar.description.as_ref() {
+        extend_wrapped(lines, desc, content_width);
+    }
+    if let Some(category) = sidecar.category.as_ref() {
+        lines.push(labeled("  Category:    ", category.clone()));
+    }
+    if let Some(date) = sidecar.last_verified_at.as_ref() {
+        lines.push(labeled("  Last boot:   ", date.clone()));
+    }
+    if let Some(host) = sidecar.last_verified_on.as_ref() {
+        lines.push(labeled("  Tested on:   ", host.clone()));
+    }
+    if let Some(notes) = sidecar.notes.as_ref() {
+        lines.push(Line::from(Span::styled(
+            "  Notes:",
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+        extend_wrapped(lines, notes, content_width);
+    }
 }
 
 fn filename_str(p: &std::path::Path) -> String {
@@ -2250,6 +2307,47 @@ mod tests {
         for (name, want) in cases {
             assert_eq!(variant_from_iso_filename(Path::new(name)), want, "{name}");
         }
+    }
+
+    #[test]
+    fn info_pane_renders_sidecar_when_present() {
+        // #246: operator-curated metadata in <iso>.aegis.toml carries
+        // high-signal context (last-verified-on, notes about firmware
+        // quirks). When the sidecar is populated, info pane must
+        // surface its fields inline; when absent, no Sidecar header.
+        let mut iso = fake_iso("ubuntu");
+        iso.iso_path =
+            std::path::PathBuf::from("/run/media/aegis-isos/ubuntu-24.04.2-live-server-amd64.iso");
+        iso.sidecar = Some(iso_probe::IsoSidecar {
+            display_name: Some("Ubuntu 24.04 Live Server".to_string()),
+            description: Some("Verified bootable on Framework Laptop 13".to_string()),
+            version: None,
+            category: Some("install".to_string()),
+            last_verified_at: Some("2026-04-26".to_string()),
+            last_verified_on: Some("framework-13-amd-12gen".to_string()),
+            notes: Some("Wifi card needs the iwlwifi-non-free firmware".to_string()),
+        });
+        let state = AppState::new(vec![iso]);
+        let s = render_to_string(&state);
+        assert!(s.contains("Sidecar:"), "expected Sidecar header: {s}");
+        assert!(s.contains("Verified bootable on Framework"));
+        assert!(s.contains("install"));
+        assert!(s.contains("2026-04-26"));
+        assert!(s.contains("framework-13-amd-12gen"));
+        assert!(s.contains("iwlwifi-non-free"));
+    }
+
+    #[test]
+    fn info_pane_omits_sidecar_section_when_empty() {
+        // No sidecar at all → no Sidecar header. fake_iso() leaves
+        // sidecar as None.
+        let iso = fake_iso("ubuntu");
+        let state = AppState::new(vec![iso]);
+        let s = render_to_string(&state);
+        assert!(
+            !s.contains("Sidecar:"),
+            "no sidecar present, header should not render: {s}",
+        );
     }
 
     #[test]
