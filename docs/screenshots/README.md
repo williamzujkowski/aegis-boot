@@ -61,17 +61,17 @@ Install `aha`: `sudo apt install aha` (or `brew install aha` on macOS).
 
 PNGs are produced by booting the aegis-boot stick image under
 QEMU+OVMF SecureBoot, driving rescue-tui via QMP `send-key`, and
-dumping the VNC framebuffer. Each PNG ~6-15 KB.
+dumping the VNC framebuffer. Each PNG ~11-18 KB.
 
 | Slug | What it shows |
 | ---- | ------------- |
-| `01-list-default` | Initial list view, default sort: name. |
-| `02-list-sort-cycled` | After `s` — sort cycled to size↓. |
-| `03-confirm` | Confirm-kexec view for the first ISO (GRAY verdict for unsigned). |
-| `04-help` | `?` help overlay — full keybindings reference. |
-| `05-filter-empty` | After `/` — filter input opened, list still full. |
+| `01-list-default` | Initial dual-pane view + populated info pane (default sort: name). |
+| `02-list-sort-cycled` | After `s` — sort cycles to size↓; list reorders, info pane follows. |
+| `03-confirm` | Confirm-kexec view; UNVERIFIED verdict + installer disk-erase warning. |
+| `04-help` | `?` help overlay rendered over the dual-pane base. |
+| `05-filter-empty` | After `/` — filter input opened, info pane intact. |
 | `06-filter-typed` | After typing `ub` — list narrowed to "Ubuntu" matches. |
-| `07-second-iso-selected` | After `↓` — second ISO highlighted. |
+| `07-second-iso-selected` | After `↓` — second ISO highlighted, info pane updated. |
 
 See `scripts/capture-tui-screenshots.sh` for the full pipeline +
 `docs/screenshots/README.md` for the per-scenario details.

@@ -115,6 +115,19 @@ if [[ -z "$SIZE_MB" ]]; then
 fi
 log "stick size: ${SIZE_MB} MiB"
 
+# --- Rebuild rescue-tui + initramfs --------------------------------------
+# build-initramfs.sh assembles target/release/rescue-tui into
+# out/initramfs.cpio.gz, but neither it nor mkusb.sh rebuild rescue-tui
+# itself. Without these two explicit steps a stale binary from an
+# earlier checkout silently ships into the image — the captured PNGs
+# then reflect that old source. Both are deterministic under
+# SOURCE_DATE_EPOCH so re-running on an unchanged tree is a no-op.
+# (#478)
+log "ensuring target/release/rescue-tui is up to date with current source"
+SOURCE_DATE_EPOCH=1700000000 cargo build --release -p rescue-tui
+log "rebuilding out/initramfs.cpio.gz so it embeds the fresh rescue-tui"
+SOURCE_DATE_EPOCH=1700000000 "$ROOT_DIR/scripts/build-initramfs.sh"
+
 # --- Build the base image via mkusb.sh ---------------------------------
 # IMPORTANT: do NOT pass MKUSB_GRUB_DEFAULT=1 here. That env var picks
 # the serial-primary GRUB entry, which puts /init's stderr (and the
@@ -213,18 +226,27 @@ log "QEMU pid: $QEMU_PID"
 # starting` line goes to tty0 (= VNC framebuffer), NOT ttyS0 = serial.
 # We can't poll for that.
 #
-# What DOES land on serial: the kernel's own boot messages (the kernel
-# writes to BOTH consoles in the cmdline). The "EFI stub: UEFI Secure
-# Boot is enabled." line is consistently the last EFI stub message
-# before the kernel jumps into init. Wait for it, then add a generous
-# grace period for /init script + rescue-tui startup. Total < 30s on
-# this machine. (#478)
+# What DOES land on serial: the kernel's own boot messages. The
+# "EFI stub: UEFI Secure Boot is enabled." line is the last reliable
+# EFI stub print before the kernel jumps into init. After that, the
+# stick uses loglevel=4 so most kernel messages are suppressed AND
+# /init's `echo` writes to /dev/console = the last `console=` (tty0
+# under entry 0), so /init prints don't reach serial either.
+#
+# That means once we see EFI stub, we have no further serial signal
+# to wait on — we just have to wait long enough for /init to mount,
+# modprobe, and exec rescue-tui. Empirically this is ~5-15s on this
+# machine; we wait 20s to keep margin under load. The cost of waiting
+# too long is a few extra seconds; the cost of waiting too short is
+# capturing /init's "loading storage modules" output instead of the
+# TUI (silent flake). (#478)
 log "waiting for kernel boot signal on serial (up to 60s)..."
 KERNEL_READY_RE='EFI stub: UEFI Secure Boot is enabled'
+TUI_STARTUP_GRACE_SECONDS=20
 for i in $(seq 1 30); do
     if [[ -f "$SERIAL_LOG" ]] && grep -q "$KERNEL_READY_RE" "$SERIAL_LOG" 2>/dev/null; then
-        log "kernel up (took ~${i}*2s); waiting 8s for /init + rescue-tui startup"
-        sleep 8
+        log "kernel up (took ~${i}*2s); waiting ${TUI_STARTUP_GRACE_SECONDS}s for /init + rescue-tui startup"
+        sleep "$TUI_STARTUP_GRACE_SECONDS"
         break
     fi
     sleep 2
