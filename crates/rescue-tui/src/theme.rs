@@ -23,9 +23,34 @@ pub struct Theme {
 }
 
 impl Theme {
-    /// Default 16-color palette suitable for most VT100-class consoles.
+    /// Default theme — Material Design Colors palette mapped to verdict
+    /// slots. Saturated variants chosen for WCAG AA on the dark
+    /// background (success ~13:1, warning ~14:1, error ~5.5:1) and
+    /// distinct under deuteranopia/protanopia. (Sourced from
+    /// williamzujkowski/oklch-terminal-themes — material-design-colors.)
     #[must_use]
     pub const fn default_theme() -> Self {
+        Self::material_design()
+    }
+
+    /// Material Design Colors palette — saturated tier mapped to verdict
+    /// slots. Bright tier (#adf7be / #fee16c / #fc746d) reserved for
+    /// future selection / hover slots if the Theme struct expands.
+    #[must_use]
+    pub const fn material_design() -> Self {
+        Self {
+            success: Color::Rgb(0x5C, 0xF1, 0x9E), // #5cf19e
+            warning: Color::Rgb(0xFE, 0xD0, 0x32), // #fed032
+            error: Color::Rgb(0xFC, 0x38, 0x41),   // #fc3841
+        }
+    }
+
+    /// Legacy basic-ANSI palette — `Color::Green`/`Yellow`/`Red`. The original
+    /// rescue-tui default; kept for serial consoles whose ANSI-256/RGB
+    /// support is unreliable, and for operators who explicitly prefer
+    /// the terminal's own palette over the Material Design hex values.
+    #[must_use]
+    pub const fn ansi() -> Self {
         Self {
             success: Color::Green,
             warning: Color::Yellow,
@@ -91,6 +116,8 @@ impl Theme {
             "high-contrast" | "high_contrast" | "hc" => Self::high_contrast(),
             "okabe-ito" | "okabe_ito" | "okabeito" | "cb" | "colorblind" => Self::okabe_ito(),
             "aegis" | "brand" => Self::aegis(),
+            "material-design" | "material_design" | "material" | "md" => Self::material_design(),
+            "ansi" | "basic" => Self::ansi(),
             _ => Self::default_theme(),
         }
     }
@@ -107,8 +134,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_uses_standard_ansi_colors() {
+    fn default_is_material_design_palette() {
+        // Default switched from basic ANSI Color::{Green,Yellow,Red} to
+        // Material Design hex values for higher contrast on the dark
+        // rescue background. Basic ANSI is still available as
+        // Theme::ansi() / from_name("ansi").
         let t = Theme::default_theme();
+        assert_eq!(t, Theme::material_design());
+        assert_eq!(t.success, Color::Rgb(0x5C, 0xF1, 0x9E));
+        assert_eq!(t.warning, Color::Rgb(0xFE, 0xD0, 0x32));
+        assert_eq!(t.error, Color::Rgb(0xFC, 0x38, 0x41));
+    }
+
+    #[test]
+    fn ansi_theme_uses_basic_ansi_colors() {
+        let t = Theme::ansi();
         assert_eq!(t.success, Color::Green);
         assert_eq!(t.warning, Color::Yellow);
         assert_eq!(t.error, Color::Red);
@@ -165,5 +205,21 @@ mod tests {
         assert_eq!(Theme::from_name(""), Theme::default_theme());
         assert_eq!(Theme::from_name("solarized-dark"), Theme::default_theme());
         assert_eq!(Theme::from_name("xyzzy"), Theme::default_theme());
+    }
+
+    #[test]
+    fn from_name_resolves_material_design_aliases() {
+        assert_eq!(
+            Theme::from_name("material-design"),
+            Theme::material_design()
+        );
+        assert_eq!(
+            Theme::from_name("material_design"),
+            Theme::material_design()
+        );
+        assert_eq!(Theme::from_name("material"), Theme::material_design());
+        assert_eq!(Theme::from_name("MD"), Theme::material_design());
+        assert_eq!(Theme::from_name("ansi"), Theme::ansi());
+        assert_eq!(Theme::from_name("BASIC"), Theme::ansi());
     }
 }
