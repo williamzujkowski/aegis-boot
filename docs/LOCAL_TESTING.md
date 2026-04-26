@@ -165,6 +165,19 @@ source dir, and boots under OVMF SecBoot. Image size auto-scales to
 
 All three modes were verified end-to-end starting in v0.7.0 with Alpine 3.20 (4 ISO entries discovered); v0.12.0 added real-hardware shakedown via USB-passthrough on a SanDisk Cruzer 32 GB stick (Alpine refusal + Ubuntu boot, [#109](https://github.com/aegis-boot/aegis-boot/issues/109)).
 
+### Capturing TUI screenshots from the VM
+
+For maintainers refreshing `docs/screenshots/*.png`:
+
+```bash
+./scripts/capture-tui-screenshots.sh -d ./test-isos        # ~5 min
+./scripts/capture-tui-screenshots.sh -d ./test-isos --keep # keep image for re-runs
+```
+
+Boots aegis-boot under QEMU+OVMF SecureBoot, drives `rescue-tui` via QMP `send-key`, and dumps each scripted screen as a PNG via QMP `screendump` + ImageMagick. The 7 captured scenarios cover the list, sort, confirm, help, filter, and selection flows. See `scripts/capture-tui-screenshots.sh --help` for the full list. ([#478](https://github.com/aegis-boot/aegis-boot/issues/478))
+
+`tui-screenshots` (the ANSI-only fixture binary, [#477](https://github.com/aegis-boot/aegis-boot/issues/477)) covers synthetic-only states (parse-failed, SB-blocked Windows, hash mismatch); the VM capture covers boot-chain-validated states.
+
 ### Manual, if you want to inspect the partition
 
 ```bash
