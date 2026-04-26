@@ -457,7 +457,9 @@ fn draw_help_overlay(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         Line::from("   [!] tampered/forged  [X] not kexec-bootable"),
         Line::from(""),
         Line::from(" Themes (AEGIS_THEME env var)"),
-        Line::from("   default · monochrome · high-contrast · okabe-ito · aegis"),
+        Line::from(
+            "   default (material-design) · ansi · monochrome · high-contrast · okabe-ito · aegis",
+        ),
         Line::from(""),
         Line::from(" Emergency escape hatches (kernel SysRq)"),
         Line::from("   REISUB = safe forced reboot; hit each slowly, in order."),
