@@ -1,0 +1,92 @@
+name: TUI screenshots (VM capture)
+
+on:
+  workflow_dispatch:
+    inputs:
+      keep_artifacts:
+        description: "Also upload the built image + serial log (debug runs)"
+        type: boolean
+        default: false
+
+# #478 — runs scripts/capture-tui-screenshots.sh inside CI to produce
+# real-VM PNGs of rescue-tui screens. Gated behind workflow_dispatch
+# (not per-PR) because a full capture takes ~5 min and burns a runner
+# slot. Maintainers trigger it on demand to refresh docs/screenshots/.
+#
+# CI cannot ship the actual distro ISOs (license + size), so the run
+# captures the empty-list state of the TUI. To get the full scenario
+# set, a maintainer runs the script locally against ./test-isos.
+
+jobs:
+  capture:
+    name: capture rescue-tui screens from VM
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
+
+      - name: Install signed boot chain + image tooling + capture deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 ovmf \
+            shim-signed grub-efi-amd64-signed linux-image-virtual \
+            mtools dosfstools exfatprogs gdisk \
+            busybox-static cpio \
+            imagemagick python3
+          sudo chmod 0644 /boot/vmlinuz-* /boot/initrd.img-* 2>/dev/null || true
+
+      - name: Install Rust toolchain (pinned)
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain 1.88.0 --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Build rescue-tui
+        env:
+          SOURCE_DATE_EPOCH: "1700000000"
+        run: cargo build --release -p rescue-tui
+
+      - name: Build initramfs
+        env:
+          SOURCE_DATE_EPOCH: "1700000000"
+        run: ./scripts/build-initramfs.sh
+
+      - name: Run capture pipeline
+        env:
+          # mkusb.sh selects serial-primary so the rescue-tui ready
+          # banner reaches the serial log the capture script polls.
+          MKUSB_GRUB_DEFAULT: "1"
+        run: |
+          mkdir -p test-isos
+          ./scripts/capture-tui-screenshots.sh -d test-isos
+
+      - name: Show captured screenshot inventory
+        if: always()
+        run: |
+          if [ -d docs/screenshots ]; then
+            ls -lh docs/screenshots/*.png 2>/dev/null || echo "(no PNGs produced)"
+          fi
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
+        with:
+          name: tui-screenshots
+          path: docs/screenshots/*.png
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Upload debug artifacts
+        if: always() && inputs.keep_artifacts
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
+        with:
+          name: tui-screenshots-debug
+          path: |
+            out/aegis-boot.img
+            out/aegis-boot.img.sha256
+          retention-days: 7
+          if-no-files-found: warn
