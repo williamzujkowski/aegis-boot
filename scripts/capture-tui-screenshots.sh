@@ -39,6 +39,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ISO_DIR="$ROOT_DIR/test-isos"
 OUT_DIR="$ROOT_DIR/docs/screenshots"
 KEEP=0
+SKIP_BUILD=0
 SIZE_MB=""
 VNC_PORT="9"   # VNC display :N → TCP port 5900+N
 QMP_SOCK=""    # set in setup
@@ -55,6 +56,10 @@ Usage: $0 [options]
   -o, --out DIR       output dir for PNGs (default: docs/screenshots)
   -s, --size MB       stick image size in MiB (default: auto)
   -k, --keep          keep the built image + working dir after exit
+      --skip-build    reuse out/aegis-boot.img + out/initramfs.cpio.gz from a
+                      prior --keep run; skips cargo build + mkusb. Useful for
+                      iterating on scenario keys/timings without rebuilding
+                      the 1-2 GiB image (saves ~2 minutes per iteration). (#626)
   -h, --help          this message
 
 Captures these scenarios as PNGs:
@@ -74,6 +79,7 @@ while (( $# > 0 )); do
         -o|--out)      OUT_DIR="$2"; shift 2 ;;
         -s|--size)     SIZE_MB="$2"; shift 2 ;;
         -k|--keep)     KEEP=1; shift ;;
+        --skip-build)  SKIP_BUILD=1; shift ;;
         -h|--help)     usage; exit 0 ;;
         *) echo "unknown option: $1" >&2; usage; exit 2 ;;
     esac
@@ -115,33 +121,57 @@ if [[ -z "$SIZE_MB" ]]; then
 fi
 log "stick size: ${SIZE_MB} MiB"
 
-# --- Rebuild rescue-tui + initramfs --------------------------------------
-# build-initramfs.sh assembles target/release/rescue-tui into
-# out/initramfs.cpio.gz, but neither it nor mkusb.sh rebuild rescue-tui
-# itself. Without these two explicit steps a stale binary from an
-# earlier checkout silently ships into the image — the captured PNGs
-# then reflect that old source. Both are deterministic under
-# SOURCE_DATE_EPOCH so re-running on an unchanged tree is a no-op.
-# (#478)
-log "ensuring target/release/rescue-tui is up to date with current source"
-SOURCE_DATE_EPOCH=1700000000 cargo build --release -p rescue-tui
-log "rebuilding out/initramfs.cpio.gz so it embeds the fresh rescue-tui"
-SOURCE_DATE_EPOCH=1700000000 "$ROOT_DIR/scripts/build-initramfs.sh"
-
-# --- Build the base image via mkusb.sh ---------------------------------
-# IMPORTANT: do NOT pass MKUSB_GRUB_DEFAULT=1 here. That env var picks
-# the serial-primary GRUB entry, which puts /init's stderr (and the
-# rescue-tui's render output) on ttyS0. We're capturing the VNC display,
-# so we want entry 0 (default) which leaves the TUI on tty0 = the VNC
-# framebuffer. Mkusb's CI/E2E scripts use serial-primary because they
-# run -nographic; this capture script wants the opposite. (#478)
-log "building base image via scripts/mkusb.sh (sudo may prompt for kernel read)"
-DISK_SIZE_MB="$SIZE_MB" "$ROOT_DIR/scripts/mkusb.sh"
 IMG="$ROOT_DIR/out/aegis-boot.img"
-[[ -f "$IMG" ]] || { echo "mkusb.sh did not produce $IMG" >&2; exit 1; }
+
+if (( SKIP_BUILD == 0 )); then
+    # --- Rebuild rescue-tui + initramfs ---------------------------------
+    # build-initramfs.sh assembles target/release/rescue-tui into
+    # out/initramfs.cpio.gz, but neither it nor mkusb.sh rebuild rescue-tui
+    # itself. Without these two explicit steps a stale binary from an
+    # earlier checkout silently ships into the image — the captured PNGs
+    # then reflect that old source. Both are deterministic under
+    # SOURCE_DATE_EPOCH so re-running on an unchanged tree is a no-op.
+    # (#478)
+    log "ensuring target/release/rescue-tui is up to date with current source"
+    SOURCE_DATE_EPOCH=1700000000 cargo build --release -p rescue-tui
+    log "rebuilding out/initramfs.cpio.gz so it embeds the fresh rescue-tui"
+    SOURCE_DATE_EPOCH=1700000000 "$ROOT_DIR/scripts/build-initramfs.sh"
+
+    # --- Build the base image via mkusb.sh ------------------------------
+    # IMPORTANT: do NOT pass MKUSB_GRUB_DEFAULT=1 here. That env var picks
+    # the serial-primary GRUB entry, which puts /init's stderr (and the
+    # rescue-tui's render output) on ttyS0. We're capturing the VNC
+    # display, so we want entry 0 (default) which leaves the TUI on tty0
+    # = the VNC framebuffer. Mkusb's CI/E2E scripts use serial-primary
+    # because they run -nographic; this capture script wants the
+    # opposite. (#478)
+    log "building base image via scripts/mkusb.sh (sudo may prompt for kernel read)"
+    DISK_SIZE_MB="$SIZE_MB" "$ROOT_DIR/scripts/mkusb.sh"
+    [[ -f "$IMG" ]] || { echo "mkusb.sh did not produce $IMG" >&2; exit 1; }
+else
+    # --- Reuse the existing image (#626) --------------------------------
+    # --skip-build is for fast iteration on scenario keys/timings: skip
+    # the cargo build + initramfs assembly + mkusb (which together take
+    # ~2 minutes) and reuse what's already on disk. The expected
+    # workflow is `--keep` once, then `--skip-build` repeatedly. If the
+    # rescue-tui source has actually changed, --skip-build will silently
+    # capture stale behavior — bypass deliberate.
+    [[ -f "$IMG" ]] || {
+        echo "--skip-build set but $IMG does not exist." >&2
+        echo "Run once without --skip-build (and with --keep) first." >&2
+        exit 1
+    }
+    [[ -f "$ROOT_DIR/out/initramfs.cpio.gz" ]] || {
+        echo "--skip-build set but out/initramfs.cpio.gz is missing." >&2
+        exit 1
+    }
+    log "--skip-build: reusing $IMG ($(stat -c '%y' "$IMG" | cut -d. -f1))"
+fi
 
 # --- Copy ISOs onto AEGIS_ISOS (mirrors qemu-loaded-stick.sh) ---------
-if (( ${#ISOS[@]} > 0 )); then
+# Skipped under --skip-build — the kept image already has them from the
+# previous run, and re-copying serves no purpose. (#626)
+if (( ${#ISOS[@]} > 0 && SKIP_BUILD == 0 )); then
     log "loop-mounting AEGIS_ISOS to copy ISOs"
     LOOP=$(sudo losetup --find --show --partscan "$IMG")
     cleanup_loop() {
@@ -191,9 +221,16 @@ final_cleanup() {
         sleep 1
         kill -9 "$QEMU_PID" 2>/dev/null || true
     fi
-    if (( KEEP == 0 )); then
+    # --skip-build implies "user is iterating against an existing image";
+    # keep the image even without --keep so the next --skip-build run
+    # has something to reuse. The work dir always gets cleaned up unless
+    # --keep is set explicitly. (#626)
+    if (( KEEP == 0 && SKIP_BUILD == 0 )); then
         rm -rf -- "$WORK"
         [[ -f "$IMG" ]] && rm -f "$IMG"
+    elif (( KEEP == 0 && SKIP_BUILD == 1 )); then
+        rm -rf -- "$WORK"
+        log "preserving $IMG for the next --skip-build run"
     else
         log "kept image at $IMG, work dir at $WORK"
     fi
