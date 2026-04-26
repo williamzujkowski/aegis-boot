@@ -282,14 +282,18 @@ fn draw_header(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     // brand colour directly — renders across every theme.
     let brand = ratatui::style::Color::Rgb(0x3B, 0x82, 0xF6);
 
-    // Design-review fix #1: degrade the header for narrow terminals
-    // instead of truncating mid-word. The tagline is the first thing
-    // to go; then TPM; then SB. The shield mark + name + version
-    // always survive.
-    //   ≥90 cols → mark + name + version + SB + TPM + tagline
-    //   ≥70 cols → mark + name + version + SB + TPM
-    //   ≥50 cols → mark + name + version + SB
-    //   <50 cols → mark + name + version
+    // Phase A layout cleanup: the marketing tagline ("Signed boot.
+    // Any ISO. Your keys.") was zero-functional during a rescue boot
+    // and ate ~30 cols of header space; dropped here. The version +
+    // SB + TPM trio remains — those are operator-actionable
+    // ("UNKNOWN SB? My firmware lied about Secure Boot") and survive
+    // through every theme.
+    //
+    // Width-degradation order (TPM is the next to go on serial-narrow
+    // consoles, then SB, then mark+name+version always survive):
+    //   ≥70 cols → ◆ aegis-boot vX.Y.Z   SB:state   TPM:state
+    //   ≥50 cols → ◆ aegis-boot vX.Y.Z   SB:state
+    //   <50 cols → ◆ aegis-boot vX.Y.Z
     let mut spans = vec![
         Span::styled(
             "◆ ",
@@ -312,15 +316,6 @@ fn draw_header(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         spans.push(Span::styled(
             state.tpm.summary(),
             Style::default().fg(tpm_color),
-        ));
-    }
-    if area.width >= 90 {
-        spans.push(Span::raw("  "));
-        spans.push(Span::styled(
-            "Signed boot. Any ISO. Your keys.",
-            Style::default()
-                .fg(state.theme.success)
-                .add_modifier(Modifier::ITALIC | Modifier::DIM),
         ));
     }
     let header = Line::from(spans);
@@ -698,45 +693,21 @@ fn draw_empty_list(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     frame.render_widget(panel, area);
 }
 
-/// Compute layout + render the optional inline error band (#85 Tier 2
-/// last child) on the List screen. Returns `(info_area, list_area)`
-/// for the caller to render into. Extracted from `draw_list` so the
-/// main draw function stays under the workspace-wide 100-line cap.
-fn split_list_chrome(frame: &mut Frame<'_>, area: Rect, state: &AppState) -> (Rect, Rect) {
-    // Tier 2 (#85) — info bar above list shows filter + sort state.
-    // When some ISOs on disk failed to parse, insert a one-line inline
-    // error band ABOVE the info bar so it's unmissable without modal
-    // interruption — memtest86+-style "one-frame warning".
-    if state.skipped_iso_count > 0 {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1), // error band
-                Constraint::Length(1), // info bar
-                Constraint::Min(1),    // list
-            ])
-            .split(area);
-        let band = Paragraph::new(Line::from(vec![
-            Span::styled(
-                " \u{26A0} SKIPPED ",
-                Style::default()
-                    .fg(state.theme.warning)
-                    .add_modifier(Modifier::REVERSED | Modifier::BOLD),
-            ),
-            Span::raw(format!(
-                "  {} ISO(s) on disk failed to parse — see journalctl -u rescue-tui (iso_parser warnings)",
-                state.skipped_iso_count
-            )),
-        ]));
-        frame.render_widget(band, chunks[0]);
-        (chunks[1], chunks[2])
-    } else {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(1)])
-            .split(area);
-        (chunks[0], chunks[1])
-    }
+/// Compute layout for the List screen chrome. Returns
+/// `(info_area, list_area)` for the caller to render into.
+///
+/// The earlier SKIPPED band (#85 Tier 2) was removed in the Phase A
+/// layout cleanup: parse-failed ISOs render as `[!] <name> — PARSE
+/// FAILED: <reason>` tier-4 rows directly in the list (#458), which
+/// is the same fact through a single source of truth. The redundant
+/// banner ate a row of vertical real estate on 80×25 consoles where
+/// the verdict banner most needs to be above the fold.
+fn split_list_chrome(_frame: &mut Frame<'_>, area: Rect, _state: &AppState) -> (Rect, Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(1)])
+        .split(area);
+    (chunks[0], chunks[1])
 }
 
 /// Render the top-of-list-chrome info line (filter banner while
@@ -794,20 +765,65 @@ fn draw_list(frame: &mut Frame<'_>, area: Rect, state: &AppState, selected: usiz
     }
 
     // Chrome: (filter/sort hint line) on top, (main body) below. The
-    // main body is now a 40/60 horizontal split between the ISO list
-    // (left) and the info pane (right). (#458)
+    // main body splits between the ISO list and the info pane; the
+    // split orientation + ratio adapts to terminal size (Phase B
+    // layout cleanup, #DESIGN-UX-004):
+    //
+    //   < 100 cols → vertical: list on top, info below. The 40/60
+    //                horizontal split chops kernel cmdlines on
+    //                serial/OVMF consoles and centers the verdict
+    //                banner over a tiny pane.
+    //   ≥ 100 cols → horizontal: list left, info right, but the
+    //                list pane width is `min(40%, longest_row+4)` so
+    //                short ISO sets shrink the list pane and give
+    //                the info pane more room for sha256 / cmdline /
+    //                signer chain.
     let (info_line_area, body_area) = split_list_chrome(frame, area, state);
-    let panes = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-        .split(body_area);
-    let (list_area, info_pane_area) = (panes[0], panes[1]);
+    let entries = state.visible_entries();
+    let (list_area, info_pane_area) = if body_area.width < 100 {
+        // Compact / vertical layout for narrow terminals.
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            // Cap list at min(8 rows + chrome, 50% of body) so info
+            // pane keeps half the screen even with a long list.
+            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+            .split(body_area);
+        (chunks[0], chunks[1])
+    } else {
+        // Wide / horizontal layout with adaptive list width.
+        let longest_label = entries
+            .iter()
+            .map(|e| match e {
+                ViewEntry::Iso(i) => state
+                    .isos
+                    .get(*i)
+                    .map_or(0, |iso| iso.label.chars().count()),
+                ViewEntry::FailedIso(i) => state.failed_isos.get(*i).map_or(0, |f| {
+                    f.iso_path
+                        .file_name()
+                        .map_or(0, |n| n.to_string_lossy().chars().count())
+                }),
+                ViewEntry::RescueShell => "rescue shell (busybox) — dropped from rescue-tui"
+                    .chars()
+                    .count(),
+            })
+            .max()
+            .unwrap_or(20);
+        // Add ~12 cols for the leading status glyph, distro tag, and
+        // borders. Cap at 40% so the info pane never starves.
+        let list_cols_fit = u16::try_from(longest_label.saturating_add(12)).unwrap_or(u16::MAX);
+        let list_cols_max = body_area.width * 40 / 100;
+        let list_cols = list_cols_fit.min(list_cols_max).max(20);
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Length(list_cols), Constraint::Min(40)])
+            .split(body_area);
+        (chunks[0], chunks[1])
+    };
 
     render_list_info_line(frame, info_line_area, state);
 
-    // Full entries view includes the rescue-shell synthetic row at
-    // the end, even when the ISO list is empty (#90).
-    let entries = state.visible_entries();
+    // `entries` already computed above for the layout decision.
     let iso_entries: Vec<usize> = entries
         .iter()
         .filter_map(|e| {
@@ -2025,28 +2041,30 @@ mod tests {
     }
 
     #[test]
-    fn list_inline_band_appears_when_some_isos_skipped() {
-        // (#85 Tier 2 last child) — operator sees "N ISO(s) on disk
-        // failed to parse" without needing to read journalctl.
+    fn list_skipped_band_removed_in_phase_a_layout_cleanup() {
+        // Phase A removed the SKIPPED band (#85 Tier 2 — was a
+        // memtest86+-style one-frame warning). Parse-failed ISOs now
+        // render as tier-4 `[!] <name> — PARSE FAILED: <reason>` rows
+        // directly in the list (#458). The band was redundant and ate
+        // a row that the verdict banner needed on 80×25 consoles.
+        //
+        // This regression-guard test asserts the literal "SKIPPED"
+        // header text is gone from the render even when ISOs are
+        // marked as skipped (the field still exists on AppState; the
+        // rendering of it is what's removed).
         let state = AppState::new(vec![fake_iso("ok")]).with_skipped_iso_count(2);
         let s = render_to_string(&state);
         assert!(
-            s.contains("SKIPPED") && s.contains("2 ISO(s) on disk failed to parse"),
-            "expected inline error band in: {s}",
-        );
-        // The good ISO should still render alongside the band.
-        assert!(s.contains("ok"));
-    }
-
-    #[test]
-    fn list_no_inline_band_when_nothing_skipped() {
-        // Default count is 0; band should not appear.
-        let state = AppState::new(vec![fake_iso("ok")]);
-        let s = render_to_string(&state);
-        assert!(
             !s.contains("SKIPPED"),
-            "unexpected error band in clean-state render: {s}",
+            "Phase A removed the SKIPPED band; render should not contain it: {s}",
         );
+        assert!(
+            !s.contains("ISO(s) on disk failed to parse"),
+            "Phase A removed the SKIPPED band copy: {s}",
+        );
+        // The good ISO must still render — removing the band must not
+        // affect the list content.
+        assert!(s.contains("ok"));
     }
 
     #[test]
