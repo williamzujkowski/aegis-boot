@@ -81,6 +81,19 @@ pub struct Entry {
     pub sb: SbStatus,
     /// One-line reason an operator might want this image.
     pub purpose: &'static str,
+    /// Optional URL resolver that walks the project's directory
+    /// listing or follows a "latest" redirect to discover the current
+    /// ISO filename + sibling SHA / sig URLs (#646). Used by
+    /// `aegis-boot recommend --refresh` to detect when the static
+    /// fields here are out of date. The static fields stay
+    /// authoritative for fast-path use; the resolver is opt-in
+    /// freshness check.
+    pub resolver: Option<
+        fn() -> Result<
+            crate::catalog_resolvers::ResolvedUrls,
+            crate::catalog_resolvers::ResolverError,
+        >,
+    >,
 }
 
 /// The catalog itself. Keep entries alphabetically sorted by slug.
@@ -111,6 +124,7 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://repo.almalinux.org/almalinux/9/isos/x86_64/CHECKSUM",
         sb: SbStatus::Signed("Red Hat / AlmaLinux"),
         purpose: "Free RHEL-rebuild minimal installer. Cross-distro kexec quirk possible.",
+        resolver: None,
     },
     Entry {
         slug: "alpine-3.20-standard",
@@ -122,6 +136,7 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/alpine-standard-3.20.3-x86_64.iso.asc",
         sb: SbStatus::UnsignedNeedsMok,
         purpose: "Minimal recovery / forensic shell. Tiny footprint.",
+        resolver: None,
     },
     Entry {
         // DistroWatch top-12-month rank #4 (April 2026).
@@ -137,6 +152,7 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/SHA512SUMS.sign",
         sb: SbStatus::Signed("Debian CA via shim"),
         purpose: "Minimal Debian network installer. DistroWatch top-5 popularity.",
+        resolver: Some(crate::catalog_resolvers::debian_netinst),
     },
     Entry {
         // DistroWatch top-12-month rank #9 (April 2026).
@@ -152,6 +168,7 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Workstation/x86_64/iso/Fedora-Workstation-43-1.6-x86_64-CHECKSUM",
         sb: SbStatus::Signed("Red Hat / Fedora"),
         purpose: "Fedora desktop live ISO. Cross-distro kexec quirk possible.",
+        resolver: None,
     },
     Entry {
         // Not on DistroWatch top-15 but the de-facto pentest distro
@@ -165,6 +182,7 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://cdimage.kali.org/kali-2026.1/SHA256SUMS.gpg",
         sb: SbStatus::Signed("Kali / Debian shim chain"),
         purpose: "Pentesting + forensics installer. Debian-derived signed chain.",
+        resolver: None,
     },
     Entry {
         slug: "linuxmint-22-cinnamon",
@@ -176,6 +194,7 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://mirrors.edge.kernel.org/linuxmint/stable/22/sha256sum.txt.gpg",
         sb: SbStatus::Signed("Linux Mint"),
         purpose: "Friendly Ubuntu-derived desktop. Common operator install target.",
+        resolver: None,
     },
     Entry {
         // DistroWatch top-12-month rank #8 (April 2026). Manjaro
@@ -190,6 +209,7 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://download.manjaro.org/kde/26.0.4/manjaro-kde-26.0.4-260327-linux618.iso.sig",
         sb: SbStatus::UnsignedNeedsMok,
         purpose: "Arch-derived rolling release with KDE Plasma. Unsigned kernel.",
+        resolver: None,
     },
     Entry {
         // DistroWatch top-12-month rank #3 (April 2026).
@@ -202,6 +222,7 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://downloads.sourceforge.net/project/mx-linux/Final/Xfce/MX-25.1_Xfce_ahs_x64.iso.sig",
         sb: SbStatus::Signed("Debian shim chain (MX kernel)"),
         purpose: "Debian-based Xfce desktop with newer kernel. Top-3 popularity.",
+        resolver: None,
     },
     Entry {
         // DistroWatch top-12-month rank #12 (April 2026).
@@ -214,6 +235,7 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://download.opensuse.org/distribution/leap/15.6/iso/openSUSE-Leap-15.6-DVD-x86_64-Media.iso.sha256.asc",
         sb: SbStatus::Signed("SUSE CA"),
         purpose: "Enterprise-derived stable distribution. Full DVD installer.",
+        resolver: None,
     },
     Entry {
         // DistroWatch top-12-month rank #5 (April 2026). Build
@@ -228,6 +250,12 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://iso.pop-os.org/24.04/amd64/intel/9/SHA256SUMS.gpg",
         sb: SbStatus::Signed("System76 / Canonical CA"),
         purpose: "Ubuntu-derived desktop tuned for System76 hardware.",
+        // No resolver yet: iso.pop-os.org returns HTTP 403 on
+        // directory listings (nginx autoindex off). The published
+        // build number lives in the JSON payload at /api/v1 instead.
+        // Tracked under #646 as a follow-up resolver to add once the
+        // Debian one (this PR's MVP) ships.
+        resolver: None,
     },
     Entry {
         slug: "rocky-9-minimal",
@@ -241,6 +269,7 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://download.rockylinux.org/pub/rocky/9/isos/x86_64/CHECKSUM",
         sb: SbStatus::Signed("Rocky Linux"),
         purpose: "Free RHEL-rebuild minimal installer. Cross-distro kexec quirk possible.",
+        resolver: None,
     },
     Entry {
         slug: "ubuntu-24.04-live-server",
@@ -252,6 +281,7 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://releases.ubuntu.com/24.04.2/SHA256SUMS.gpg",
         sb: SbStatus::Signed("Canonical CA"),
         purpose: "Ubuntu LTS server installer. Validated under aegis-boot v0.12.0 #109.",
+        resolver: None,
     },
     Entry {
         slug: "ubuntu-24.04-desktop",
@@ -263,6 +293,7 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://releases.ubuntu.com/24.04.2/SHA256SUMS.gpg",
         sb: SbStatus::Signed("Canonical CA"),
         purpose: "Ubuntu LTS desktop installer. >4 GB → requires ext4 data partition.",
+        resolver: None,
     },
 ];
 
@@ -286,6 +317,14 @@ pub fn run(args: &[String]) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    // --refresh (#646): walk every Entry that has a resolver attached
+    // and print a diff against the static URL. Doesn't mutate the
+    // catalog file — the operator (or a CI auto-PR) decides whether
+    // the resolver-discovered URL replaces the static fallback.
+    if args.first().map(String::as_str) == Some("--refresh") {
+        return run_refresh();
+    }
+
     // --json [slug]: structured full-catalog output (or single-entry
     // when a slug follows the flag). Complements --slugs-only (line-
     // per-slug) with the full field set — each entry's URLs, size,
@@ -307,6 +346,69 @@ pub fn run(args: &[String]) -> ExitCode {
         eprintln!("aegis-boot recommend: no catalog entry matching '{slug}'");
         eprintln!("run 'aegis-boot recommend' to see available slugs");
         ExitCode::from(1)
+    }
+}
+
+/// `aegis-boot recommend --refresh` — walk every Entry that has a
+/// resolver, call it, and print a diff against the static URL. Does
+/// NOT mutate the catalog file: the operator (or a CI auto-PR
+/// workflow per #646) decides whether to promote the resolver-
+/// discovered URL.
+///
+/// Exit codes:
+///   0 — no drift (or no resolvers configured)
+///   1 — at least one resolver returned a URL different from static
+///   2 — at least one resolver errored (network / parse)
+///
+/// Network is best-effort. A resolver failure is reported but
+/// doesn't poison the rest of the run; we want operators to see
+/// "Pop!_OS resolver failed; Debian + Manjaro drifted" not just
+/// "first one failed, stopped."
+fn run_refresh() -> ExitCode {
+    let mut any_drift = false;
+    let mut any_error = false;
+    println!("aegis-boot recommend --refresh — checking resolvers (#646)\n");
+    for entry in CATALOG {
+        let Some(resolver) = entry.resolver else {
+            continue;
+        };
+        match resolver() {
+            Ok(live) => {
+                let drifted = live.iso_url != entry.iso_url
+                    || live.sha256_url != entry.sha256_url
+                    || live.sig_url != entry.sig_url;
+                if drifted {
+                    any_drift = true;
+                    println!("[DRIFT] {}", entry.slug);
+                    if live.iso_url != entry.iso_url {
+                        println!("    iso     static: {}", entry.iso_url);
+                        println!("            current: {}", live.iso_url);
+                    }
+                    if live.sha256_url != entry.sha256_url {
+                        println!("    sha     static: {}", entry.sha256_url);
+                        println!("            current: {}", live.sha256_url);
+                    }
+                    if live.sig_url != entry.sig_url {
+                        println!("    sig     static: {}", entry.sig_url);
+                        println!("            current: {}", live.sig_url);
+                    }
+                } else {
+                    println!("[OK]    {} (matches static)", entry.slug);
+                }
+            }
+            Err(e) => {
+                any_error = true;
+                println!("[ERROR] {}: {}", entry.slug, e);
+            }
+        }
+    }
+    println!();
+    if any_error {
+        ExitCode::from(2)
+    } else if any_drift {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
     }
 }
 
