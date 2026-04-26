@@ -124,6 +124,49 @@ pub const CATALOG: &[Entry] = &[
         purpose: "Minimal recovery / forensic shell. Tiny footprint.",
     },
     Entry {
+        // DistroWatch top-12-month rank #4 (April 2026).
+        slug: "debian-13-netinst",
+        name: "Debian 13 (trixie) Netinst",
+        arch: "x86_64",
+        size_mib: 720,
+        iso_url: "https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/debian-13.4.0-amd64-netinst.iso",
+        // Debian publishes SHA512SUMS (not SHA256). Catalog field is
+        // named sha256_url for back-compat; revalidate verifies the
+        // URL returns 2xx regardless of digest algorithm.
+        sha256_url: "https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/SHA512SUMS",
+        sig_url: "https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/SHA512SUMS.sign",
+        sb: SbStatus::Signed("Debian CA via shim"),
+        purpose: "Minimal Debian network installer. DistroWatch top-5 popularity.",
+    },
+    Entry {
+        // DistroWatch top-12-month rank #9 (April 2026).
+        slug: "fedora-43-workstation",
+        name: "Fedora 43 Workstation Live",
+        arch: "x86_64",
+        size_mib: 2600,
+        iso_url: "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Workstation/x86_64/iso/Fedora-Workstation-Live-43-1.6.x86_64.iso",
+        sha256_url: "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Workstation/x86_64/iso/Fedora-Workstation-43-1.6-x86_64-CHECKSUM",
+        // Fedora ships a PGP-clearsigned CHECKSUM (same pattern as
+        // AlmaLinux + Rocky). The signature is embedded in the
+        // CHECKSUM file; no separate .asc.
+        sig_url: "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Workstation/x86_64/iso/Fedora-Workstation-43-1.6-x86_64-CHECKSUM",
+        sb: SbStatus::Signed("Red Hat / Fedora"),
+        purpose: "Fedora desktop live ISO. Cross-distro kexec quirk possible.",
+    },
+    Entry {
+        // Not on DistroWatch top-15 but the de-facto pentest distro
+        // operators expect to see in a rescue-stick catalog.
+        slug: "kali-2026.1-installer",
+        name: "Kali Linux 2026.1 (installer)",
+        arch: "x86_64",
+        size_mib: 4500,
+        iso_url: "https://cdimage.kali.org/kali-2026.1/kali-linux-2026.1-installer-amd64.iso",
+        sha256_url: "https://cdimage.kali.org/kali-2026.1/SHA256SUMS",
+        sig_url: "https://cdimage.kali.org/kali-2026.1/SHA256SUMS.gpg",
+        sb: SbStatus::Signed("Kali / Debian shim chain"),
+        purpose: "Pentesting + forensics installer. Debian-derived signed chain.",
+    },
+    Entry {
         slug: "linuxmint-22-cinnamon",
         name: "Linux Mint 22 Cinnamon",
         arch: "x86_64",
@@ -133,6 +176,58 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://mirrors.edge.kernel.org/linuxmint/stable/22/sha256sum.txt.gpg",
         sb: SbStatus::Signed("Linux Mint"),
         purpose: "Friendly Ubuntu-derived desktop. Common operator install target.",
+    },
+    Entry {
+        // DistroWatch top-12-month rank #8 (April 2026). Manjaro
+        // kernels are unsigned for SB; operators on enforcing
+        // hardware need to MOK-enroll before kexec.
+        slug: "manjaro-26-kde",
+        name: "Manjaro 26.0.4 KDE",
+        arch: "x86_64",
+        size_mib: 3700,
+        iso_url: "https://download.manjaro.org/kde/26.0.4/manjaro-kde-26.0.4-260327-linux618.iso",
+        sha256_url: "https://download.manjaro.org/kde/26.0.4/manjaro-kde-26.0.4-260327-linux618.iso.sha256",
+        sig_url: "https://download.manjaro.org/kde/26.0.4/manjaro-kde-26.0.4-260327-linux618.iso.sig",
+        sb: SbStatus::UnsignedNeedsMok,
+        purpose: "Arch-derived rolling release with KDE Plasma. Unsigned kernel.",
+    },
+    Entry {
+        // DistroWatch top-12-month rank #3 (April 2026).
+        slug: "mx-25.1-ahs-xfce",
+        name: "MX Linux 25.1 AHS Xfce",
+        arch: "x86_64",
+        size_mib: 3200,
+        iso_url: "https://downloads.sourceforge.net/project/mx-linux/Final/Xfce/MX-25.1_Xfce_ahs_x64.iso",
+        sha256_url: "https://downloads.sourceforge.net/project/mx-linux/Final/Xfce/MX-25.1_Xfce_ahs_x64.iso.sha256",
+        sig_url: "https://downloads.sourceforge.net/project/mx-linux/Final/Xfce/MX-25.1_Xfce_ahs_x64.iso.sig",
+        sb: SbStatus::Signed("Debian shim chain (MX kernel)"),
+        purpose: "Debian-based Xfce desktop with newer kernel. Top-3 popularity.",
+    },
+    Entry {
+        // DistroWatch top-12-month rank #12 (April 2026).
+        slug: "opensuse-leap-15.6-dvd",
+        name: "openSUSE Leap 15.6 DVD",
+        arch: "x86_64",
+        size_mib: 4400,
+        iso_url: "https://download.opensuse.org/distribution/leap/15.6/iso/openSUSE-Leap-15.6-DVD-x86_64-Media.iso",
+        sha256_url: "https://download.opensuse.org/distribution/leap/15.6/iso/openSUSE-Leap-15.6-DVD-x86_64-Media.iso.sha256",
+        sig_url: "https://download.opensuse.org/distribution/leap/15.6/iso/openSUSE-Leap-15.6-DVD-x86_64-Media.iso.sha256.asc",
+        sb: SbStatus::Signed("SUSE CA"),
+        purpose: "Enterprise-derived stable distribution. Full DVD installer.",
+    },
+    Entry {
+        // DistroWatch top-12-month rank #5 (April 2026). Build
+        // number (`_9`) bumps frequently — re-check before catalog
+        // revalidation.
+        slug: "popos-24.04-intel",
+        name: "Pop!_OS 24.04 (Intel)",
+        arch: "x86_64",
+        size_mib: 2900,
+        iso_url: "https://iso.pop-os.org/24.04/amd64/intel/9/pop-os_24.04_amd64_intel_9.iso",
+        sha256_url: "https://iso.pop-os.org/24.04/amd64/intel/9/SHA256SUMS",
+        sig_url: "https://iso.pop-os.org/24.04/amd64/intel/9/SHA256SUMS.gpg",
+        sb: SbStatus::Signed("System76 / Canonical CA"),
+        purpose: "Ubuntu-derived desktop tuned for System76 hardware.",
     },
     Entry {
         slug: "rocky-9-minimal",
