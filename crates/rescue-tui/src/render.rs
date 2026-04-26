@@ -1048,7 +1048,29 @@ fn info_pane_iso_lines<'a>(
         "Cmdline:  ",
         iso.cmdline.clone().unwrap_or_else(|| "(none)".to_string()),
     ));
-    lines.push(labeled("Distro:   ", format!("{:?}", iso.distribution)));
+    // Distro: prefer the parsed pretty_name (e.g. "Ubuntu 24.04.2 LTS
+    // (Noble Numbat)") when iso-probe found an /etc/os-release or
+    // /.disk/info; fall back to the bare enum name otherwise.
+    // Operators boot-confirming "is this the right ISO?" need the
+    // version, not just the family. (#119, info-pane-richer-os-metadata)
+    let distro_text = iso
+        .pretty_name
+        .clone()
+        .unwrap_or_else(|| format!("{:?}", iso.distribution));
+    lines.push(labeled("Distro:   ", distro_text));
+    // Architecture parsed from the ISO filename — caught x86_64 vs
+    // arm64 boot mistakes before kexec instead of after. Kept on a
+    // dedicated line so the eye lands on it without parsing the
+    // pretty_name string.
+    if let Some(arch) = arch_from_iso_filename(&iso.iso_path) {
+        lines.push(labeled("Arch:     ", arch.to_string()));
+    }
+    // Variant (live-server, desktop, minimal, netinst, …) parsed
+    // from the ISO filename. Distinguishes a "won't actually install"
+    // live image from an installer ISO that can erase disks (#131).
+    if let Some(variant) = variant_from_iso_filename(&iso.iso_path) {
+        lines.push(labeled("Variant:  ", variant.to_string()));
+    }
     let qs = quirks_summary(iso);
     lines.push(labeled(
         "Quirks:   ",
@@ -1273,6 +1295,73 @@ fn filename_str(p: &std::path::Path) -> String {
         || p.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
     )
+}
+
+/// Parse the CPU architecture token from an ISO filename. Distros
+/// embed the architecture directly in their release filenames
+/// (`ubuntu-24.04-amd64.iso`, `alpine-3.20-x86_64.iso`,
+/// `debian-13-arm64.iso`), so a substring match against the canonical
+/// tokens recovers it without mounting the ISO.
+///
+/// Returns the canonicalized architecture name (`x86_64`, `arm64`,
+/// `i686`, `riscv64`, `ppc64le`) or `None` if the filename doesn't
+/// match a known token. Order matters: `aarch64` matches before
+/// `arm` so the more specific variant wins.
+fn arch_from_iso_filename(p: &std::path::Path) -> Option<&'static str> {
+    let name = p.file_name().and_then(|n| n.to_str())?.to_ascii_lowercase();
+    // Most specific matches first so e.g. `arm64` doesn't get caught
+    // by an earlier `arm` test.
+    if name.contains("x86_64") || name.contains("amd64") || name.contains("x64") {
+        Some("x86_64")
+    } else if name.contains("aarch64") || name.contains("arm64") {
+        Some("arm64")
+    } else if name.contains("riscv64") {
+        Some("riscv64")
+    } else if name.contains("ppc64le") {
+        Some("ppc64le")
+    } else if name.contains("s390x") {
+        Some("s390x")
+    } else if name.contains("i686") || name.contains("i386") || name.contains("x86") {
+        Some("i686")
+    } else {
+        None
+    }
+}
+
+/// Parse the install/boot variant from an ISO filename. Distros use
+/// a small vocabulary of variant tags (`live`, `live-server`,
+/// `desktop`, `netinst`, `minimal`, `standard`, `extended`,
+/// `dvd`, `Workstation`, …) that operators recognize at a glance.
+/// Surfacing this on the info pane catches "I picked the desktop
+/// build instead of the netinst" mistakes pre-kexec.
+///
+/// Returns a short canonical token or `None` if the filename doesn't
+/// match.
+fn variant_from_iso_filename(p: &std::path::Path) -> Option<&'static str> {
+    let name = p.file_name().and_then(|n| n.to_str())?.to_ascii_lowercase();
+    // Order matters — "live-server" must match before bare "live",
+    // "netinst" before "net", etc.
+    let candidates = [
+        ("live-server", "live-server"),
+        ("liveserver", "live-server"),
+        ("netinst", "netinst"),
+        ("netboot", "netboot"),
+        ("minimal", "minimal"),
+        ("workstation", "workstation"),
+        ("desktop", "desktop"),
+        ("server", "server"),
+        ("standard", "standard"),
+        ("extended", "extended"),
+        ("rescue", "rescue"),
+        ("dvd", "dvd"),
+        ("live", "live"),
+    ];
+    for (needle, label) in candidates {
+        if name.contains(needle) {
+            return Some(label);
+        }
+    }
+    None
 }
 
 /// Short verification summary for the info pane's sha256 row. Avoids
@@ -2120,6 +2209,66 @@ mod tests {
         );
         // The explanatory parenthetical must still trail the token.
         assert!(s.contains("no sibling .sha256 found"));
+    }
+
+    #[test]
+    fn arch_from_iso_filename_recognizes_common_tokens() {
+        use std::path::Path;
+        let cases = [
+            ("ubuntu-24.04.2-live-server-amd64.iso", Some("x86_64")),
+            ("alpine-3.20.3-x86_64.iso", Some("x86_64")),
+            ("debian-13.0.0-amd64-netinst.iso", Some("x86_64")),
+            ("ubuntu-24.04.2-live-server-arm64.iso", Some("arm64")),
+            ("alpine-3.20.3-aarch64.iso", Some("arm64")),
+            ("Fedora-Workstation-Live-x86_64-41-1.4.iso", Some("x86_64")),
+            ("debian-13-riscv64-netinst.iso", Some("riscv64")),
+            ("debian-12-i386-netinst.iso", Some("i686")),
+            ("Win11_25H2_English_x64_v2.iso", Some("x86_64")),
+            ("custom-build.iso", None),
+        ];
+        for (name, want) in cases {
+            assert_eq!(arch_from_iso_filename(Path::new(name)), want, "{name}");
+        }
+    }
+
+    #[test]
+    fn variant_from_iso_filename_recognizes_common_tokens() {
+        use std::path::Path;
+        let cases = [
+            ("ubuntu-24.04.2-live-server-amd64.iso", Some("live-server")),
+            ("ubuntu-22.04-desktop-amd64.iso", Some("desktop")),
+            ("debian-13.0.0-amd64-netinst.iso", Some("netinst")),
+            ("alpine-3.20.3-standard-x86_64.iso", Some("standard")),
+            ("alpine-3.20.3-extended-x86_64.iso", Some("extended")),
+            (
+                "Fedora-Workstation-Live-x86_64-41-1.4.iso",
+                Some("workstation"),
+            ),
+            ("ubuntu-25.04-live-amd64.iso", Some("live")),
+            ("custom-build.iso", None),
+        ];
+        for (name, want) in cases {
+            assert_eq!(variant_from_iso_filename(Path::new(name)), want, "{name}");
+        }
+    }
+
+    #[test]
+    fn info_pane_surfaces_arch_and_variant_for_real_filenames() {
+        let mut iso = fake_iso("ubuntu");
+        iso.iso_path =
+            std::path::PathBuf::from("/run/media/aegis-isos/ubuntu-24.04.2-live-server-amd64.iso");
+        iso.pretty_name = Some("Ubuntu 24.04.2 LTS (Noble Numbat)".to_string());
+        let state = AppState::new(vec![iso]);
+        let s = render_to_string(&state);
+        // pretty_name surfaces on the Distro line.
+        assert!(
+            s.contains("Ubuntu 24.04.2 LTS"),
+            "expected pretty_name on Distro line: {s}"
+        );
+        // Architecture parsed from the filename.
+        assert!(s.contains("x86_64"), "expected Arch row: {s}");
+        // Variant parsed from the filename.
+        assert!(s.contains("live-server"), "expected Variant row: {s}");
     }
 
     #[test]
