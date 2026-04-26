@@ -23,19 +23,40 @@ pub struct Theme {
 }
 
 impl Theme {
-    /// Default theme — Material Design Colors palette mapped to verdict
-    /// slots. Saturated variants chosen for WCAG AA on the dark
-    /// background (success ~13:1, warning ~14:1, error ~5.5:1) and
-    /// distinct under deuteranopia/protanopia. (Sourced from
-    /// williamzujkowski/oklch-terminal-themes — material-design-colors.)
+    /// Default theme — Aurora palette, WCAG 3 / APCA compliant on the
+    /// dark rescue background (#1d262a). All three slots clear the
+    /// APCA Lc 60 banner-text floor:
+    ///
+    /// * success #4DECD4 (glacial aqua-teal) → Lc ≈79
+    /// * warning #FFC857 (marigold amber)    → Lc ≈76
+    /// * error   #FFA5C7 (luminous rose)     → Lc ≈66
+    ///
+    /// Saturated red can't reach Lc 60 on this background without
+    /// bleaching to salmon (which collides with amber under
+    /// deuteranopia); the magenta-leaning rose preserves "alarm"
+    /// affect while clearing APCA. ≥80° hue spacing across the triad
+    /// gives clean luminance + hue separation under deuteranopia /
+    /// protanopia. Designer review: `nexus-agents` `ux_expert`.
     #[must_use]
     pub const fn default_theme() -> Self {
-        Self::material_design()
+        Self::aurora()
+    }
+
+    /// Aurora — APCA-compliant polar-light triad. See [`Self::default_theme`].
+    #[must_use]
+    pub const fn aurora() -> Self {
+        Self {
+            success: Color::Rgb(0x4D, 0xEC, 0xD4), // #4DECD4 aqua-teal
+            warning: Color::Rgb(0xFF, 0xC8, 0x57), // #FFC857 marigold
+            error: Color::Rgb(0xFF, 0xA5, 0xC7),   // #FFA5C7 rose
+        }
     }
 
     /// Material Design Colors palette — saturated tier mapped to verdict
-    /// slots. Bright tier (#adf7be / #fee16c / #fc746d) reserved for
-    /// future selection / hover slots if the Theme struct expands.
+    /// slots. WCAG 2 AA on the dark background (~13:1 / ~14:1 / ~5.5:1)
+    /// but the saturated red (#fc3841) does NOT clear APCA Lc 60 — see
+    /// [`Self::aurora`] for the WCAG 3 / APCA-compliant alternative.
+    /// Sourced from williamzujkowski/oklch-terminal-themes.
     #[must_use]
     pub const fn material_design() -> Self {
         Self {
@@ -116,6 +137,7 @@ impl Theme {
             "high-contrast" | "high_contrast" | "hc" => Self::high_contrast(),
             "okabe-ito" | "okabe_ito" | "okabeito" | "cb" | "colorblind" => Self::okabe_ito(),
             "aegis" | "brand" => Self::aegis(),
+            "aurora" | "apca" | "wcag3" => Self::aurora(),
             "material-design" | "material_design" | "material" | "md" => Self::material_design(),
             "ansi" | "basic" => Self::ansi(),
             _ => Self::default_theme(),
@@ -134,13 +156,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_is_material_design_palette() {
-        // Default switched from basic ANSI Color::{Green,Yellow,Red} to
-        // Material Design hex values for higher contrast on the dark
-        // rescue background. Basic ANSI is still available as
-        // Theme::ansi() / from_name("ansi").
+    fn default_is_aurora_apca_palette() {
+        // Default is now Aurora — WCAG 3 / APCA compliant on the dark
+        // rescue background (Lc ≈79 / 76 / 66). Material Design and
+        // basic ANSI remain available via from_name("material") and
+        // from_name("ansi"). Aurora's intentionally rose error is
+        // because saturated red can't reach APCA Lc 60 on this bg.
         let t = Theme::default_theme();
-        assert_eq!(t, Theme::material_design());
+        assert_eq!(t, Theme::aurora());
+        assert_eq!(t.success, Color::Rgb(0x4D, 0xEC, 0xD4));
+        assert_eq!(t.warning, Color::Rgb(0xFF, 0xC8, 0x57));
+        assert_eq!(t.error, Color::Rgb(0xFF, 0xA5, 0xC7));
+    }
+
+    #[test]
+    fn material_design_theme_remains_available() {
+        // Bumping the default to Aurora (#634 → this) must not remove
+        // the prior default — operators with terminals tuned to the
+        // Material palette can still opt back in.
+        let t = Theme::material_design();
         assert_eq!(t.success, Color::Rgb(0x5C, 0xF1, 0x9E));
         assert_eq!(t.warning, Color::Rgb(0xFE, 0xD0, 0x32));
         assert_eq!(t.error, Color::Rgb(0xFC, 0x38, 0x41));
@@ -221,5 +255,13 @@ mod tests {
         assert_eq!(Theme::from_name("MD"), Theme::material_design());
         assert_eq!(Theme::from_name("ansi"), Theme::ansi());
         assert_eq!(Theme::from_name("BASIC"), Theme::ansi());
+    }
+
+    #[test]
+    fn from_name_resolves_aurora_aliases() {
+        assert_eq!(Theme::from_name("aurora"), Theme::aurora());
+        assert_eq!(Theme::from_name("AURORA"), Theme::aurora());
+        assert_eq!(Theme::from_name("apca"), Theme::aurora());
+        assert_eq!(Theme::from_name("wcag3"), Theme::aurora());
     }
 }

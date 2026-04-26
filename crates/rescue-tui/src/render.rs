@@ -458,7 +458,7 @@ fn draw_help_overlay(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         Line::from(""),
         Line::from(" Themes (AEGIS_THEME env var)"),
         Line::from(
-            "   default (material-design) · ansi · monochrome · high-contrast · okabe-ito · aegis",
+            "   default (aurora · APCA) · material-design · ansi · monochrome · high-contrast · okabe-ito · aegis",
         ),
         Line::from(""),
         Line::from(" Emergency escape hatches (kernel SysRq)"),
