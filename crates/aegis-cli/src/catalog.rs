@@ -333,11 +333,13 @@ pub fn run(args: &[String]) -> ExitCode {
     }
 
     // --refresh (#646): walk every Entry that has a resolver attached
-    // and print a diff against the static URL. Doesn't mutate the
-    // catalog file — the operator (or a CI auto-PR) decides whether
-    // the resolver-discovered URL replaces the static fallback.
+    // and print a diff against the static URL. By default doesn't
+    // mutate the catalog file. With --write, mutates the source
+    // file in-place — the auto-PR CI workflow uses this to open a
+    // PR with the diff.
     if args.first().map(String::as_str) == Some("--refresh") {
-        return run_refresh();
+        let write = args.iter().any(|a| a == "--write");
+        return run_refresh(write);
     }
 
     // --json [slug]: structured full-catalog output (or single-entry
@@ -379,10 +381,14 @@ pub fn run(args: &[String]) -> ExitCode {
 /// doesn't poison the rest of the run; we want operators to see
 /// "Pop!_OS resolver failed; Debian + Manjaro drifted" not just
 /// "first one failed, stopped."
-fn run_refresh() -> ExitCode {
+fn run_refresh(write: bool) -> ExitCode {
     let mut any_drift = false;
     let mut any_error = false;
-    println!("aegis-boot recommend --refresh — checking resolvers (#646)\n");
+    let mut drifts: Vec<(&'static str, crate::catalog_resolvers::ResolvedUrls)> = Vec::new();
+    println!(
+        "aegis-boot recommend --refresh{} — checking resolvers (#646)\n",
+        if write { " --write" } else { "" }
+    );
     for entry in CATALOG {
         let Some(resolver) = entry.resolver else {
             continue;
@@ -407,6 +413,7 @@ fn run_refresh() -> ExitCode {
                         println!("    sig     static: {}", entry.sig_url);
                         println!("            current: {}", live.sig_url);
                     }
+                    drifts.push((entry.slug, live));
                 } else {
                     println!("[OK]    {} (matches static)", entry.slug);
                 }
@@ -418,6 +425,15 @@ fn run_refresh() -> ExitCode {
         }
     }
     println!();
+    if write && !drifts.is_empty() {
+        match write_catalog_drifts(&drifts) {
+            Ok(path) => println!("wrote {} drift fix(es) to {}", drifts.len(), path),
+            Err(e) => {
+                println!("--write failed: {e}");
+                return ExitCode::from(2);
+            }
+        }
+    }
     if any_error {
         ExitCode::from(2)
     } else if any_drift {
@@ -425,6 +441,104 @@ fn run_refresh() -> ExitCode {
     } else {
         ExitCode::SUCCESS
     }
+}
+
+/// Find this crate's `catalog.rs` source file and rewrite the URL
+/// fields for each drifted entry. Used by `--refresh --write` so a
+/// CI workflow can open an auto-PR with the URL bumps.
+///
+/// Mutation strategy: read the file, find each entry's `Entry { ...
+/// slug: "<slug>" ... iso_url: "...", sha256_url: "...", sig_url: "...",
+/// ... }` block, replace the three URL string literals. The catalog
+/// format is consistent enough that targeted regex-based replacement
+/// works without needing a syn-based AST walk.
+///
+/// The catalog file is found by walking up from `CARGO_MANIFEST_DIR`
+/// at compile time and resolving `crates/aegis-cli/src/catalog.rs`.
+/// At runtime we look for it relative to the current working
+/// directory (typical: `cargo run` from repo root) or as a sibling
+/// to the running binary's `target/release` parent (typical: invoked
+/// from a CI checkout).
+fn write_catalog_drifts(
+    drifts: &[(&'static str, crate::catalog_resolvers::ResolvedUrls)],
+) -> Result<String, String> {
+    let candidates = [
+        std::path::PathBuf::from("crates/aegis-cli/src/catalog.rs"),
+        std::path::PathBuf::from("../aegis-cli/src/catalog.rs"),
+        std::path::PathBuf::from("../../crates/aegis-cli/src/catalog.rs"),
+    ];
+    let path = candidates
+        .iter()
+        .find(|p| p.is_file())
+        .ok_or_else(|| {
+            "couldn't locate crates/aegis-cli/src/catalog.rs from cwd; run from repo root"
+                .to_string()
+        })?
+        .clone();
+    let original =
+        std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let mut text = original.clone();
+    for (slug, live) in drifts {
+        text = rewrite_entry_urls(&text, slug, live)?;
+    }
+    if text == original {
+        return Ok(format!("{} (no changes)", path.display()));
+    }
+    std::fs::write(&path, text).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(path.display().to_string())
+}
+
+/// Rewrite a single entry's `iso_url`, `sha256_url`, `sig_url`
+/// fields. Uses byte-offset slicing on the source string; the
+/// catalog format's regular `Entry { ... slug: "<slug>", ... }`
+/// shape is what makes this tractable without a real Rust parser.
+fn rewrite_entry_urls(
+    source: &str,
+    slug: &str,
+    live: &crate::catalog_resolvers::ResolvedUrls,
+) -> Result<String, String> {
+    // Locate the entry block by its slug literal.
+    let needle = format!("slug: \"{slug}\"");
+    let start = source
+        .find(&needle)
+        .ok_or_else(|| format!("entry slug={slug:?} not found in catalog source"))?;
+    // Block bounds: from the `Entry {` before this slug to the
+    // matching `},` after.
+    let block_start = source[..start]
+        .rfind("Entry {")
+        .ok_or_else(|| format!("entry start `Entry {{` not found before slug={slug:?}"))?;
+    let block_end_rel = source[start..]
+        .find("\n    },")
+        .ok_or_else(|| format!("entry end `\\n    }},` not found after slug={slug:?}"))?;
+    let block_end = start + block_end_rel + "\n    },".len();
+    let block = &source[block_start..block_end];
+    let new_block = block
+        .lines()
+        .map(|line| {
+            // Replace ONLY the three URL fields. Other lines pass
+            // through verbatim — including operator-curated comments
+            // and the Entry struct's other fields.
+            if let Some(prefix) = line.strip_prefix("        iso_url: \"") {
+                let _ = prefix;
+                format!("        iso_url: \"{}\",", live.iso_url)
+            } else if let Some(prefix) = line.strip_prefix("        sha256_url: \"") {
+                let _ = prefix;
+                format!("        sha256_url: \"{}\",", live.sha256_url)
+            } else if let Some(prefix) = line.strip_prefix("        sig_url: \"") {
+                let _ = prefix;
+                format!("        sig_url: \"{}\",", live.sig_url)
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(format!(
+        "{}{}{}",
+        &source[..block_start],
+        new_block,
+        &source[block_end..]
+    ))
 }
 
 /// `aegis-boot recommend --json [slug]` — emit catalog entries as
@@ -789,5 +903,85 @@ mod tests {
         glyphs.sort_unstable();
         glyphs.dedup();
         assert_eq!(glyphs.len(), 3, "glyphs should be distinct");
+    }
+
+    #[test]
+    fn rewrite_entry_urls_swaps_three_fields() {
+        // Synthetic catalog block matching the real format.
+        let source = r#"// preamble
+pub const CATALOG: &[Entry] = &[
+    Entry {
+        slug: "demo",
+        name: "Demo Distro 1.2.3",
+        arch: "x86_64",
+        size_mib: 1000,
+        iso_url: "https://old.example/demo-1.2.3-amd64.iso",
+        sha256_url: "https://old.example/SHA256SUMS",
+        sig_url: "https://old.example/SHA256SUMS.gpg",
+        sb: SbStatus::Signed("Demo CA"),
+        purpose: "Demo entry.",
+        resolver: None,
+    },
+];
+"#;
+        let live = crate::catalog_resolvers::ResolvedUrls {
+            iso_url: "https://new.example/demo-1.2.4-amd64.iso".to_string(),
+            sha256_url: "https://new.example/SHA256SUMS".to_string(),
+            sig_url: "https://new.example/SHA256SUMS.gpg".to_string(),
+        };
+        let result = rewrite_entry_urls(source, "demo", &live).unwrap_or_else(|e| panic!("{e}"));
+        assert!(result.contains("https://new.example/demo-1.2.4-amd64.iso"));
+        assert!(result.contains("https://new.example/SHA256SUMS"));
+        assert!(result.contains("https://new.example/SHA256SUMS.gpg"));
+        // Other fields untouched.
+        assert!(result.contains("Demo Distro 1.2.3"));
+        assert!(result.contains("size_mib: 1000"));
+        assert!(result.contains("Demo CA"));
+        // Old URLs gone.
+        assert!(!result.contains("https://old.example/demo-1.2.3-amd64.iso"));
+    }
+
+    #[test]
+    fn rewrite_entry_urls_errors_on_unknown_slug() {
+        let source = "pub const CATALOG: &[Entry] = &[];";
+        let live = crate::catalog_resolvers::ResolvedUrls {
+            iso_url: "x".to_string(),
+            sha256_url: "y".to_string(),
+            sig_url: "z".to_string(),
+        };
+        let err = rewrite_entry_urls(source, "nope", &live)
+            .err()
+            .unwrap_or_else(|| panic!("should fail on unknown slug"));
+        assert!(err.contains("nope"));
+    }
+
+    #[test]
+    fn rewrite_entry_urls_preserves_comments_inside_entry_block() {
+        // Comments interspersed with URL fields must survive — they
+        // carry the rationale (e.g. "Debian publishes SHA512SUMS").
+        let source = r#"pub const CATALOG: &[Entry] = &[
+    Entry {
+        slug: "demo",
+        name: "X",
+        arch: "x86_64",
+        size_mib: 1,
+        iso_url: "https://old/iso",
+        // important rationale comment
+        sha256_url: "https://old/sha",
+        sig_url: "https://old/sig",
+        sb: SbStatus::Signed("X"),
+        purpose: ".",
+        resolver: None,
+    },
+];
+"#;
+        let live = crate::catalog_resolvers::ResolvedUrls {
+            iso_url: "https://new/iso".to_string(),
+            sha256_url: "https://new/sha".to_string(),
+            sig_url: "https://new/sig".to_string(),
+        };
+        let result = rewrite_entry_urls(source, "demo", &live).unwrap_or_else(|e| panic!("{e}"));
+        assert!(result.contains("// important rationale comment"));
+        assert!(result.contains("https://new/iso"));
     }
 }
