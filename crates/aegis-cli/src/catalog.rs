@@ -177,12 +177,16 @@ pub const CATALOG: &[Entry] = &[
         name: "Kali Linux 2026.1 (installer)",
         arch: "x86_64",
         size_mib: 4500,
-        iso_url: "https://cdimage.kali.org/kali-2026.1/kali-linux-2026.1-installer-amd64.iso",
-        sha256_url: "https://cdimage.kali.org/kali-2026.1/SHA256SUMS",
-        sig_url: "https://cdimage.kali.org/kali-2026.1/SHA256SUMS.gpg",
+        // Kali publishes a `/current/` symlink that always points at
+        // the latest release; the kali_installer resolver
+        // canonicalizes to that path. Filename still encodes the
+        // version so #646 phase 2 can detect when 2026.1 → 2026.2.
+        iso_url: "https://cdimage.kali.org/current/kali-linux-2026.1-installer-amd64.iso",
+        sha256_url: "https://cdimage.kali.org/current/SHA256SUMS",
+        sig_url: "https://cdimage.kali.org/current/SHA256SUMS.gpg",
         sb: SbStatus::Signed("Kali / Debian shim chain"),
         purpose: "Pentesting + forensics installer. Debian-derived signed chain.",
-        resolver: None,
+        resolver: Some(crate::catalog_resolvers::kali_installer),
     },
     Entry {
         slug: "linuxmint-22-cinnamon",
@@ -273,27 +277,33 @@ pub const CATALOG: &[Entry] = &[
     },
     Entry {
         slug: "ubuntu-24.04-live-server",
-        name: "Ubuntu Server 24.04.2 LTS (live-server)",
+        name: "Ubuntu Server 24.04.4 LTS (live-server)",
         arch: "x86_64",
         size_mib: 2600,
-        iso_url: "https://releases.ubuntu.com/24.04.2/ubuntu-24.04.2-live-server-amd64.iso",
-        sha256_url: "https://releases.ubuntu.com/24.04.2/SHA256SUMS",
-        sig_url: "https://releases.ubuntu.com/24.04.2/SHA256SUMS.gpg",
+        // The /24.04/ directory accumulates point releases; the
+        // ubuntu_24_04_live_server resolver picks the highest. As of
+        // April 2026 that's 24.04.4 (resolver detected drift from
+        // the prior static 24.04.2 — promoted here in #646 phase 2).
+        iso_url: "https://releases.ubuntu.com/24.04/ubuntu-24.04.4-live-server-amd64.iso",
+        sha256_url: "https://releases.ubuntu.com/24.04/SHA256SUMS",
+        sig_url: "https://releases.ubuntu.com/24.04/SHA256SUMS.gpg",
         sb: SbStatus::Signed("Canonical CA"),
         purpose: "Ubuntu LTS server installer. Validated under aegis-boot v0.12.0 #109.",
-        resolver: None,
+        resolver: Some(crate::catalog_resolvers::ubuntu_24_04_live_server),
     },
     Entry {
         slug: "ubuntu-24.04-desktop",
-        name: "Ubuntu Desktop 24.04.2 LTS",
+        name: "Ubuntu Desktop 24.04.4 LTS",
         arch: "x86_64",
         size_mib: 5800,
-        iso_url: "https://releases.ubuntu.com/24.04.2/ubuntu-24.04.2-desktop-amd64.iso",
-        sha256_url: "https://releases.ubuntu.com/24.04.2/SHA256SUMS",
-        sig_url: "https://releases.ubuntu.com/24.04.2/SHA256SUMS.gpg",
+        // Promoted from 24.04.2 → 24.04.4 by #646 phase 2 resolver
+        // detecting drift on releases.ubuntu.com/24.04/.
+        iso_url: "https://releases.ubuntu.com/24.04/ubuntu-24.04.4-desktop-amd64.iso",
+        sha256_url: "https://releases.ubuntu.com/24.04/SHA256SUMS",
+        sig_url: "https://releases.ubuntu.com/24.04/SHA256SUMS.gpg",
         sb: SbStatus::Signed("Canonical CA"),
         purpose: "Ubuntu LTS desktop installer. >4 GB → requires ext4 data partition.",
-        resolver: None,
+        resolver: Some(crate::catalog_resolvers::ubuntu_24_04_desktop),
     },
 ];
 
