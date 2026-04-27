@@ -190,15 +190,20 @@ pub const CATALOG: &[Entry] = &[
     },
     Entry {
         slug: "linuxmint-22-cinnamon",
-        name: "Linux Mint 22 Cinnamon",
+        name: "Linux Mint 22.3 Cinnamon",
         arch: "x86_64",
         size_mib: 2900,
-        iso_url: "https://mirrors.edge.kernel.org/linuxmint/stable/22/linuxmint-22-cinnamon-64bit.iso",
-        sha256_url: "https://mirrors.edge.kernel.org/linuxmint/stable/22/sha256sum.txt",
-        sig_url: "https://mirrors.edge.kernel.org/linuxmint/stable/22/sha256sum.txt.gpg",
+        // Promoted from /22/ to /22.3/ by #646 phase 3 resolver
+        // detecting drift on mirrors.edge.kernel.org/linuxmint/stable/.
+        // Mint accumulates point-release dirs (22, 22.1, 22.2, 22.3...)
+        // and the linuxmint_22_cinnamon resolver picks the highest
+        // within the 22 major.
+        iso_url: "https://mirrors.edge.kernel.org/linuxmint/stable/22.3/linuxmint-22.3-cinnamon-64bit.iso",
+        sha256_url: "https://mirrors.edge.kernel.org/linuxmint/stable/22.3/sha256sum.txt",
+        sig_url: "https://mirrors.edge.kernel.org/linuxmint/stable/22.3/sha256sum.txt.gpg",
         sb: SbStatus::Signed("Linux Mint"),
         purpose: "Friendly Ubuntu-derived desktop. Common operator install target.",
-        resolver: None,
+        resolver: Some(crate::catalog_resolvers::linuxmint_22_cinnamon),
     },
     Entry {
         // DistroWatch top-12-month rank #8 (April 2026). Manjaro

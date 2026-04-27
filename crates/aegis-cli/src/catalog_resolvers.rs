@@ -172,6 +172,86 @@ fn resolve_kali_with_html(html: &str, base: &str) -> Result<ResolvedUrls, Resolv
     })
 }
 
+/// Linux Mint Cinnamon — list `/linuxmint/stable/` for the highest
+/// `22.X/` subdirectory (point releases accumulate as new dirs in
+/// the major-version family), then resolve the cinnamon ISO inside.
+///
+/// Major-version 22 is pinned: when 23 ships, this resolver needs a
+/// new major or a major-agnostic variant (tracked under #646).
+pub fn linuxmint_22_cinnamon() -> Result<ResolvedUrls, ResolverError> {
+    const BASE: &str = "https://mirrors.edge.kernel.org/linuxmint/stable/";
+    let html = http_get(BASE)?;
+    resolve_linuxmint_22_with_html(&html, BASE, "cinnamon")
+}
+
+fn resolve_linuxmint_22_with_html(
+    parent_html: &str,
+    parent: &str,
+    flavor: &str,
+) -> Result<ResolvedUrls, ResolverError> {
+    // Find highest 22.X/ subdir. "22/" alone is also a valid major
+    // (the initial release before any point release shipped).
+    // Lexical sort would put "22.10" < "22.9", so compare numeric
+    // tuples (major, minor) instead.
+    let candidates = parse_versioned_subdirs(parent_html, "22");
+    let pick = candidates
+        .into_iter()
+        .max_by_key(|v| {
+            // Parse "22.3" → (22, 3); bare "22" → (22, 0).
+            let mut parts = v.splitn(2, '.');
+            let major = parts
+                .next()
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(0);
+            let minor = parts
+                .next()
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(0);
+            (major, minor)
+        })
+        .ok_or(ResolverError::NoMatch {
+            url: parent.to_string(),
+        })?;
+    let dir = format!("{parent}{pick}/");
+    // The file inside is named after the same version (e.g.
+    // linuxmint-22.3-cinnamon-64bit.iso). Don't fetch the subdir's
+    // listing — we know the filename pattern.
+    let filename = format!("linuxmint-{pick}-{flavor}-64bit.iso");
+    Ok(ResolvedUrls {
+        iso_url: format!("{dir}{filename}"),
+        sha256_url: format!("{dir}sha256sum.txt"),
+        sig_url: format!("{dir}sha256sum.txt.gpg"),
+    })
+}
+
+/// Pull `<href="<major>(\.X)?/"` entries from a directory listing
+/// and return the version strings ("22", "22.1", "22.2", "22.3"...).
+/// Used by Linux Mint where point-release dirs accumulate alongside
+/// the bare-major dir.
+fn parse_versioned_subdirs(html: &str, major: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut pos = 0;
+    while let Some(start) = html[pos..].find("href=\"") {
+        let after = pos + start + 6;
+        let Some(end_off) = html[after..].find('"') else {
+            break;
+        };
+        let candidate = &html[after..after + end_off];
+        if let Some(stripped) = candidate.strip_suffix('/')
+            && (stripped == major
+                || (stripped.starts_with(major)
+                    && stripped[major.len()..].starts_with('.')
+                    && stripped[major.len() + 1..]
+                        .chars()
+                        .all(|c| c.is_ascii_digit() || c == '.')))
+        {
+            out.push(stripped.to_string());
+        }
+        pos = after + end_off + 1;
+    }
+    out
+}
+
 /// Pull "X.Y.Z" version segments from `<a href="debian-X.Y.Z-..."`
 /// patterns. Conservative — operates on raw HTML without a real
 /// parser — but the directory listings we care about are simple
@@ -317,6 +397,56 @@ mod tests {
             r2.iso_url,
             "https://example.test/ubuntu-24.04.4-desktop-amd64.iso"
         );
+    }
+
+    #[test]
+    fn linuxmint_resolver_picks_highest_point_release_within_major() {
+        // Realistic snippet of mirrors.edge.kernel.org/linuxmint/stable/.
+        let html = r#"<html><body>
+            <a href="../">…</a>
+            <a href="20.3/">20.3/</a>
+            <a href="21/">21/</a>
+            <a href="22/">22/</a>
+            <a href="22.1/">22.1/</a>
+            <a href="22.2/">22.2/</a>
+            <a href="22.3/">22.3/</a>
+        </body></html>"#;
+        let r = resolve_linuxmint_22_with_html(html, "https://example.test/", "cinnamon")
+            .unwrap_or_else(|e| panic!("resolve: {e}"));
+        assert_eq!(
+            r.iso_url,
+            "https://example.test/22.3/linuxmint-22.3-cinnamon-64bit.iso"
+        );
+        assert_eq!(r.sha256_url, "https://example.test/22.3/sha256sum.txt");
+    }
+
+    #[test]
+    fn linuxmint_version_compare_is_numeric_not_lexical() {
+        // Future-proofing: when Mint hits 22.10, lexical sort would
+        // pick "22.9" as highest. Numeric tuple compare picks 22.10.
+        let html = r#"<html><body>
+            <a href="22.9/">22.9/</a>
+            <a href="22.10/">22.10/</a>
+        </body></html>"#;
+        let r = resolve_linuxmint_22_with_html(html, "https://example.test/", "cinnamon")
+            .unwrap_or_else(|e| panic!("resolve: {e}"));
+        assert!(
+            r.iso_url.contains("22.10"),
+            "expected 22.10 to win over 22.9: {}",
+            r.iso_url
+        );
+    }
+
+    #[test]
+    fn linuxmint_resolver_errors_when_no_matching_major() {
+        let html = r#"<html><body>
+            <a href="20.3/">20.3/</a>
+            <a href="21/">21/</a>
+        </body></html>"#;
+        let err = resolve_linuxmint_22_with_html(html, "https://example.test/", "cinnamon")
+            .err()
+            .unwrap_or_else(|| panic!("should fail"));
+        assert!(matches!(err, ResolverError::NoMatch { .. }));
     }
 
     #[test]
