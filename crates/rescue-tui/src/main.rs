@@ -572,6 +572,51 @@ where
                     active_verify = Some(rx);
                 }
             }
+            // `D` opens the ConfirmDelete prompt for the highlighted
+            // ISO row. Limited to pane=List so muscle-memory keypresses
+            // while reading the Info pane don't trigger a destructive
+            // prompt. `enter_delete` itself self-guards against
+            // FailedIso / RescueShell rows (returns None) so this arm
+            // is safe to fire even on a non-deletable cursor.
+            (Screen::List { selected }, KeyCode::Char('D')) if state.pane == state::Pane::List => {
+                let _ = state.enter_delete(*selected);
+            }
+            // ConfirmDelete handlers. `y/Y` performs the unlink and
+            // updates state on success / surfaces an Error screen on
+            // failure. `n/N/Esc` cancels back to List, cursor preserved.
+            (Screen::ConfirmDelete { selected }, KeyCode::Char('y' | 'Y')) => {
+                let cursor = *selected;
+                let target = state
+                    .real_index(cursor)
+                    .and_then(|i| state.isos.get(i))
+                    .map(|iso| iso.iso_path.clone());
+                if let Some(path) = target {
+                    match perform_iso_delete(&path) {
+                        Ok(()) => {
+                            tracing::info!(
+                                iso = %path.display(),
+                                "rescue-tui: ISO + sidecar removed via D-prompt confirm"
+                            );
+                            state.delete_completed();
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                iso = %path.display(),
+                                error = %e,
+                                "rescue-tui: ISO delete failed"
+                            );
+                            state.record_delete_error(&e);
+                        }
+                    }
+                } else {
+                    // Cursor went stale (filter shifted etc.) — bail
+                    // back to List rather than exploding.
+                    state.cancel_delete();
+                }
+            }
+            (Screen::ConfirmDelete { .. }, KeyCode::Char('n' | 'N') | KeyCode::Esc) => {
+                state.cancel_delete();
+            }
             (Screen::Confirm { selected }, KeyCode::Char('v')) => {
                 let real_idx = *selected;
                 if let Some(iso) = state.isos.get(real_idx) {
@@ -980,6 +1025,23 @@ fn epoch_to_civil_date(epoch_secs: u64) -> (i32, u32, u32) {
 /// just logs and continues; the operator already saw the verdict in
 /// the TUI).
 ///
+/// Unlink an ISO file and its `<iso>.aegis.toml` sidecar. Used by the
+/// `D` keybinding's confirm flow.
+///
+/// Returns Ok on success. Errors out at the first filesystem failure;
+/// in particular a missing sidecar is OK (returns Ok), but a sidecar
+/// that exists yet won't unlink (read-only mount, perms) is surfaced
+/// to the operator since an orphaned sidecar would mislead the next
+/// `iso-probe` walk into showing a tier-4 row for a non-existent ISO.
+fn perform_iso_delete(iso_path: &std::path::Path) -> Result<(), String> {
+    std::fs::remove_file(iso_path).map_err(|e| format!("unlink ISO: {e}"))?;
+    let sidecar = iso_probe::sidecar_path_for(iso_path);
+    if sidecar.exists() {
+        std::fs::remove_file(&sidecar).map_err(|e| format!("unlink sidecar: {e}"))?;
+    }
+    Ok(())
+}
+
 /// JSON record shape:
 /// `{"timestamp_epoch": 1700000000, "iso_path": "...", "outcome": {...}}`
 /// where `outcome` is the serialized [`iso_probe::HashVerification`].

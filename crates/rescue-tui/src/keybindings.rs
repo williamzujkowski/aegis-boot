@@ -51,6 +51,8 @@ pub(crate) enum ScreenKind {
     BlockedToast,
     /// Consent screen for elevated-risk boot paths (#347).
     Consent,
+    /// Confirm-before-delete prompt for an ISO on the data partition.
+    ConfirmDelete,
 }
 
 impl ScreenKind {
@@ -69,6 +71,7 @@ impl ScreenKind {
             Screen::Quitting => Self::Quitting,
             Screen::BlockedToast { .. } => Self::BlockedToast,
             Screen::Consent { .. } => Self::Consent,
+            Screen::ConfirmDelete { .. } => Self::ConfirmDelete,
         }
     }
 }
@@ -161,6 +164,31 @@ pub(crate) const KEYBINDINGS: &[Keybinding] = &[
         label: "Verify",
         description: "Re-compute sha256 of the selected ISO in a background thread",
         screens: &[ScreenKind::List, ScreenKind::Confirm],
+        pane: None,
+        while_filter_editing: false,
+    },
+    Keybinding {
+        key: "D",
+        label: "Delete",
+        description: "Delete the highlighted ISO + sidecar from the data partition (confirm prompt)",
+        screens: &[ScreenKind::List],
+        pane: Some(Pane::List),
+        while_filter_editing: false,
+    },
+    // ---- ConfirmDelete prompt --------------------------------------
+    Keybinding {
+        key: "y",
+        label: "Delete",
+        description: "Confirm — unlink the ISO and its `.aegis.toml` sidecar",
+        screens: &[ScreenKind::ConfirmDelete],
+        pane: None,
+        while_filter_editing: false,
+    },
+    Keybinding {
+        key: "n/Esc",
+        label: "Cancel",
+        description: "Cancel — return to the list without deleting",
+        screens: &[ScreenKind::ConfirmDelete],
         pane: None,
         while_filter_editing: false,
     },
@@ -400,10 +428,11 @@ mod tests {
                 buffer: String::new(),
             }),
             ScreenKind::from_screen(&Screen::Quitting),
+            ScreenKind::from_screen(&Screen::ConfirmDelete { selected: 0 }),
         ];
-        // Sanity: 7 inputs → 7 distinct kinds (Help / ConfirmQuit also
+        // Sanity: 8 inputs → 8 distinct kinds (Help / ConfirmQuit also
         // exist but require a `prior` Screen we'd need to construct).
         let distinct: std::collections::HashSet<ScreenKind> = kinds.iter().copied().collect();
-        assert_eq!(distinct.len(), 7);
+        assert_eq!(distinct.len(), 8);
     }
 }

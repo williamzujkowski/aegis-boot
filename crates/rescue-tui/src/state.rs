@@ -110,6 +110,16 @@ pub enum Screen {
         /// (granted → kexec; dismissed → Confirm).
         selected: usize,
     },
+    /// Confirm-before-delete prompt for the highlighted ISO. Opened
+    /// from the List screen via the `D` keybinding. `y` unlinks the
+    /// ISO + its `<iso>.aegis.toml` sidecar from the data partition;
+    /// `n`/`Esc` cancels back to List preserving the cursor.
+    ConfirmDelete {
+        /// View-cursor index (NOT the real index) of the ISO under
+        /// confirmation, mirroring [`Screen::List`]'s coordinate
+        /// space so the cursor returns to the same row on cancel.
+        selected: usize,
+    },
 }
 
 /// Reason for a [`Screen::Consent`] prompt. Each variant pairs with a
@@ -1033,6 +1043,92 @@ impl AppState {
         self.screen = Screen::Error {
             message,
             remedy,
+            return_to,
+        };
+    }
+
+    /// Open the [`Screen::ConfirmDelete`] prompt against the highlighted
+    /// list cursor. Returns the path of the ISO that's about to be
+    /// confirmed (caller may show a preview line). Returns `None` and
+    /// leaves screen unchanged when the cursor doesn't point at a real
+    /// ISO row (`FailedIso` / `RescueShell` are non-deletable here —
+    /// those rows aren't backed by a removable on-disk ISO file under
+    /// our management).
+    pub fn enter_delete(&mut self, selected: usize) -> Option<std::path::PathBuf> {
+        if !matches!(self.screen, Screen::List { .. }) {
+            return None;
+        }
+        let real_idx = self.real_index(selected)?;
+        let path = self.isos.get(real_idx)?.iso_path.clone();
+        self.screen = Screen::ConfirmDelete { selected };
+        Some(path)
+    }
+
+    /// Cancel the delete prompt, returning to the List with the cursor
+    /// preserved at the same row.
+    pub fn cancel_delete(&mut self) {
+        if let Screen::ConfirmDelete { selected } = self.screen {
+            self.screen = Screen::List { selected };
+        }
+    }
+
+    /// Apply a successful unlink: drop the corresponding ISO from
+    /// [`Self::isos`], clamp the cursor, and return to the List screen.
+    /// Caller is responsible for performing the actual filesystem
+    /// removal BEFORE invoking this; on filesystem failure use
+    /// [`Self::record_delete_error`] instead.
+    pub fn delete_completed(&mut self) {
+        let Screen::ConfirmDelete { selected } = self.screen else {
+            return;
+        };
+        let Some(real_idx) = self.real_index(selected) else {
+            self.screen = Screen::List { selected: 0 };
+            return;
+        };
+        // Drop any cmdline override pinned to this index, AND shift
+        // every override at a higher index down by one — vec-remove
+        // shifts the trailing entries' positions. Without this fix
+        // an operator who'd edited the cmdline of an ISO past the
+        // deleted one would see their edit attached to the wrong row.
+        self.cmdline_overrides.remove(&real_idx);
+        let shifted: std::collections::HashMap<usize, String> = self
+            .cmdline_overrides
+            .drain()
+            .map(|(idx, val)| {
+                if idx > real_idx {
+                    (idx - 1, val)
+                } else {
+                    (idx, val)
+                }
+            })
+            .collect();
+        self.cmdline_overrides = shifted;
+        self.isos.remove(real_idx);
+        let new_total = self.visible_entries().len();
+        let clamped = if new_total == 0 {
+            0
+        } else {
+            selected.min(new_total - 1)
+        };
+        self.screen = Screen::List { selected: clamped };
+    }
+
+    /// Record a delete-time filesystem error and surface it on the
+    /// Error screen. Mirrors [`Self::record_kexec_error`] so the
+    /// post-failure UX is uniform — one Error screen variant the
+    /// operator already knows how to dismiss.
+    pub fn record_delete_error(&mut self, err: &str) {
+        let return_to = match &self.screen {
+            Screen::ConfirmDelete { selected } => *selected,
+            _ => 0,
+        };
+        self.screen = Screen::Error {
+            message: format!("Delete failed: {err}"),
+            remedy: Some(
+                "Check that the data partition is mounted read-write \
+                 and that no other process holds the ISO open."
+                    .to_string(),
+            ),
             return_to,
         };
     }
@@ -2507,5 +2603,145 @@ mod tests {
     fn pane_toggle_method_returns_opposite() {
         assert_eq!(Pane::List.toggle(), Pane::Info);
         assert_eq!(Pane::Info.toggle(), Pane::List);
+    }
+
+    // ---- Delete-with-confirmation transitions ---------------------
+
+    #[test]
+    fn enter_delete_transitions_to_confirm_delete_for_real_iso() {
+        let mut s = AppState::new(vec![fake_iso("a"), fake_iso("b")]);
+        let Some(path) = s.enter_delete(0) else {
+            panic!("real ISO row should accept delete");
+        };
+        assert!(path.to_string_lossy().contains('a'));
+        match s.screen {
+            Screen::ConfirmDelete { selected } => assert_eq!(selected, 0),
+            other => panic!("expected ConfirmDelete, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn enter_delete_returns_none_outside_list_screen() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.screen = Screen::Confirm { selected: 0 };
+        assert!(
+            s.enter_delete(0).is_none(),
+            "delete prompt must not open from non-List screen"
+        );
+        assert!(
+            matches!(s.screen, Screen::Confirm { .. }),
+            "screen must be unchanged on refusal"
+        );
+    }
+
+    #[test]
+    fn enter_delete_returns_none_for_rescue_shell_row() {
+        // The rescue-shell synthetic row is the last entry. Cursor at
+        // that index must NOT open the delete prompt — there's no
+        // on-disk file backing it.
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        let last = s.visible_entries().len() - 1; // == 1 (one ISO + shell)
+        assert!(
+            s.enter_delete(last).is_none(),
+            "rescue-shell row must not be deletable"
+        );
+        assert!(
+            matches!(s.screen, Screen::List { .. }),
+            "screen unchanged when cursor is on a non-deletable row"
+        );
+    }
+
+    #[test]
+    fn cancel_delete_returns_to_list_preserving_cursor() {
+        let mut s = AppState::new(vec![fake_iso("a"), fake_iso("b")]);
+        let _ = s.enter_delete(1);
+        s.cancel_delete();
+        match s.screen {
+            Screen::List { selected } => assert_eq!(selected, 1, "cursor preserved on cancel"),
+            other => panic!("expected List, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn delete_completed_removes_iso_and_clamps_cursor() {
+        let mut s = AppState::new(vec![fake_iso("a"), fake_iso("b"), fake_iso("c")]);
+        // Sort defaults to Name, so visible order is a, b, c, <shell>.
+        let _ = s.enter_delete(2); // pick "c"
+        s.delete_completed();
+        assert_eq!(s.isos.len(), 2, "isos vec shrunk");
+        assert!(
+            s.isos.iter().all(|i| !i.label.contains('c')),
+            "deleted ISO removed from vec"
+        );
+        match s.screen {
+            Screen::List { selected } => {
+                // Visible len now = 2 ISOs + shell = 3; cursor was 2,
+                // new last is 2, so it stays put.
+                assert_eq!(selected, 2);
+            }
+            other => panic!("expected List, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn delete_completed_clamps_cursor_when_last_iso_removed() {
+        let mut s = AppState::new(vec![fake_iso("only")]);
+        let _ = s.enter_delete(0);
+        s.delete_completed();
+        // Now list = [<rescue-shell>] only — the synthetic row.
+        match s.screen {
+            Screen::List { selected } => {
+                assert_eq!(
+                    selected, 0,
+                    "cursor clamped to 0 when only the rescue-shell row remains"
+                );
+            }
+            other => panic!("expected List, got {other:?}"),
+        }
+        let entries = s.visible_entries();
+        assert_eq!(entries.len(), 1);
+        assert!(matches!(entries[0], ViewEntry::RescueShell));
+    }
+
+    #[test]
+    fn delete_completed_shifts_cmdline_overrides_for_higher_indices() {
+        // Operator edited cmdline of ISO at idx=2, then deletes ISO at
+        // idx=1. The override must follow the surviving ISO down to
+        // its new position (idx=1), not stay attached to a now-empty
+        // slot or float into a different ISO.
+        let mut s = AppState::new(vec![fake_iso("a"), fake_iso("b"), fake_iso("c")]);
+        s.cmdline_overrides.insert(2, "console=ttyS0".to_string());
+        // sort=Name → visible order matches insertion. enter_delete(1)
+        // picks "b" (real_idx=1 too).
+        let _ = s.enter_delete(1);
+        s.delete_completed();
+        assert_eq!(
+            s.cmdline_overrides.get(&1),
+            Some(&"console=ttyS0".to_string()),
+            "override at idx=2 must shift down to idx=1 after the deletion"
+        );
+        assert!(
+            !s.cmdline_overrides.contains_key(&2),
+            "no stale override at the now-out-of-range idx=2"
+        );
+    }
+
+    #[test]
+    fn record_delete_error_transitions_to_error_screen() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        let _ = s.enter_delete(0);
+        s.record_delete_error("read-only filesystem");
+        match s.screen {
+            Screen::Error {
+                message,
+                remedy,
+                return_to,
+            } => {
+                assert!(message.contains("read-only filesystem"));
+                assert_eq!(return_to, 0);
+                assert!(remedy.is_some(), "delete-error always carries remedy");
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
     }
 }

@@ -65,6 +65,9 @@ pub fn draw(frame: &mut Frame<'_>, state: &AppState) {
     if let Screen::Consent { kind, .. } = &state.screen {
         draw_consent_overlay(frame, area, state, *kind);
     }
+    if let Screen::ConfirmDelete { selected } = &state.screen {
+        draw_confirm_delete_overlay(frame, area, state, *selected);
+    }
 }
 
 fn draw_body(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
@@ -75,7 +78,11 @@ fn draw_body(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         other => other,
     };
     match effective {
-        Screen::List { selected } => draw_list(frame, area, state, *selected),
+        // List is the canonical backdrop; ConfirmDelete reuses it so
+        // the row about to be removed stays visible behind the prompt.
+        Screen::List { selected } | Screen::ConfirmDelete { selected } => {
+            draw_list(frame, area, state, *selected);
+        }
         // Confirm + Consent share the same backdrop: Consent (#347)
         // renders the Confirm screen underneath at the selected ISO so
         // the operator sees verdict context, then the consent overlay
@@ -450,6 +457,79 @@ fn draw_confirm_quit_overlay(frame: &mut Frame<'_>, area: Rect, state: &AppState
         )),
     ];
     let block = Block::default().borders(Borders::ALL).title(" Confirm ");
+    // Clear underlying buffer before rendering — see #629.
+    frame.render_widget(Clear, panel);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        panel,
+    );
+}
+
+/// Centered popup overlay for [`Screen::ConfirmDelete`]. Sits over the
+/// List screen — the underneath cursor still shows which row will be
+/// removed, and the y/N default biases against accidental deletes.
+fn draw_confirm_delete_overlay(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &AppState,
+    selected: usize,
+) {
+    const HINT: &str = " [y] delete    [n/Esc] cancel";
+
+    // Resolve the ISO under the cursor so the prompt names it. If the
+    // cursor doesn't point at a real ISO row we shouldn't be here at
+    // all (state guards against it), but render a fallback for safety.
+    let iso_label = state
+        .real_index(selected)
+        .and_then(|i| state.isos.get(i))
+        .map_or_else(|| "<unknown>".to_string(), |iso| iso.label.clone());
+    let iso_path = state
+        .real_index(selected)
+        .and_then(|i| state.isos.get(i))
+        .map_or_else(String::new, |iso| iso.iso_path.display().to_string());
+
+    let title_line = format!("Delete \"{iso_label}\"?");
+    let path_line = if iso_path.is_empty() {
+        String::new()
+    } else {
+        format!("Path: {iso_path}")
+    };
+    // Width: hug the longest line; cap to a comfortable panel size.
+    let content_width = title_line
+        .len()
+        .max(path_line.len())
+        .max(HINT.len())
+        .max("This also removes the .aegis.toml sidecar.".len());
+    let w = u16::try_from(content_width.saturating_add(4))
+        .unwrap_or(u16::MAX)
+        .min(area.width)
+        .min(80);
+    let h: u16 = 9;
+    let x = area.x + (area.width.saturating_sub(w)) / 2;
+    let y = area.y + (area.height.saturating_sub(h)) / 2;
+    let panel = Rect::new(x, y, w, h);
+    let mut lines = vec![Line::from(Span::styled(
+        title_line,
+        Style::default()
+            .fg(state.theme.warning)
+            .add_modifier(Modifier::BOLD),
+    ))];
+    if !path_line.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(path_line));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from("This also removes the .aegis.toml sidecar."));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        HINT,
+        Style::default().fg(state.theme.warning),
+    )));
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Confirm delete ");
     // Clear underlying buffer before rendering — see #629.
     frame.render_widget(Clear, panel);
     frame.render_widget(
