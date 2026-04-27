@@ -61,6 +61,45 @@ impl SbStatus {
     }
 }
 
+/// Operator-facing usage category for `aegis-boot recommend` grouping.
+/// Internal-only — not flowed into the `RecommendEntry` wire format
+/// (would bump the JSON schema version). When the catalog grows large
+/// enough that JSON consumers want to filter by category, promote
+/// this into `aegis_wire_formats::RecommendEntry` and bump the
+/// `RECOMMEND_REPORT_SCHEMA_VERSION`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Category {
+    /// Daily-driver desktop / workstation install media.
+    Desktop,
+    /// Server install / network-install media.
+    Server,
+    /// Generic OS installer (DVD, minimal, netinst — not server-targeted).
+    Installer,
+    /// Minimal / forensic / live-rescue shell.
+    Rescue,
+}
+
+impl Category {
+    fn header(self) -> &'static str {
+        match self {
+            Category::Desktop => "DESKTOP",
+            Category::Server => "SERVER",
+            Category::Installer => "INSTALLER",
+            Category::Rescue => "RESCUE / FORENSIC",
+        }
+    }
+
+    /// Stable display order — Desktop (most common) → Server → Installer → Rescue.
+    fn print_order() -> &'static [Category] {
+        &[
+            Category::Desktop,
+            Category::Server,
+            Category::Installer,
+            Category::Rescue,
+        ]
+    }
+}
+
 /// One catalog entry.
 pub struct Entry {
     /// Stable slug operators type: `ubuntu-24.04-live-server`.
@@ -81,6 +120,8 @@ pub struct Entry {
     pub sb: SbStatus,
     /// One-line reason an operator might want this image.
     pub purpose: &'static str,
+    /// Operator-facing usage category — drives `recommend` table grouping.
+    pub category: Category,
     /// Optional URL resolver that walks the project's directory
     /// listing or follows a "latest" redirect to discover the current
     /// ISO filename + sibling SHA / sig URLs (#646). Used by
@@ -124,6 +165,7 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://repo.almalinux.org/almalinux/9/isos/x86_64/CHECKSUM",
         sb: SbStatus::Signed("Red Hat / AlmaLinux"),
         purpose: "Free RHEL-rebuild minimal installer. Cross-distro kexec quirk possible.",
+        category: Category::Installer,
         resolver: None,
     },
     Entry {
@@ -136,6 +178,20 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/alpine-standard-3.20.3-x86_64.iso.asc",
         sb: SbStatus::UnsignedNeedsMok,
         purpose: "Minimal recovery / forensic shell. Tiny footprint.",
+        category: Category::Rescue,
+        resolver: None,
+    },
+    Entry {
+        slug: "alpine-3.20-standard-arm64",
+        name: "Alpine Linux 3.20 Standard (arm64)",
+        arch: "aarch64",
+        size_mib: 200,
+        iso_url: "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/aarch64/alpine-standard-3.20.3-aarch64.iso",
+        sha256_url: "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/aarch64/alpine-standard-3.20.3-aarch64.iso.sha256",
+        sig_url: "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/aarch64/alpine-standard-3.20.3-aarch64.iso.asc",
+        sb: SbStatus::UnsignedNeedsMok,
+        purpose: "Minimal recovery shell for arm64 hosts (Pi 4/5, ARM servers).",
+        category: Category::Rescue,
         resolver: None,
     },
     Entry {
@@ -152,7 +208,36 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/SHA512SUMS.sign",
         sb: SbStatus::Signed("Debian CA via shim"),
         purpose: "Minimal Debian network installer. DistroWatch top-5 popularity.",
+        category: Category::Installer,
         resolver: Some(crate::catalog_resolvers::debian_netinst),
+    },
+    Entry {
+        slug: "debian-13-netinst-arm64",
+        name: "Debian 13 (trixie) Netinst (arm64)",
+        arch: "aarch64",
+        size_mib: 720,
+        iso_url: "https://cdimage.debian.org/debian-cd/current/arm64/iso-cd/debian-13.4.0-arm64-netinst.iso",
+        sha256_url: "https://cdimage.debian.org/debian-cd/current/arm64/iso-cd/SHA512SUMS",
+        sig_url: "https://cdimage.debian.org/debian-cd/current/arm64/iso-cd/SHA512SUMS.sign",
+        sb: SbStatus::Signed("Debian CA via shim"),
+        purpose: "Debian network installer for arm64 (Pi, ARM servers, AWS Graviton).",
+        category: Category::Installer,
+        // arm64 path mirrors the amd64 one verbatim (just s/amd64/arm64/g);
+        // a follow-up resolver could share parsing with debian_netinst.
+        resolver: None,
+    },
+    Entry {
+        slug: "fedora-43-server",
+        name: "Fedora 43 Server (DVD)",
+        arch: "x86_64",
+        size_mib: 2300,
+        iso_url: "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Server/x86_64/iso/Fedora-Server-dvd-x86_64-43-1.6.iso",
+        sha256_url: "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Server/x86_64/iso/Fedora-Server-43-1.6-x86_64-CHECKSUM",
+        sig_url: "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Server/x86_64/iso/Fedora-Server-43-1.6-x86_64-CHECKSUM",
+        sb: SbStatus::Signed("Red Hat / Fedora"),
+        purpose: "Fedora server install media (full DVD; non-live).",
+        category: Category::Server,
+        resolver: None,
     },
     Entry {
         // DistroWatch top-12-month rank #9 (April 2026).
@@ -168,6 +253,20 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Workstation/x86_64/iso/Fedora-Workstation-43-1.6-x86_64-CHECKSUM",
         sb: SbStatus::Signed("Red Hat / Fedora"),
         purpose: "Fedora desktop live ISO. Cross-distro kexec quirk possible.",
+        category: Category::Desktop,
+        resolver: None,
+    },
+    Entry {
+        slug: "fedora-43-workstation-arm64",
+        name: "Fedora 43 Workstation Live (arm64)",
+        arch: "aarch64",
+        size_mib: 2400,
+        iso_url: "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Workstation/aarch64/iso/Fedora-Workstation-Live-43-1.6.aarch64.iso",
+        sha256_url: "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Workstation/aarch64/iso/Fedora-Workstation-43-1.6-aarch64-CHECKSUM",
+        sig_url: "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Workstation/aarch64/iso/Fedora-Workstation-43-1.6-aarch64-CHECKSUM",
+        sb: SbStatus::Signed("Red Hat / Fedora"),
+        purpose: "Fedora desktop live ISO for arm64 (Pi, ARM laptops).",
+        category: Category::Desktop,
         resolver: None,
     },
     Entry {
@@ -186,6 +285,7 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://cdimage.kali.org/current/SHA256SUMS.gpg",
         sb: SbStatus::Signed("Kali / Debian shim chain"),
         purpose: "Pentesting + forensics installer. Debian-derived signed chain.",
+        category: Category::Installer,
         resolver: Some(crate::catalog_resolvers::kali_installer),
     },
     Entry {
@@ -203,6 +303,7 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://mirrors.edge.kernel.org/linuxmint/stable/22.3/sha256sum.txt.gpg",
         sb: SbStatus::Signed("Linux Mint"),
         purpose: "Friendly Ubuntu-derived desktop. Common operator install target.",
+        category: Category::Desktop,
         resolver: Some(crate::catalog_resolvers::linuxmint_22_cinnamon),
     },
     Entry {
@@ -218,6 +319,7 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://download.manjaro.org/kde/26.0.4/manjaro-kde-26.0.4-260327-linux618.iso.sig",
         sb: SbStatus::UnsignedNeedsMok,
         purpose: "Arch-derived rolling release with KDE Plasma. Unsigned kernel.",
+        category: Category::Desktop,
         resolver: None,
     },
     Entry {
@@ -231,6 +333,7 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://downloads.sourceforge.net/project/mx-linux/Final/Xfce/MX-25.1_Xfce_ahs_x64.iso.sig",
         sb: SbStatus::Signed("Debian shim chain (MX kernel)"),
         purpose: "Debian-based Xfce desktop with newer kernel. Top-3 popularity.",
+        category: Category::Desktop,
         resolver: None,
     },
     Entry {
@@ -244,6 +347,7 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://download.opensuse.org/distribution/leap/15.6/iso/openSUSE-Leap-15.6-DVD-x86_64-Media.iso.sha256.asc",
         sb: SbStatus::Signed("SUSE CA"),
         purpose: "Enterprise-derived stable distribution. Full DVD installer.",
+        category: Category::Installer,
         resolver: None,
     },
     Entry {
@@ -259,6 +363,7 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://iso.pop-os.org/24.04/amd64/intel/9/SHA256SUMS.gpg",
         sb: SbStatus::Signed("System76 / Canonical CA"),
         purpose: "Ubuntu-derived desktop tuned for System76 hardware.",
+        category: Category::Desktop,
         // No resolver yet: iso.pop-os.org returns HTTP 403 on
         // directory listings (nginx autoindex off). The published
         // build number lives in the JSON payload at /api/v1 instead.
@@ -278,6 +383,7 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://download.rockylinux.org/pub/rocky/9/isos/x86_64/CHECKSUM",
         sb: SbStatus::Signed("Rocky Linux"),
         purpose: "Free RHEL-rebuild minimal installer. Cross-distro kexec quirk possible.",
+        category: Category::Installer,
         resolver: None,
     },
     Entry {
@@ -294,7 +400,24 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://releases.ubuntu.com/24.04/SHA256SUMS.gpg",
         sb: SbStatus::Signed("Canonical CA"),
         purpose: "Ubuntu LTS server installer. Validated under aegis-boot v0.12.0 #109.",
+        category: Category::Server,
         resolver: Some(crate::catalog_resolvers::ubuntu_24_04_live_server),
+    },
+    Entry {
+        slug: "ubuntu-24.04-live-server-arm64",
+        name: "Ubuntu Server 24.04.4 LTS (arm64)",
+        arch: "aarch64",
+        size_mib: 2700,
+        // Ubuntu hosts arm64 server on cdimage.ubuntu.com (not
+        // releases.ubuntu.com — that's amd64 only). The /noble/release/
+        // path tracks the latest LTS point release.
+        iso_url: "https://cdimage.ubuntu.com/releases/noble/release/ubuntu-24.04.4-live-server-arm64.iso",
+        sha256_url: "https://cdimage.ubuntu.com/releases/noble/release/SHA256SUMS",
+        sig_url: "https://cdimage.ubuntu.com/releases/noble/release/SHA256SUMS.gpg",
+        sb: SbStatus::Signed("Canonical CA"),
+        purpose: "Ubuntu LTS server installer for arm64 (Graviton, Ampere, Pi 4/5).",
+        category: Category::Server,
+        resolver: None,
     },
     Entry {
         slug: "ubuntu-24.04-desktop",
@@ -308,6 +431,7 @@ pub const CATALOG: &[Entry] = &[
         sig_url: "https://releases.ubuntu.com/24.04/SHA256SUMS.gpg",
         sb: SbStatus::Signed("Canonical CA"),
         purpose: "Ubuntu LTS desktop installer. >4 GB → requires ext4 data partition.",
+        category: Category::Desktop,
         resolver: Some(crate::catalog_resolvers::ubuntu_24_04_desktop),
     },
 ];
@@ -635,28 +759,35 @@ fn print_help() {
 fn print_table() {
     println!("Curated ISO catalog ({} entries):", CATALOG.len());
     println!();
-    println!(
-        "  {:<28}  {:<38}  {:>7}  SECURE BOOT",
-        "SLUG", "NAME", "SIZE"
-    );
-    println!(
-        "  {:<28}  {:<38}  {:>7}  {}",
-        "-".repeat(28),
-        "-".repeat(38),
-        "-".repeat(7),
-        "-".repeat(28),
-    );
-    for e in CATALOG {
+    for category in Category::print_order() {
+        let group: Vec<&Entry> = CATALOG.iter().filter(|e| e.category == *category).collect();
+        if group.is_empty() {
+            continue;
+        }
+        println!("{} ({})", category.header(), group.len());
         println!(
-            "  {:<28}  {:<38}  {:>7}  {} {}",
-            e.slug,
-            truncate(e.name, 38),
-            humanize(e.size_mib),
-            e.sb.glyph(),
-            e.sb.label()
+            "  {:<32}  {:<38}  {:>7}  SECURE BOOT",
+            "SLUG", "NAME", "SIZE"
         );
+        println!(
+            "  {}  {}  {}  {}",
+            "-".repeat(32),
+            "-".repeat(38),
+            "-".repeat(7),
+            "-".repeat(28),
+        );
+        for e in group {
+            println!(
+                "  {:<32}  {:<38}  {:>7}  {} {}",
+                e.slug,
+                truncate(e.name, 38),
+                humanize(e.size_mib),
+                e.sb.glyph(),
+                e.sb.label()
+            );
+        }
+        println!();
     }
-    println!();
     println!("Use 'aegis-boot recommend <SLUG>' for download + verify instructions.");
     println!("Entries marked '\u{2717} unsigned (MOK needed)' require explicit MOK");
     println!("enrollment of the distro's signing key — see docs/UNSIGNED_KERNEL.md.");
@@ -819,6 +950,32 @@ mod tests {
                 e.sig_url.starts_with("https://"),
                 "{} sig_url not https",
                 e.slug
+            );
+        }
+    }
+
+    #[test]
+    fn every_category_in_print_order_has_an_entry() {
+        // Sanity gate: if a category becomes empty, drop it from
+        // print_order (or add an entry). Avoids printing an empty
+        // section header in the table.
+        for category in Category::print_order() {
+            let count = CATALOG.iter().filter(|e| e.category == *category).count();
+            assert!(
+                count > 0,
+                "category {category:?} declared in print_order but has zero entries"
+            );
+        }
+    }
+
+    #[test]
+    fn arch_field_is_x86_64_or_aarch64() {
+        for e in CATALOG {
+            assert!(
+                matches!(e.arch, "x86_64" | "aarch64"),
+                "{} has unexpected arch {}",
+                e.slug,
+                e.arch
             );
         }
     }
