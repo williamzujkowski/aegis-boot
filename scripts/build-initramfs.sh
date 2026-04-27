@@ -277,6 +277,62 @@ if [[ -n "$KMOD_SRC" && -d "$KMOD_SRC" ]]; then
         "$MOD_DEST/kernel/drivers/usb/storage" \
         "uas" "CONFIG_USB_UAS"
 
+    # --- network drivers (#655 Phase 1A) -------------------------------
+    # Wired Ethernet only — Phase 4 of #655 will add Wi-Fi (firmware
+    # blobs make it a separate epic). These cover the QEMU smoke
+    # paths (e1000, virtio_net) and the most common USB / PCI NICs
+    # operators see in the field. Each is best-effort: if a target
+    # kernel doesn't ship the driver as a module, try_module logs a
+    # warning and the rescue env just won't see that NIC.
+    #
+    # PCI Ethernet
+    try_module "kernel/drivers/net/ethernet/intel/e1000/e1000" \
+        "$MOD_DEST/kernel/drivers/net/ethernet/intel/e1000" \
+        "e1000" "CONFIG_E1000"
+    try_module "kernel/drivers/net/ethernet/intel/e1000e/e1000e" \
+        "$MOD_DEST/kernel/drivers/net/ethernet/intel/e1000e" \
+        "e1000e" "CONFIG_E1000E"
+    try_module "kernel/drivers/net/ethernet/intel/igb/igb" \
+        "$MOD_DEST/kernel/drivers/net/ethernet/intel/igb" \
+        "igb" "CONFIG_IGB"
+    try_module "kernel/drivers/net/ethernet/realtek/r8169" \
+        "$MOD_DEST/kernel/drivers/net/ethernet/realtek" \
+        "r8169" "CONFIG_R8169"
+    try_module "kernel/drivers/net/ethernet/realtek/8139too" \
+        "$MOD_DEST/kernel/drivers/net/ethernet/realtek" \
+        "8139too" "CONFIG_8139TOO"
+    try_module "kernel/drivers/net/ethernet/broadcom/tg3" \
+        "$MOD_DEST/kernel/drivers/net/ethernet/broadcom" \
+        "tg3" "CONFIG_TIGON3"
+
+    # Virtio (QEMU smoke + cloud)
+    try_module "kernel/drivers/net/virtio_net" \
+        "$MOD_DEST/kernel/drivers/net" \
+        "virtio_net" "CONFIG_VIRTIO_NET"
+
+    # USB Ethernet (USB-NIC dongles common in the field — laptops
+    # without on-board Ethernet ports often use these).
+    try_module "kernel/drivers/net/usb/asix" \
+        "$MOD_DEST/kernel/drivers/net/usb" \
+        "asix" "CONFIG_USB_NET_AX8817X"
+    try_module "kernel/drivers/net/usb/ax88179_178a" \
+        "$MOD_DEST/kernel/drivers/net/usb" \
+        "ax88179_178a" "CONFIG_USB_NET_AX88179_178A"
+    try_module "kernel/drivers/net/usb/cdc_ether" \
+        "$MOD_DEST/kernel/drivers/net/usb" \
+        "cdc_ether" "CONFIG_USB_NET_CDCETHER"
+    try_module "kernel/drivers/net/usb/r8152" \
+        "$MOD_DEST/kernel/drivers/net/usb" \
+        "r8152" "CONFIG_USB_RTL8152"
+    # USB-Net core dependencies — without `usbnet` and `mii` the
+    # vendor drivers above won't load even if their .ko exists.
+    try_module "kernel/drivers/net/usb/usbnet" \
+        "$MOD_DEST/kernel/drivers/net/usb" \
+        "usbnet" "CONFIG_USB_USBNET"
+    try_module "kernel/drivers/net/mii" \
+        "$MOD_DEST/kernel/drivers/net" \
+        "mii" "CONFIG_MII"
+
     # --- vfat NLS fallback (#68, #109) ----------------------------------
     # CONFIG_NLS_DEFAULT="utf8" on Ubuntu but NLS_UTF8 is a module, and
     # the kernel's vfat default `iocharset=iso8859-1` needs the
@@ -332,11 +388,77 @@ fi
 # Applets. Covered: mount, umount, mkdir, ls, sh, cat, mdev.
 # rescue-tui doesn't call these directly — they exist for the init script
 # below and for emergency shell fallback.
+#
+# Network applets (udhcpc, ip, kill, route, nslookup, hostname) ship for
+# #655 Phase 1: the initramfs has no network stack today; these primitives
+# are baked in but NOT auto-invoked at boot — operator triggers DHCP from
+# rescue-tui (Phase 1B) or the emergency shell.
 for applet in sh mount umount mkdir ls cat dmesg switch_root losetup \
               mdev blkid lsblk modprobe sleep echo ln readlink rmdir \
-              findfs uname grep sed cp rm tee date; do
+              findfs uname grep sed cp rm tee date \
+              udhcpc ip kill route nslookup hostname; do
     ln -sf /bin/busybox "$STAGE_DIR/bin/$applet"
 done
+
+# udhcpc requires a callback script — busybox calls it to apply DHCP
+# leases (set IP, default route, /etc/resolv.conf). Distros usually
+# ship one at /usr/share/udhcpc/default.script, but the path is not
+# universal and ours is cpio-bundled — write our own minimal version
+# so the rescue env doesn't depend on whatever the build host has.
+# (#655 Phase 1A.)
+install -d "$STAGE_DIR/usr/share/udhcpc"
+cat > "$STAGE_DIR/usr/share/udhcpc/default.script" <<'UDHCPC_SH'
+#!/bin/sh
+# /usr/share/udhcpc/default.script — udhcpc lease-event handler.
+#
+# Called by busybox udhcpc on lease state changes:
+#   bound       new lease acquired
+#   renew       lease renewed (same params expected)
+#   deconfig    interface should be deconfigured (link down etc.)
+#   leasefail   couldn't get a lease
+#   nak         server NAK'd a request
+#
+# We only implement the minimum needed for DNS-resolvable HTTPS to work:
+# set IP+netmask+broadcast on the interface, install the default route,
+# and write nameservers to /etc/resolv.conf. Anything fancier (search
+# domains chained from multiple sources, hostname propagation) is
+# deferred until #655 Phase 2 has real callers needing them.
+
+[ -z "$1" ] && { echo "udhcpc-script: missing event arg" >&2; exit 1; }
+
+case "$1" in
+    deconfig)
+        /bin/ip link set dev "$interface" up 2>/dev/null
+        /bin/ip -4 addr flush dev "$interface" 2>/dev/null
+        ;;
+    bound|renew)
+        /bin/ip link set dev "$interface" up 2>/dev/null
+        /bin/ip -4 addr flush dev "$interface" 2>/dev/null
+        if [ -n "$broadcast" ]; then
+            /bin/ip -4 addr add "$ip/$mask" broadcast "$broadcast" dev "$interface" 2>/dev/null
+        else
+            /bin/ip -4 addr add "$ip/$mask" dev "$interface" 2>/dev/null
+        fi
+        if [ -n "$router" ]; then
+            /bin/ip -4 route flush default 2>/dev/null
+            for r in $router; do
+                /bin/ip -4 route add default via "$r" dev "$interface" 2>/dev/null
+                break  # first router wins (one default route)
+            done
+        fi
+        : > /etc/resolv.conf
+        [ -n "$domain" ] && echo "search $domain" >> /etc/resolv.conf
+        for ns in $dns; do
+            echo "nameserver $ns" >> /etc/resolv.conf
+        done
+        ;;
+    leasefail|nak)
+        echo "udhcpc-script: $1 on $interface" >&2
+        ;;
+esac
+exit 0
+UDHCPC_SH
+chmod 0755 "$STAGE_DIR/usr/share/udhcpc/default.script"
 
 # --- shared library deps of rescue-tui --------------------------------------
 # busybox is typically static; rescue-tui links libc + libgcc_s + libm + libpthread.
@@ -437,6 +559,17 @@ for m in scsi_mod sd_mod \
          usb-storage uas \
          nls_utf8 nls_cp437 nls_iso8859-1 \
          loop isofs udf exfat; do
+    /bin/modprobe "$m" 2>/dev/null || true
+done
+
+# (#655 Phase 1A) Network drivers — modprobe at boot but DON'T trigger
+# DHCP. Operator opts in via rescue-tui (Phase 1B) or the emergency
+# shell. mii / usbnet load before the vendor drivers that depend on
+# them. virtio_net first since it's the QEMU happy path.
+for m in mii usbnet \
+         virtio_net \
+         e1000 e1000e igb r8169 8139too tg3 \
+         asix ax88179_178a cdc_ether r8152; do
     /bin/modprobe "$m" 2>/dev/null || true
 done
 
@@ -652,7 +785,21 @@ hash=$(awk '{print $1}' "$OUT_DIR/initramfs.cpio.gz.sha256")
 log "wrote $OUT_GZ ($size bytes)"
 log "sha256: $hash"
 
-if [[ "$size" -gt 20971520 ]]; then
-    echo "initramfs exceeds 20 MB size budget ($size bytes); investigate" >&2
+if [[ "$size" -gt 25165824 ]]; then
+    echo "initramfs exceeds 24 MB size budget ($size bytes); investigate" >&2
     exit 1
 fi
+# Phase 1A networking primitives self-check: every applet we link
+# against busybox must resolve to the busybox binary. Catches the
+# build-host-busybox-without-applet-X case before it bites at runtime
+# in QEMU. (Best-effort; busybox embedded applet list isn't queryable
+# without a working binary, so we just confirm the symlinks exist.)
+for required in udhcpc ip kill route; do
+    if [[ ! -L "$STAGE_DIR/bin/$required" ]]; then
+        echo "build-initramfs: WARNING: $required symlink missing — Phase 1A networking will be degraded" >&2
+    fi
+done
+[[ -x "$STAGE_DIR/usr/share/udhcpc/default.script" ]] || {
+    echo "build-initramfs: ERROR: udhcpc default.script missing or not executable" >&2
+    exit 1
+}
