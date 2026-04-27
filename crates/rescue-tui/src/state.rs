@@ -120,6 +120,53 @@ pub enum Screen {
         /// space so the cursor returns to the same row on cancel.
         selected: usize,
     },
+    /// Network overlay (#655 Phase 1B). Shows ethernet interfaces,
+    /// lets the operator opt in to DHCP per-interface. `n` from any
+    /// non-overlay screen opens it; `Esc`/`q` returns to `prior`.
+    /// Networking is opt-in by design — Phase 1A bakes the primitives
+    /// but never auto-fires DHCP.
+    Network {
+        /// Interfaces enumerated at overlay-open time.
+        interfaces: Vec<crate::network::NetworkIface>,
+        /// Index of the highlighted row in `interfaces`.
+        selected: usize,
+        /// Per-interface op state (Idle / Pending / Success / Failed).
+        op: NetworkOp,
+        /// Boxed prior screen so dismiss restores it without churn.
+        prior: Box<Screen>,
+    },
+}
+
+/// Network-overlay sub-state. `Idle` is the default at open;
+/// `Pending` flips on Enter while the worker thread runs udhcpc;
+/// `Success`/`Failed` show the outcome and let the operator pick
+/// another interface or close the overlay.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NetworkOp {
+    /// No active operation. Showing the static interface table.
+    Idle,
+    /// `udhcpc` running on `iface`. Renderer shows a spinner-line.
+    Pending {
+        /// Name of the interface DHCP is being attempted on.
+        iface: String,
+        /// Latest progress hint from the worker (empty until first
+        /// `NetworkMsg::Progress` arrives).
+        last_status: String,
+    },
+    /// Lease acquired. Renderer shows IPv4 + gateway + DNS.
+    Success {
+        /// Interface that succeeded.
+        iface: String,
+        /// Acquired lease parameters.
+        lease: crate::network::NetworkLease,
+    },
+    /// `udhcpc` exited non-zero or the worker failed to spawn it.
+    Failed {
+        /// Interface that failed.
+        iface: String,
+        /// Human-readable failure message.
+        err: String,
+    },
 }
 
 /// Reason for a [`Screen::Consent`] prompt. Each variant pairs with a
@@ -1131,6 +1178,136 @@ impl AppState {
             ),
             return_to,
         };
+    }
+
+    /// Open the [`Screen::Network`] overlay. Caller passes the
+    /// already-enumerated iface list (state machine is pure — no I/O
+    /// here). Stores the current screen as `prior` so `cancel_network`
+    /// can restore it on dismiss.
+    pub fn enter_network(&mut self, interfaces: Vec<crate::network::NetworkIface>) {
+        // Don't stack — re-opening from inside Network is a no-op.
+        if matches!(self.screen, Screen::Network { .. }) {
+            return;
+        }
+        let prior = std::mem::replace(&mut self.screen, Screen::Quitting);
+        self.screen = Screen::Network {
+            interfaces,
+            selected: 0,
+            op: NetworkOp::Idle,
+            prior: Box::new(prior),
+        };
+    }
+
+    /// Cancel the Network overlay, returning to the screen that was
+    /// active when it was opened.
+    pub fn cancel_network(&mut self) {
+        if let Screen::Network { prior, .. } = std::mem::replace(&mut self.screen, Screen::Quitting)
+        {
+            self.screen = *prior;
+        }
+    }
+
+    /// Move the Network-overlay cursor by `delta` (`-1` = up, `+1` =
+    /// down). Clamps to `[0, interfaces.len() - 1]`.
+    pub fn network_move_selection(&mut self, delta: isize) {
+        if let Screen::Network {
+            interfaces,
+            selected,
+            ..
+        } = &mut self.screen
+        {
+            let len = interfaces.len();
+            if len == 0 {
+                *selected = 0;
+                return;
+            }
+            let max = len.saturating_sub(1);
+            let new = i64::try_from(*selected).unwrap_or(0)
+                + i64::from(i32::try_from(delta).unwrap_or(0));
+            let clamped = new.clamp(0, i64::try_from(max).unwrap_or(0));
+            *selected = usize::try_from(clamped).unwrap_or(0);
+        }
+    }
+
+    /// Refresh the iface table (e.g. operator pressed `r`). Replaces
+    /// the cached list with `next` and resets the cursor + op state.
+    pub fn network_refresh(&mut self, next: Vec<crate::network::NetworkIface>) {
+        if let Screen::Network {
+            interfaces,
+            selected,
+            op,
+            ..
+        } = &mut self.screen
+        {
+            *interfaces = next;
+            *selected = 0;
+            *op = NetworkOp::Idle;
+        }
+    }
+
+    /// Mark `iface` as DHCP-pending. Returns the iface name iff the
+    /// transition fired (caller spawns the worker). Returns `None`
+    /// when there's no selected iface or we're already in a non-Idle
+    /// op state — pressing Enter twice during a Pending should not
+    /// double-fire the worker.
+    pub fn network_begin_dhcp(&mut self) -> Option<String> {
+        if let Screen::Network {
+            interfaces,
+            selected,
+            op,
+            ..
+        } = &mut self.screen
+        {
+            if !matches!(
+                op,
+                NetworkOp::Idle | NetworkOp::Failed { .. } | NetworkOp::Success { .. }
+            ) {
+                return None;
+            }
+            let iface = interfaces.get(*selected)?.name.clone();
+            *op = NetworkOp::Pending {
+                iface: iface.clone(),
+                last_status: String::new(),
+            };
+            return Some(iface);
+        }
+        None
+    }
+
+    /// Update the Pending state's `last_status` text. Worker calls this
+    /// via the main loop's `NetworkMsg::Progress` dispatch.
+    pub fn network_progress(&mut self, status: String) {
+        if let Screen::Network {
+            op: NetworkOp::Pending { last_status, .. },
+            ..
+        } = &mut self.screen
+        {
+            *last_status = status;
+        }
+    }
+
+    /// Apply the worker's terminal `NetworkMsg::Done` result. Flips
+    /// the op state to Success or Failed and updates the highlighted
+    /// iface row's `ipv4` so the table column reflects the new lease
+    /// without forcing a refresh.
+    pub fn network_finish_dhcp(
+        &mut self,
+        iface: String,
+        result: Result<crate::network::NetworkLease, String>,
+    ) {
+        if let Screen::Network { interfaces, op, .. } = &mut self.screen {
+            match result {
+                Ok(lease) => {
+                    if let Some(row) = interfaces.iter_mut().find(|i| i.name == iface) {
+                        row.ipv4 = Some(lease.ipv4.clone());
+                    }
+                    *op = NetworkOp::Success { iface, lease };
+                }
+                Err(err) => {
+                    *op = NetworkOp::Failed { iface, err };
+                }
+            }
+        }
     }
 
     /// Open the help overlay over the current screen. (#85)
@@ -2742,6 +2919,221 @@ mod tests {
                 assert!(remedy.is_some(), "delete-error always carries remedy");
             }
             other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    // ---- Network overlay (#655 Phase 1B) -------------------------
+
+    fn fake_iface(name: &str, up: bool) -> crate::network::NetworkIface {
+        crate::network::NetworkIface {
+            name: name.to_string(),
+            link_state: if up {
+                crate::network::LinkState::Up
+            } else {
+                crate::network::LinkState::Down
+            },
+            ipv4: None,
+        }
+    }
+
+    #[test]
+    fn enter_network_stores_prior_screen_for_dismiss() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        // Start on List with cursor at 1.
+        s.screen = Screen::List { selected: 1 };
+        s.enter_network(vec![fake_iface("eth0", true)]);
+        match &s.screen {
+            Screen::Network {
+                interfaces,
+                selected,
+                op,
+                prior,
+            } => {
+                assert_eq!(interfaces.len(), 1);
+                assert_eq!(*selected, 0);
+                assert_eq!(*op, NetworkOp::Idle);
+                assert!(matches!(**prior, Screen::List { selected: 1 }));
+            }
+            other => panic!("expected Network, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cancel_network_restores_prior_screen() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.screen = Screen::List { selected: 0 };
+        s.enter_network(vec![fake_iface("eth0", true)]);
+        s.cancel_network();
+        assert!(matches!(s.screen, Screen::List { selected: 0 }));
+    }
+
+    #[test]
+    fn enter_network_is_noop_when_already_in_network() {
+        // Re-entering Network from Network must not reset the cursor /
+        // op state — cheap accidental keypress shouldn't lose context.
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.enter_network(vec![fake_iface("eth0", true), fake_iface("eth1", false)]);
+        s.network_move_selection(1);
+        s.enter_network(vec![fake_iface("foo", true)]);
+        match &s.screen {
+            Screen::Network {
+                interfaces,
+                selected,
+                ..
+            } => {
+                assert_eq!(interfaces.len(), 2, "second enter_network ignored");
+                assert_eq!(*selected, 1, "cursor preserved");
+            }
+            other => panic!("expected Network, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn network_move_selection_clamps_within_bounds() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.enter_network(vec![fake_iface("eth0", true), fake_iface("eth1", true)]);
+        s.network_move_selection(-5); // saturate at 0
+        assert!(
+            matches!(s.screen, Screen::Network { selected: 0, .. }),
+            "underflow clamped to 0"
+        );
+        s.network_move_selection(99); // saturate at len-1
+        assert!(
+            matches!(s.screen, Screen::Network { selected: 1, .. }),
+            "overflow clamped to last index"
+        );
+    }
+
+    #[test]
+    fn network_begin_dhcp_returns_iface_and_flips_to_pending() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.enter_network(vec![fake_iface("eth0", true)]);
+        let Some(iface) = s.network_begin_dhcp() else {
+            panic!("Idle → Pending should return iface name");
+        };
+        assert_eq!(iface, "eth0");
+        match &s.screen {
+            Screen::Network {
+                op: NetworkOp::Pending { iface, last_status },
+                ..
+            } => {
+                assert_eq!(iface, "eth0");
+                assert!(last_status.is_empty());
+            }
+            other => panic!("expected Pending, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn network_begin_dhcp_is_noop_during_pending() {
+        // Double-Enter while a worker is still running must not
+        // double-spawn — Pending → Pending suppression.
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.enter_network(vec![fake_iface("eth0", true)]);
+        let _ = s.network_begin_dhcp();
+        assert!(
+            s.network_begin_dhcp().is_none(),
+            "second begin_dhcp during Pending must return None"
+        );
+    }
+
+    #[test]
+    fn network_finish_dhcp_success_updates_row_ipv4_and_op() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.enter_network(vec![fake_iface("eth0", true)]);
+        let _ = s.network_begin_dhcp();
+        let lease = crate::network::NetworkLease {
+            ipv4: "192.168.1.42/24".to_string(),
+            gateway: Some("192.168.1.1".to_string()),
+            nameservers: vec!["8.8.8.8".to_string()],
+        };
+        s.network_finish_dhcp("eth0".to_string(), Ok(lease.clone()));
+        match &s.screen {
+            Screen::Network {
+                interfaces,
+                op: NetworkOp::Success { iface, lease: got },
+                ..
+            } => {
+                assert_eq!(interfaces[0].ipv4.as_deref(), Some("192.168.1.42/24"));
+                assert_eq!(iface, "eth0");
+                assert_eq!(got, &lease);
+            }
+            other => panic!("expected Success, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn network_finish_dhcp_failure_keeps_row_ipv4_unchanged() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.enter_network(vec![fake_iface("eth0", true)]);
+        let _ = s.network_begin_dhcp();
+        s.network_finish_dhcp("eth0".to_string(), Err("NAK from server".to_string()));
+        match &s.screen {
+            Screen::Network {
+                interfaces,
+                op: NetworkOp::Failed { iface, err },
+                ..
+            } => {
+                assert_eq!(interfaces[0].ipv4, None, "iface row unchanged on failure");
+                assert_eq!(iface, "eth0");
+                assert!(err.contains("NAK"));
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn network_progress_updates_pending_status_only() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.enter_network(vec![fake_iface("eth0", true)]);
+        // Progress before any begin_dhcp should be a no-op (we're still
+        // in Idle).
+        s.network_progress("ignored".to_string());
+        assert!(
+            matches!(
+                s.screen,
+                Screen::Network {
+                    op: NetworkOp::Idle,
+                    ..
+                }
+            ),
+            "progress in Idle must not advance state"
+        );
+        let _ = s.network_begin_dhcp();
+        s.network_progress("trying lease 2/5".to_string());
+        match &s.screen {
+            Screen::Network {
+                op: NetworkOp::Pending { last_status, .. },
+                ..
+            } => {
+                assert_eq!(last_status, "trying lease 2/5");
+            }
+            other => panic!("expected Pending, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn network_refresh_replaces_iface_table_and_resets_op() {
+        let mut s = AppState::new(vec![fake_iso("a")]);
+        s.enter_network(vec![fake_iface("eth0", true)]);
+        let _ = s.network_begin_dhcp();
+        s.network_refresh(vec![
+            fake_iface("eth1", true),
+            fake_iface("eth2", true),
+            fake_iface("eth3", false),
+        ]);
+        match &s.screen {
+            Screen::Network {
+                interfaces,
+                selected,
+                op,
+                ..
+            } => {
+                assert_eq!(interfaces.len(), 3);
+                assert_eq!(*selected, 0, "cursor reset on refresh");
+                assert_eq!(*op, NetworkOp::Idle, "op reset on refresh");
+            }
+            other => panic!("expected Network, got {other:?}"),
         }
     }
 }

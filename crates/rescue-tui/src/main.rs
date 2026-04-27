@@ -11,7 +11,7 @@
 
 // All modules now live in lib.rs so sibling binaries like
 // tiers-docgen (#462) can share them. main.rs is a thin driver.
-use rescue_tui::{failure_log, persistence, render, state, theme, tier_b_log, tpm};
+use rescue_tui::{failure_log, network, persistence, render, state, theme, tier_b_log, tpm};
 
 use std::collections::HashSet;
 use std::env;
@@ -308,12 +308,36 @@ where
     // Active verify-now worker (#89). None when no verification is in
     // flight; Some(rx) while the worker thread is streaming progress.
     let mut active_verify: Option<Receiver<VerifyMsg>> = None;
+    // Active DHCP worker (#655 Phase 1B). Same ownership shape as
+    // verify: Some(rx) while udhcpc runs, None otherwise.
+    let mut active_dhcp: Option<Receiver<NetworkMsg>> = None;
 
     loop {
         terminal.draw(|f| render::draw(f, state))?;
 
         if state.screen == Screen::Quitting {
             return Ok(());
+        }
+
+        // Drain DHCP worker messages.
+        if let Some(rx) = active_dhcp.as_ref() {
+            loop {
+                match rx.try_recv() {
+                    Ok(NetworkMsg::Progress { status }) => {
+                        state.network_progress(status);
+                    }
+                    Ok(NetworkMsg::Done { iface, result }) => {
+                        state.network_finish_dhcp(iface, result);
+                        active_dhcp = None;
+                        break;
+                    }
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        active_dhcp = None;
+                        break;
+                    }
+                }
+            }
         }
 
         // Drain any pending verify-now progress / completion.
@@ -460,6 +484,12 @@ where
                 KeyCode::Char('q') => {
                     if matches!(state.screen, Screen::Confirm { .. }) {
                         state.cancel_confirmation();
+                    } else if matches!(state.screen, Screen::Network { .. }) {
+                        // Network overlay treats 'q' as Close (parallel
+                        // to Confirm). Without this, 'q' would always
+                        // open the global quit prompt — surprising for
+                        // an overlay-style screen. (#655 Phase 1B)
+                        state.cancel_network();
                     } else {
                         state.request_quit();
                     }
@@ -616,6 +646,32 @@ where
             }
             (Screen::ConfirmDelete { .. }, KeyCode::Char('n' | 'N') | KeyCode::Esc) => {
                 state.cancel_delete();
+            }
+
+            // ---- Network overlay (#655 Phase 1B) ----------------
+            // `n` from List or Confirm opens it. `n` is currently NOT
+            // bound on either screen; if a future feature claims it,
+            // either remap or check key.modifiers here.
+            (Screen::List { .. } | Screen::Confirm { .. }, KeyCode::Char('n')) => {
+                state.enter_network(network::enumerate_interfaces());
+            }
+            (Screen::Network { .. }, KeyCode::Up | KeyCode::Char('k')) => {
+                state.network_move_selection(-1);
+            }
+            (Screen::Network { .. }, KeyCode::Down | KeyCode::Char('j')) => {
+                state.network_move_selection(1);
+            }
+            (Screen::Network { .. }, KeyCode::Char('r')) => {
+                state.network_refresh(network::enumerate_interfaces());
+            }
+            (Screen::Network { .. }, KeyCode::Enter) => {
+                if let Some(iface) = state.network_begin_dhcp() {
+                    let rx = spawn_dhcp_worker(iface);
+                    active_dhcp = Some(rx);
+                }
+            }
+            (Screen::Network { .. }, KeyCode::Esc | KeyCode::Char('q')) => {
+                state.cancel_network();
             }
             (Screen::Confirm { selected }, KeyCode::Char('v')) => {
                 let real_idx = *selected;
@@ -1025,6 +1081,68 @@ fn epoch_to_civil_date(epoch_secs: u64) -> (i32, u32, u32) {
 /// just logs and continues; the operator already saw the verdict in
 /// the TUI).
 ///
+/// Network-overlay worker → UI messages (#655 Phase 1B). Mirrors the
+/// `VerifyMsg` shape: a stream of `Progress` updates, then exactly one
+/// `Done` with the terminal result. Worker is fire-and-forget; UI
+/// drops the Receiver to abandon.
+#[derive(Debug)]
+enum NetworkMsg {
+    /// Best-effort progress hint (e.g. "trying lease 1/5"). The
+    /// associated iface is already in the [`crate::state::NetworkOp::Pending`]
+    /// state, so we don't redundantly carry it here.
+    Progress { status: String },
+    /// Terminal result. `Ok(lease)` carries the post-DHCP iface state;
+    /// `Err(message)` carries a human-readable failure cause.
+    Done {
+        iface: String,
+        result: Result<network::NetworkLease, String>,
+    },
+}
+
+/// Spawn a thread that runs `udhcpc -i <iface> -n -q -t 5 -T 2` and
+/// emits Progress + Done messages on the returned Receiver. The
+/// worker is short-lived (DHCP times out in ~10s with these flags)
+/// and exits when `udhcpc` does.
+///
+/// Args used:
+///   `-i <iface>`  bind to interface
+///   `-n`          fail (don't fork) if no lease
+///   `-q`          quit after lease/fail (one-shot)
+///   `-t 5`        try DHCP DISCOVER 5 times before giving up
+///   `-T 2`        2-second timeout per attempt
+fn spawn_dhcp_worker(iface: String) -> Receiver<NetworkMsg> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(NetworkMsg::Progress {
+            status: "starting udhcpc...".to_string(),
+        });
+        // udhcpc may live at /bin/udhcpc (the busybox symlink we ship
+        // in Phase 1A) OR at /sbin/udhcpc on dev-host distros. Probe
+        // both before falling back to PATH.
+        let mut cmd = if std::path::Path::new("/bin/udhcpc").exists() {
+            std::process::Command::new("/bin/udhcpc")
+        } else if std::path::Path::new("/sbin/udhcpc").exists() {
+            std::process::Command::new("/sbin/udhcpc")
+        } else {
+            std::process::Command::new("udhcpc")
+        };
+        let output = cmd
+            .args(["-i", &iface, "-n", "-q", "-t", "5", "-T", "2"])
+            .output();
+        let result: Result<network::NetworkLease, String> = match output {
+            Ok(o) if o.status.success() => network::read_lease(&iface),
+            Ok(o) => Err(format!(
+                "udhcpc exited {}: {}",
+                o.status,
+                String::from_utf8_lossy(&o.stderr).trim()
+            )),
+            Err(e) => Err(format!("spawn udhcpc: {e}")),
+        };
+        let _ = tx.send(NetworkMsg::Done { iface, result });
+    });
+    rx
+}
+
 /// Unlink an ISO file and its `<iso>.aegis.toml` sidecar. Used by the
 /// `D` keybinding's confirm flow.
 ///

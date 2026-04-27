@@ -82,6 +82,16 @@ fn main() -> Result<(), DynError> {
             "Typed-confirmation challenge for tier-2/3 ISOs.",
             Box::new(trust_challenge_state),
         ),
+        (
+            "11-network-overlay-idle",
+            "Network overlay (#655 Phase 1B) — opt-in DHCP per interface.",
+            Box::new(network_idle_state),
+        ),
+        (
+            "12-network-overlay-success",
+            "Network overlay after successful DHCP — IP/gateway/DNS shown.",
+            Box::new(network_success_state),
+        ),
     ];
 
     let mut stdout = std::io::stdout().lock();
@@ -221,6 +231,55 @@ fn trust_challenge_state() -> AppState {
     state.screen = Screen::TrustChallenge {
         selected: 1,
         buffer: "boo".to_string(),
+    };
+    state
+}
+
+fn network_idle_state() -> AppState {
+    use rescue_tui::network::{LinkState, NetworkIface};
+    use rescue_tui::state::NetworkOp;
+    let mut state = mixed_tier_state(Pane::List, 0);
+    state.screen = Screen::Network {
+        interfaces: vec![
+            NetworkIface {
+                name: "eth0".to_string(),
+                link_state: LinkState::Up,
+                ipv4: None,
+            },
+            NetworkIface {
+                name: "eth1".to_string(),
+                link_state: LinkState::Down,
+                ipv4: None,
+            },
+        ],
+        selected: 0,
+        op: NetworkOp::Idle,
+        prior: Box::new(Screen::List { selected: 0 }),
+    };
+    state
+}
+
+fn network_success_state() -> AppState {
+    use rescue_tui::network::{LinkState, NetworkIface, NetworkLease};
+    use rescue_tui::state::NetworkOp;
+    let mut state = mixed_tier_state(Pane::List, 0);
+    let lease = NetworkLease {
+        ipv4: "192.168.1.42/24".to_string(),
+        gateway: Some("192.168.1.1".to_string()),
+        nameservers: vec!["8.8.8.8".to_string(), "1.1.1.1".to_string()],
+    };
+    state.screen = Screen::Network {
+        interfaces: vec![NetworkIface {
+            name: "eth0".to_string(),
+            link_state: LinkState::Up,
+            ipv4: Some(lease.ipv4.clone()),
+        }],
+        selected: 0,
+        op: NetworkOp::Success {
+            iface: "eth0".to_string(),
+            lease,
+        },
+        prior: Box::new(Screen::List { selected: 0 }),
     };
     state
 }

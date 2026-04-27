@@ -53,6 +53,10 @@ and focused pane. Press `?` inside the TUI for the full help overlay.
 | `D` | List | List | no | Delete the highlighted ISO + sidecar from the data partition (confirm prompt) |
 | `y` | ConfirmDelete | any | no | Confirm — unlink the ISO and its `.aegis.toml` sidecar |
 | `n/Esc` | ConfirmDelete | any | no | Cancel — return to the list without deleting |
+| `n` | List, Confirm | any | no | Open the Network overlay (enable DHCP per-interface) |
+| `Enter` | Network | any | no | Enable DHCP on the highlighted interface |
+| `r` | Network | any | no | Re-enumerate interfaces and reset op state |
+| `Esc/q` | Network | any | no | Close the Network overlay and return to the prior screen |
 | `Enter` | List | any | yes | Commit the current filter and close the input |
 | `Esc` | List | any | yes | Close the filter input and clear the current filter |
 | `Enter` | Confirm | any | no | Kexec into the selected ISO (may trigger a trust challenge) |

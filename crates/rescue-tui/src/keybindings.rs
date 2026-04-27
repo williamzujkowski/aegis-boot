@@ -53,6 +53,8 @@ pub(crate) enum ScreenKind {
     Consent,
     /// Confirm-before-delete prompt for an ISO on the data partition.
     ConfirmDelete,
+    /// Network overlay — DHCP per-interface (#655 Phase 1B).
+    Network,
 }
 
 impl ScreenKind {
@@ -72,6 +74,7 @@ impl ScreenKind {
             Screen::BlockedToast { .. } => Self::BlockedToast,
             Screen::Consent { .. } => Self::Consent,
             Screen::ConfirmDelete { .. } => Self::ConfirmDelete,
+            Screen::Network { .. } => Self::Network,
         }
     }
 }
@@ -189,6 +192,39 @@ pub(crate) const KEYBINDINGS: &[Keybinding] = &[
         label: "Cancel",
         description: "Cancel — return to the list without deleting",
         screens: &[ScreenKind::ConfirmDelete],
+        pane: None,
+        while_filter_editing: false,
+    },
+    // ---- Network overlay (#655 Phase 1B) --------------------------
+    Keybinding {
+        key: "n",
+        label: "Network",
+        description: "Open the Network overlay (enable DHCP per-interface)",
+        screens: &[ScreenKind::List, ScreenKind::Confirm],
+        pane: None,
+        while_filter_editing: false,
+    },
+    Keybinding {
+        key: "Enter",
+        label: "DHCP",
+        description: "Enable DHCP on the highlighted interface",
+        screens: &[ScreenKind::Network],
+        pane: None,
+        while_filter_editing: false,
+    },
+    Keybinding {
+        key: "r",
+        label: "Refresh",
+        description: "Re-enumerate interfaces and reset op state",
+        screens: &[ScreenKind::Network],
+        pane: None,
+        while_filter_editing: false,
+    },
+    Keybinding {
+        key: "Esc/q",
+        label: "Close",
+        description: "Close the Network overlay and return to the prior screen",
+        screens: &[ScreenKind::Network],
         pane: None,
         while_filter_editing: false,
     },
@@ -429,10 +465,16 @@ mod tests {
             }),
             ScreenKind::from_screen(&Screen::Quitting),
             ScreenKind::from_screen(&Screen::ConfirmDelete { selected: 0 }),
+            ScreenKind::from_screen(&Screen::Network {
+                interfaces: Vec::new(),
+                selected: 0,
+                op: crate::state::NetworkOp::Idle,
+                prior: Box::new(Screen::List { selected: 0 }),
+            }),
         ];
-        // Sanity: 8 inputs → 8 distinct kinds (Help / ConfirmQuit also
+        // Sanity: 9 inputs → 9 distinct kinds (Help / ConfirmQuit also
         // exist but require a `prior` Screen we'd need to construct).
         let distinct: std::collections::HashSet<ScreenKind> = kinds.iter().copied().collect();
-        assert_eq!(distinct.len(), 8);
+        assert_eq!(distinct.len(), 9);
     }
 }

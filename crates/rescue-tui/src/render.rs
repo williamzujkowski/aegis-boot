@@ -68,18 +68,31 @@ pub fn draw(frame: &mut Frame<'_>, state: &AppState) {
     if let Screen::ConfirmDelete { selected } = &state.screen {
         draw_confirm_delete_overlay(frame, area, state, *selected);
     }
+    if let Screen::Network {
+        interfaces,
+        selected,
+        op,
+        ..
+    } = &state.screen
+    {
+        draw_network_overlay(frame, area, state, interfaces, *selected, op);
+    }
 }
 
 fn draw_body(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
-    // Help and ConfirmQuit overlays draw the prior screen underneath
-    // for context, then layer on top.
+    // Help, ConfirmQuit, and Network overlays draw the prior screen
+    // underneath for context, then layer on top.
     let effective = match &state.screen {
-        Screen::Help { prior } | Screen::ConfirmQuit { prior } => prior.as_ref(),
+        Screen::Help { prior } | Screen::ConfirmQuit { prior } | Screen::Network { prior, .. } => {
+            prior.as_ref()
+        }
         other => other,
     };
     match effective {
         // List is the canonical backdrop; ConfirmDelete reuses it so
         // the row about to be removed stays visible behind the prompt.
+        // Network's prior screen handling already unwraps the inner
+        // Screen via the `prior` field above.
         Screen::List { selected } | Screen::ConfirmDelete { selected } => {
             draw_list(frame, area, state, *selected);
         }
@@ -113,7 +126,10 @@ fn draw_body(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         // BlockedToast (#546) renders the List underneath at return_to,
         // then the toast popup paints on top via the overlay pass.
         Screen::BlockedToast { return_to, .. } => draw_list(frame, area, state, *return_to),
-        Screen::Quitting | Screen::Help { .. } | Screen::ConfirmQuit { .. } => {}
+        Screen::Quitting
+        | Screen::Help { .. }
+        | Screen::ConfirmQuit { .. }
+        | Screen::Network { .. } => {}
     }
 }
 
@@ -465,6 +481,146 @@ fn draw_confirm_quit_overlay(frame: &mut Frame<'_>, area: Rect, state: &AppState
             .wrap(Wrap { trim: false }),
         panel,
     );
+}
+
+/// Centered Network overlay (#655 Phase 1B). Renders the prior screen
+/// underneath, layers an interface table + per-iface op state on top.
+/// Operator picks an interface, hits Enter, watches DHCP run.
+fn draw_network_overlay(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &AppState,
+    interfaces: &[crate::network::NetworkIface],
+    selected: usize,
+    op: &crate::state::NetworkOp,
+) {
+    use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+
+    // Width: cap at 76 so panels fit on 80-col terminals; height grows
+    // with iface count + a fixed footer (7 lines).
+    let w: u16 = area.width.min(76);
+    let footer_lines: u16 = 7;
+    let table_lines = u16::try_from(interfaces.len().max(1)).unwrap_or(1);
+    let h: u16 = (table_lines + footer_lines + 4).min(area.height);
+    let x = area.x + (area.width.saturating_sub(w)) / 2;
+    let y = area.y + (area.height.saturating_sub(h)) / 2;
+    let panel = Rect::new(x, y, w, h);
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        "Network — opt-in DHCP per interface",
+        Style::default()
+            .fg(state.theme.warning)
+            .add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(""));
+    push_network_table_lines(&mut lines, interfaces, selected);
+    lines.push(Line::from(""));
+    push_network_op_lines(&mut lines, state, op);
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        " [↑↓] move    [Enter] DHCP    [r] refresh    [Esc/q] close",
+        Style::default().fg(state.theme.warning),
+    )));
+
+    let block = Block::default().borders(Borders::ALL).title(" Network ");
+    frame.render_widget(Clear, panel);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        panel,
+    );
+}
+
+/// Helper for [`draw_network_overlay`]: push the iface header + rows.
+fn push_network_table_lines(
+    lines: &mut Vec<Line<'_>>,
+    interfaces: &[crate::network::NetworkIface],
+    selected: usize,
+) {
+    lines.push(Line::from(format!(
+        "  {:<14}  {:<6}  {:<18}",
+        "INTERFACE", "LINK", "IPv4"
+    )));
+    lines.push(Line::from(format!(
+        "  {}  {}  {}",
+        "-".repeat(14),
+        "-".repeat(6),
+        "-".repeat(18)
+    )));
+    if interfaces.is_empty() {
+        lines.push(Line::from("  (no ethernet interfaces detected)"));
+        return;
+    }
+    for (i, iface) in interfaces.iter().enumerate() {
+        let cursor = if i == selected { "▶ " } else { "  " };
+        let ipv4 = iface.ipv4.as_deref().unwrap_or("—");
+        let row = format!(
+            "{cursor}{:<14}  {:<6}  {:<18}",
+            iface.name,
+            iface.link_state.label(),
+            ipv4
+        );
+        let style = if i == selected {
+            Style::default().add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(Span::styled(row, style)));
+    }
+}
+
+/// Helper for [`draw_network_overlay`]: push the op-state lines that
+/// reflect Idle / Pending / Success / Failed.
+fn push_network_op_lines(
+    lines: &mut Vec<Line<'_>>,
+    state: &AppState,
+    op: &crate::state::NetworkOp,
+) {
+    use crate::state::NetworkOp;
+    match op {
+        NetworkOp::Idle => {
+            lines.push(Line::from(
+                "Press Enter to enable DHCP on the highlighted interface.",
+            ));
+        }
+        NetworkOp::Pending { iface, last_status } => {
+            let suffix = if last_status.is_empty() {
+                String::new()
+            } else {
+                format!(" — {last_status}")
+            };
+            lines.push(Line::from(Span::styled(
+                format!("DHCP running on {iface}…{suffix}"),
+                Style::default().fg(state.theme.warning),
+            )));
+        }
+        NetworkOp::Success { iface, lease } => {
+            lines.push(Line::from(Span::styled(
+                format!("Lease acquired on {iface}:"),
+                Style::default()
+                    .fg(state.theme.success)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            lines.push(Line::from(format!("  IPv4:    {}", lease.ipv4)));
+            if let Some(gw) = &lease.gateway {
+                lines.push(Line::from(format!("  Gateway: {gw}")));
+            }
+            if !lease.nameservers.is_empty() {
+                lines.push(Line::from(format!(
+                    "  DNS:     {}",
+                    lease.nameservers.join(", ")
+                )));
+            }
+        }
+        NetworkOp::Failed { iface, err } => {
+            lines.push(Line::from(Span::styled(
+                format!("DHCP on {iface} failed: {err}"),
+                Style::default().fg(state.theme.error),
+            )));
+        }
+    }
 }
 
 /// Centered popup overlay for [`Screen::ConfirmDelete`]. Sits over the
