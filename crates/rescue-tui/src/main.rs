@@ -578,9 +578,7 @@ where
             // prompt. `enter_delete` itself self-guards against
             // FailedIso / RescueShell rows (returns None) so this arm
             // is safe to fire even on a non-deletable cursor.
-            (Screen::List { selected }, KeyCode::Char('D'))
-                if state.pane == state::Pane::List =>
-            {
+            (Screen::List { selected }, KeyCode::Char('D')) if state.pane == state::Pane::List => {
                 let _ = state.enter_delete(*selected);
             }
             // ConfirmDelete handlers. `y/Y` performs the unlink and

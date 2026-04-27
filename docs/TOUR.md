@@ -145,6 +145,9 @@ screen and focused pane. Press `?` inside the TUI for a help overlay.
 | `/` | List | any | no | Open the substring filter — typed chars match label + path |
 | `s` | List | any | no | Cycle sort order: name → size → distro → name |
 | `v` | List, Confirm | any | no | Re-compute sha256 of the selected ISO in a background thread |
+| `D` | List | List | no | Delete the highlighted ISO + sidecar from the data partition (confirm prompt) |
+| `y` | ConfirmDelete | any | no | Confirm — unlink the ISO and its `.aegis.toml` sidecar |
+| `n/Esc` | ConfirmDelete | any | no | Cancel — return to the list without deleting |
 | `Enter` | List | any | yes | Commit the current filter and close the input |
 | `Esc` | List | any | yes | Close the filter input and clear the current filter |
 | `Enter` | Confirm | any | no | Kexec into the selected ISO (may trigger a trust challenge) |

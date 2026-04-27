@@ -1094,7 +1094,13 @@ impl AppState {
         let shifted: std::collections::HashMap<usize, String> = self
             .cmdline_overrides
             .drain()
-            .map(|(idx, val)| if idx > real_idx { (idx - 1, val) } else { (idx, val) })
+            .map(|(idx, val)| {
+                if idx > real_idx {
+                    (idx - 1, val)
+                } else {
+                    (idx, val)
+                }
+            })
             .collect();
         self.cmdline_overrides = shifted;
         self.isos.remove(real_idx);
@@ -2704,8 +2710,7 @@ mod tests {
         // its new position (idx=1), not stay attached to a now-empty
         // slot or float into a different ISO.
         let mut s = AppState::new(vec![fake_iso("a"), fake_iso("b"), fake_iso("c")]);
-        s.cmdline_overrides
-            .insert(2, "console=ttyS0".to_string());
+        s.cmdline_overrides.insert(2, "console=ttyS0".to_string());
         // sort=Name → visible order matches insertion. enter_delete(1)
         // picks "b" (real_idx=1 too).
         let _ = s.enter_delete(1);
