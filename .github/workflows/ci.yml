@@ -47,6 +47,11 @@ jobs:
         run: |
           rustup show
           rustup target add x86_64-pc-windows-gnu
+      - name: Install MinGW for Windows cross-compile
+        # Required by `ring`'s build.rs (transitive via aegis-fetch's
+        # ureq+rustls). Without this, ring's `cc-rs` fails with
+        # "failed to find tool x86_64-w64-mingw32-gcc". (#655 PR-C)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
       - name: Format + lint aegis-cli
         run: |
