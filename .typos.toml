@@ -72,14 +72,16 @@ extend-exclude = [
     "*.minisig",
     "*.sha256",
     "*.SHA256SUMS",
-    # ASCII-armored OpenPGP keys (#655 PR-B vendor keyring).
-    # The base64 body inside `-----BEGIN PGP PUBLIC KEY BLOCK-----`
-    # blocks is by definition random; typos flags substrings like
-    # "ND", "OT", "Pn" inside that base64 noise as misspellings.
-    # Real typos in the human-readable header / metadata sidecar
-    # are still caught — those live in `<vendor>.txt` files which
-    # are NOT excluded.
-    "*.asc",
+    # Vendor keyring directory (#655 PR-B).
+    # `<vendor>.asc` is base64-encoded OpenPGP — random characters
+    # by definition. `<vendor>.txt` is `gpg --show-keys` output —
+    # space-grouped hex fingerprints (e.g. `1AFE`, `BA4B` chunks)
+    # trip the dictionary on substring matches. Both are
+    # cryptographic data, not prose; excluding the whole keyring
+    # subtree keeps the typo gate accurate without false-positives.
+    # Reviewer scrutiny of key rotations happens at PR-diff time,
+    # not via the typo checker.
+    "crates/aegis-catalog/keyring/",
     # Cargo lockfiles carry package names upstream decides; our typo
     # gate shouldn't second-guess them.
     "Cargo.lock",
