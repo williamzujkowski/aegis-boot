@@ -33,6 +33,11 @@ sha2 = "0.10"
 [dev-dependencies]
 # Hermetic fixture I/O for the verify-path tests.
 tempfile = "3.14"
+# Used by verify-path tests to generate Ed25519 test certs at
+# runtime, so signed fixtures don't need to be checked into git.
+# rpgp re-exports its own `rand` types but the keygen API takes
+# any RngCore + CryptoRng, so we bring the trait directly.
+rand = "0.8"
 
 [lints]
 workspace = true

@@ -42,6 +42,9 @@ use std::path::{Path, PathBuf};
 use aegis_catalog::{Entry, Vendor};
 
 mod keyring;
+mod sha256;
+mod sums;
+mod verify;
 
 pub use keyring::VendorKeyring;
 

@@ -131,7 +131,6 @@ impl VendorKeyring {
     pub fn is_empty(&self) -> bool {
         self.armored.is_empty()
     }
-
 }
 
 impl Default for VendorKeyring {
