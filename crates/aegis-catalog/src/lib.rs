@@ -115,6 +115,136 @@ impl Category {
     }
 }
 
+/// Cryptographic signature-verification pattern an [`Entry`] expects.
+///
+/// Distros publish three distinct shapes today, all driven by the
+/// same `iso_url` / `sha256_url` / `sig_url` triple but with
+/// different semantics for what the signature actually authenticates:
+///
+/// - [`SigPattern::ClearsignedSums`] — the SUMS file is a PGP
+///   cleartext-signed envelope (RFC 9580 §7) wrapping the
+///   plaintext checksum lines. `sha256_url == sig_url` for these
+///   entries because the signature is embedded in the file. Used
+///   by `AlmaLinux`, Fedora, Rocky.
+/// - [`SigPattern::DetachedSigOnSums`] — `sig_url` is a detached
+///   binary or armored signature over the SUMS file. `sha256_url
+///   != sig_url`. Used by Debian, Ubuntu, Kali, Linux Mint,
+///   `GParted`, openSUSE, Pop!\_OS.
+/// - [`SigPattern::DetachedSigOnIso`] — `sig_url` is a detached
+///   signature over the ISO bytes themselves; the `.sha256`
+///   sidecar is unsigned and used only for byte-integrity
+///   reporting. Used by Alpine, Manjaro, MX Linux, `SystemRescue`.
+///
+/// `aegis-fetch` dispatches on this enum exhaustively. Choosing
+/// the wrong variant verifies the signature against the wrong
+/// bytes and silently downgrades trust, so the field is required
+/// (no `Default`) and the variant is reviewed on every catalog
+/// addition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SigPattern {
+    /// Signature is embedded in the SUMS file as a PGP cleartext
+    /// envelope. `sha256_url == sig_url`.
+    ClearsignedSums,
+    /// Signature is a separate file authenticating the SUMS file.
+    /// `sha256_url != sig_url`; both URLs must be fetched.
+    DetachedSigOnSums,
+    /// Signature is a separate file authenticating the ISO itself.
+    /// The `sha256_url` sidecar (when present) is unsigned and
+    /// informational; the cryptographic gate is the ISO signature.
+    DetachedSigOnIso,
+}
+
+/// Identifier for the project / organization that signed an
+/// [`Entry`]'s release artifacts. Drives keyring lookup in
+/// `aegis-fetch` — each variant maps to a single PGP cert in
+/// `crates/aegis-catalog/keyring/<slug>.asc` whose fingerprint is
+/// pinned in `crates/aegis-catalog/keyring/fingerprints.toml`.
+///
+/// New variants are added in the same PR that adds the
+/// corresponding `<slug>.asc` keyring file. The lockstep is
+/// enforced by a unit test that asserts every catalog entry's
+/// vendor has a keyring file present.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Vendor {
+    /// `AlmaLinux` — RHEL rebuild signed by the `AlmaLinux` release key.
+    AlmaLinux,
+    /// Alpine Linux — signed by the Alpine release key.
+    Alpine,
+    /// Debian — signed by the Debian CD-signing key.
+    Debian,
+    /// Fedora — signed by the Fedora release-signing key.
+    Fedora,
+    /// `GParted` Live — signed by the `GParted` release key (Curtis Gedak).
+    Gparted,
+    /// Kali Linux — signed by the Kali release-signing key.
+    Kali,
+    /// Linux Mint — signed by the Linux Mint release key.
+    LinuxMint,
+    /// Manjaro Linux — signed by the Manjaro release-signing key.
+    Manjaro,
+    /// MX Linux — signed by the MX Linux release key.
+    Mx,
+    /// openSUSE — signed by the openSUSE project signing key.
+    Opensuse,
+    /// Rocky Linux — RHEL rebuild signed by the Rocky release key.
+    Rocky,
+    /// `SystemRescue` — signed by the `SystemRescue` release key.
+    SystemRescue,
+    /// System76 — signs Pop!_OS releases.
+    System76,
+    /// Ubuntu — signed by the Ubuntu CD-signing key (Canonical).
+    Ubuntu,
+}
+
+impl Vendor {
+    /// Stable lowercase slug used as the keyring filename stem
+    /// (`<slug>.asc` and `<slug>.txt`) and as the
+    /// `fingerprints.toml` table key.
+    #[must_use]
+    pub fn slug(self) -> &'static str {
+        match self {
+            Vendor::AlmaLinux => "almalinux",
+            Vendor::Alpine => "alpine",
+            Vendor::Debian => "debian",
+            Vendor::Fedora => "fedora",
+            Vendor::Gparted => "gparted",
+            Vendor::Kali => "kali",
+            Vendor::LinuxMint => "linuxmint",
+            Vendor::Manjaro => "manjaro",
+            Vendor::Mx => "mx",
+            Vendor::Opensuse => "opensuse",
+            Vendor::Rocky => "rocky",
+            Vendor::SystemRescue => "system-rescue",
+            Vendor::System76 => "system76",
+            Vendor::Ubuntu => "ubuntu",
+        }
+    }
+
+    /// All vendors currently referenced by the catalog. Used by
+    /// the keyring loader test to assert every vendor has a
+    /// keyring file present, and by the catalog-refresh
+    /// workflow to iterate the upstream key fetch loop.
+    #[must_use]
+    pub fn all() -> &'static [Vendor] {
+        &[
+            Vendor::AlmaLinux,
+            Vendor::Alpine,
+            Vendor::Debian,
+            Vendor::Fedora,
+            Vendor::Gparted,
+            Vendor::Kali,
+            Vendor::LinuxMint,
+            Vendor::Manjaro,
+            Vendor::Mx,
+            Vendor::Opensuse,
+            Vendor::Rocky,
+            Vendor::SystemRescue,
+            Vendor::System76,
+            Vendor::Ubuntu,
+        ]
+    }
+}
+
 /// One catalog entry.
 pub struct Entry {
     /// Stable slug operators type: `ubuntu-24.04-live-server`.
@@ -137,6 +267,13 @@ pub struct Entry {
     pub purpose: &'static str,
     /// Operator-facing usage category — drives `recommend` table grouping.
     pub category: Category,
+    /// Project / organization whose PGP key signs this entry's
+    /// release artifacts. Drives keyring lookup in `aegis-fetch`.
+    pub vendor: Vendor,
+    /// Cryptographic shape of the signature for this entry. See
+    /// [`SigPattern`] for the three patterns. `aegis-fetch`
+    /// dispatches verify behavior exhaustively on this field.
+    pub verify: SigPattern,
     /// Optional URL resolver that walks the project's directory
     /// listing or follows a "latest" redirect to discover the current
     /// ISO filename + sibling SHA / sig URLs (#646). Used by
@@ -520,6 +657,8 @@ pub const CATALOG: &[Entry] = &[
         sb: SbStatus::Signed("Red Hat / AlmaLinux"),
         purpose: "Free RHEL-rebuild minimal installer. Cross-distro kexec quirk possible.",
         category: Category::Installer,
+        vendor: Vendor::AlmaLinux,
+        verify: SigPattern::ClearsignedSums,
         resolver: None,
     },
     Entry {
@@ -533,6 +672,8 @@ pub const CATALOG: &[Entry] = &[
         sb: SbStatus::UnsignedNeedsMok,
         purpose: "Minimal recovery / forensic shell. Tiny footprint.",
         category: Category::Rescue,
+        vendor: Vendor::Alpine,
+        verify: SigPattern::DetachedSigOnIso,
         resolver: None,
     },
     Entry {
@@ -546,6 +687,8 @@ pub const CATALOG: &[Entry] = &[
         sb: SbStatus::UnsignedNeedsMok,
         purpose: "Minimal recovery shell for arm64 hosts (Pi 4/5, ARM servers).",
         category: Category::Rescue,
+        vendor: Vendor::Alpine,
+        verify: SigPattern::DetachedSigOnIso,
         resolver: None,
     },
     Entry {
@@ -563,6 +706,8 @@ pub const CATALOG: &[Entry] = &[
         sb: SbStatus::Signed("Debian CA via shim"),
         purpose: "Minimal Debian network installer. DistroWatch top-5 popularity.",
         category: Category::Installer,
+        vendor: Vendor::Debian,
+        verify: SigPattern::DetachedSigOnSums,
         resolver: Some(debian_netinst),
     },
     Entry {
@@ -576,6 +721,8 @@ pub const CATALOG: &[Entry] = &[
         sb: SbStatus::Signed("Debian CA via shim"),
         purpose: "Debian network installer for arm64 (Pi, ARM servers, AWS Graviton).",
         category: Category::Installer,
+        vendor: Vendor::Debian,
+        verify: SigPattern::DetachedSigOnSums,
         resolver: None,
     },
     Entry {
@@ -589,6 +736,8 @@ pub const CATALOG: &[Entry] = &[
         sb: SbStatus::Signed("Red Hat / Fedora"),
         purpose: "Fedora server install media (full DVD; non-live).",
         category: Category::Server,
+        vendor: Vendor::Fedora,
+        verify: SigPattern::ClearsignedSums,
         resolver: None,
     },
     Entry {
@@ -605,6 +754,8 @@ pub const CATALOG: &[Entry] = &[
         sb: SbStatus::Signed("Red Hat / Fedora"),
         purpose: "Fedora desktop live ISO. Cross-distro kexec quirk possible.",
         category: Category::Desktop,
+        vendor: Vendor::Fedora,
+        verify: SigPattern::ClearsignedSums,
         resolver: None,
     },
     Entry {
@@ -618,6 +769,8 @@ pub const CATALOG: &[Entry] = &[
         sb: SbStatus::Signed("Red Hat / Fedora"),
         purpose: "Fedora desktop live ISO for arm64 (Pi, ARM laptops).",
         category: Category::Desktop,
+        vendor: Vendor::Fedora,
+        verify: SigPattern::ClearsignedSums,
         resolver: None,
     },
     Entry {
@@ -633,6 +786,8 @@ pub const CATALOG: &[Entry] = &[
         sb: SbStatus::Signed("Debian shim chain (GParted)"),
         purpose: "Partition editor live ISO. Resize, repair, image disks.",
         category: Category::Rescue,
+        vendor: Vendor::Gparted,
+        verify: SigPattern::DetachedSigOnSums,
         resolver: None,
     },
     Entry {
@@ -651,6 +806,8 @@ pub const CATALOG: &[Entry] = &[
         sb: SbStatus::Signed("Kali / Debian shim chain"),
         purpose: "Pentesting + forensics installer. Debian-derived signed chain.",
         category: Category::Installer,
+        vendor: Vendor::Kali,
+        verify: SigPattern::DetachedSigOnSums,
         resolver: Some(kali_installer),
     },
     Entry {
@@ -666,6 +823,8 @@ pub const CATALOG: &[Entry] = &[
         sb: SbStatus::Signed("Linux Mint"),
         purpose: "Friendly Ubuntu-derived desktop. Common operator install target.",
         category: Category::Desktop,
+        vendor: Vendor::LinuxMint,
+        verify: SigPattern::DetachedSigOnSums,
         resolver: Some(linuxmint_22_cinnamon),
     },
     Entry {
@@ -682,6 +841,8 @@ pub const CATALOG: &[Entry] = &[
         sb: SbStatus::UnsignedNeedsMok,
         purpose: "Arch-derived rolling release with KDE Plasma. Unsigned kernel.",
         category: Category::Desktop,
+        vendor: Vendor::Manjaro,
+        verify: SigPattern::DetachedSigOnIso,
         resolver: None,
     },
     Entry {
@@ -696,6 +857,8 @@ pub const CATALOG: &[Entry] = &[
         sb: SbStatus::Signed("Debian shim chain (MX kernel)"),
         purpose: "Debian-based Xfce desktop with newer kernel. Top-3 popularity.",
         category: Category::Desktop,
+        vendor: Vendor::Mx,
+        verify: SigPattern::DetachedSigOnIso,
         resolver: None,
     },
     Entry {
@@ -710,6 +873,8 @@ pub const CATALOG: &[Entry] = &[
         sb: SbStatus::Signed("SUSE CA"),
         purpose: "Enterprise-derived stable distribution. Full DVD installer.",
         category: Category::Installer,
+        vendor: Vendor::Opensuse,
+        verify: SigPattern::DetachedSigOnSums,
         resolver: None,
     },
     Entry {
@@ -726,6 +891,8 @@ pub const CATALOG: &[Entry] = &[
         sb: SbStatus::Signed("System76 / Canonical CA"),
         purpose: "Ubuntu-derived desktop tuned for System76 hardware.",
         category: Category::Desktop,
+        vendor: Vendor::System76,
+        verify: SigPattern::DetachedSigOnSums,
         // No resolver yet: iso.pop-os.org returns HTTP 403 on
         // directory listings (nginx autoindex off). Tracked under #646.
         resolver: None,
@@ -742,6 +909,8 @@ pub const CATALOG: &[Entry] = &[
         sb: SbStatus::Signed("Rocky Linux"),
         purpose: "Free RHEL-rebuild minimal installer. Cross-distro kexec quirk possible.",
         category: Category::Installer,
+        vendor: Vendor::Rocky,
+        verify: SigPattern::ClearsignedSums,
         resolver: None,
     },
     Entry {
@@ -760,6 +929,8 @@ pub const CATALOG: &[Entry] = &[
         sb: SbStatus::UnsignedNeedsMok,
         purpose: "Comprehensive rescue toolkit: parted, testdisk, ddrescue, clamav.",
         category: Category::Rescue,
+        vendor: Vendor::SystemRescue,
+        verify: SigPattern::DetachedSigOnIso,
         resolver: None,
     },
     Entry {
@@ -775,6 +946,8 @@ pub const CATALOG: &[Entry] = &[
         sb: SbStatus::Signed("Canonical CA"),
         purpose: "Ubuntu LTS server installer. Validated under aegis-boot v0.12.0 #109.",
         category: Category::Server,
+        vendor: Vendor::Ubuntu,
+        verify: SigPattern::DetachedSigOnSums,
         resolver: Some(ubuntu_24_04_live_server),
     },
     Entry {
@@ -789,6 +962,8 @@ pub const CATALOG: &[Entry] = &[
         sb: SbStatus::Signed("Canonical CA"),
         purpose: "Ubuntu LTS server installer for arm64 (Graviton, Ampere, Pi 4/5).",
         category: Category::Server,
+        vendor: Vendor::Ubuntu,
+        verify: SigPattern::DetachedSigOnSums,
         resolver: None,
     },
     Entry {
@@ -802,6 +977,8 @@ pub const CATALOG: &[Entry] = &[
         sb: SbStatus::Signed("Canonical CA"),
         purpose: "Ubuntu LTS desktop installer. >4 GB → requires ext4 data partition.",
         category: Category::Desktop,
+        vendor: Vendor::Ubuntu,
+        verify: SigPattern::DetachedSigOnSums,
         resolver: Some(ubuntu_24_04_desktop),
     },
 ];
@@ -1095,6 +1272,75 @@ mod tests {
             .err()
             .unwrap_or_else(|| panic!("should fail"));
         assert!(matches!(err, ResolverError::NoMatch { .. }));
+    }
+
+    // ---- SigPattern / Vendor coherence --------------------------
+
+    #[test]
+    fn every_entry_has_sigpattern_consistent_with_url_shape() {
+        // Cross-check the explicit `verify` field against the URL
+        // triple's observable shape today. Drift here means a vendor
+        // changed their layout or a new entry was tagged with the
+        // wrong pattern — either way the trust path needs review,
+        // not silent re-classification.
+        for e in CATALOG {
+            let iso_filename = e.iso_url.rsplit('/').next().unwrap_or("");
+            let sums_eq_sig = e.sha256_url == e.sig_url;
+            let sig_targets_iso = !iso_filename.is_empty()
+                && (e.sig_url.ends_with(&format!("{iso_filename}.asc"))
+                    || e.sig_url.ends_with(&format!("{iso_filename}.sig")));
+            match e.verify {
+                SigPattern::ClearsignedSums => assert!(
+                    sums_eq_sig,
+                    "{} declared ClearsignedSums but sha256_url != sig_url",
+                    e.slug
+                ),
+                SigPattern::DetachedSigOnIso => assert!(
+                    sig_targets_iso && !sums_eq_sig,
+                    "{} declared DetachedSigOnIso but sig_url does not target the ISO filename",
+                    e.slug
+                ),
+                SigPattern::DetachedSigOnSums => assert!(
+                    !sums_eq_sig && !sig_targets_iso,
+                    "{} declared DetachedSigOnSums but URL shape suggests another pattern",
+                    e.slug
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn every_vendor_in_catalog_is_in_vendor_all() {
+        // Vendor::all() drives the keyring loader test (#655 PR-B)
+        // and the catalog-refresh fetch loop. Any catalog entry
+        // tagged with a Vendor must appear in all() so the
+        // upstream fetch loop can iterate over every vendor we ship.
+        use std::collections::HashSet;
+        let referenced: HashSet<Vendor> = CATALOG.iter().map(|e| e.vendor).collect();
+        let listed: HashSet<Vendor> = Vendor::all().iter().copied().collect();
+        for v in &referenced {
+            assert!(
+                listed.contains(v),
+                "Vendor {v:?} is used in CATALOG but not in Vendor::all()"
+            );
+        }
+    }
+
+    #[test]
+    fn vendor_slugs_are_distinct_kebab_case() {
+        let mut slugs: Vec<&str> = Vendor::all().iter().map(|v| v.slug()).collect();
+        slugs.sort_unstable();
+        let pre = slugs.len();
+        slugs.dedup();
+        assert_eq!(pre, slugs.len(), "duplicate Vendor::slug()");
+        for s in Vendor::all().iter().map(|v| v.slug()) {
+            assert!(!s.is_empty(), "empty vendor slug");
+            assert!(
+                s.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
+                "vendor slug not kebab-case: {s}"
+            );
+        }
     }
 
     #[test]
