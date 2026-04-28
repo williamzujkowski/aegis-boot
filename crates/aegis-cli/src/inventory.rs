@@ -1053,12 +1053,41 @@ fn validate_folder_name(name: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
-/// Copy any sibling `.sha256`, `.SHA256SUMS`, and `.minisig` files that
-/// live next to the source ISO onto the stick. Returns the list of
-/// copied suffixes for the per-add summary line.
+/// Copy sibling sidecar files that live next to the source ISO
+/// onto the stick. Returns the list of copied suffixes for the
+/// per-add summary line.
+///
+/// Two acceptance shapes (#659):
+///
+/// 1. **Per-ISO sidecars** named `<iso>.iso.<suffix>`:
+///    `sha256`, `SHA256`, `CHECKSUM`, `minisig`, `asc`, `sig`,
+///    `gpg`, `SHA256SUMS`. Copied verbatim with the
+///    matching suffix on the destination.
+///
+/// 2. **Multi-ISO sums files** in the same directory:
+///    `SHA256SUMS`, `SHA512SUMS`, `CHECKSUM`, `CHECKSUMS`,
+///    `sha256sum.txt`. Parsed for the line matching this ISO's
+///    filename; if found, a synthesized single-line
+///    `<iso>.iso.sha256` sidecar is materialized on the stick.
+///    This unblocks operators who downloaded an ISO + the
+///    project's published bulk-sums file rather than a per-ISO
+///    sidecar (#659 — Ultramarine ships SHA256SUMS, Fedora
+///    ships `Fedora-Workstation-43-1.6-x86_64-CHECKSUM`,
+///    Debian ships `SHA512SUMS`, etc.).
 fn copy_classic_sidecars(iso_src: &Path, iso_filename: &str, mount: &Path) -> Vec<String> {
     let mut copied = Vec::new();
-    for suffix in ["sha256", "SHA256SUMS", "minisig"] {
+
+    // Pass 1: per-ISO sidecars next to the source.
+    for suffix in [
+        "sha256",
+        "SHA256",
+        "CHECKSUM",
+        "SHA256SUMS",
+        "minisig",
+        "asc",
+        "sig",
+        "gpg",
+    ] {
         let sidecar_src = iso_src.with_extension(format!("iso.{suffix}"));
         if sidecar_src.is_file() {
             let sidecar_dest = mount.join(format!("{iso_filename}.{suffix}"));
@@ -1068,7 +1097,87 @@ fn copy_classic_sidecars(iso_src: &Path, iso_filename: &str, mount: &Path) -> Ve
             }
         }
     }
+
+    // Pass 2: if no per-ISO sidecar landed, look for an adjacent
+    // multi-ISO sums file and synthesize a single-line .sha256.
+    // Only triggered when pass 1 produced nothing — operators who
+    // ship per-ISO sidecars don't get a redundant synthesized file.
+    if copied.is_empty()
+        && let Some(parent) = iso_src.parent()
+        && let Some(synthesized_sha256) = find_iso_in_multi_sums(parent, iso_filename)
+    {
+        let sidecar_dest = mount.join(format!("{iso_filename}.sha256"));
+        let body = format!("{synthesized_sha256}  {iso_filename}\n");
+        if write_atomic(&sidecar_dest, body.as_bytes()).is_ok() {
+            println!("  Synthesized .sha256 from adjacent sums file (#659)");
+            copied.push("sha256".to_string());
+        }
+    }
+
     copied
+}
+
+/// Scan `dir` for common multi-ISO sums file names. Parse the
+/// first one that contains a line for `iso_filename`. Returns the
+/// lowercase-hex SHA-256 digest, or `None` if no file matches.
+fn find_iso_in_multi_sums(dir: &Path, iso_filename: &str) -> Option<String> {
+    for name in [
+        "SHA256SUMS",
+        "SHA512SUMS",
+        "CHECKSUM",
+        "CHECKSUMS",
+        "sha256sum.txt",
+    ] {
+        let path = dir.join(name);
+        let Ok(body) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        if let Some(hex) = parse_sums_for_iso(&body, iso_filename) {
+            return Some(hex);
+        }
+    }
+    None
+}
+
+/// Parse a sums-file body for the SHA-256 line matching
+/// `iso_filename`. Tolerates GNU `<hex>  <name>`, GNU binary
+/// `<hex> *<name>`, and BSD-style `SHA256 (<name>) = <hex>`.
+/// Rejects SHA-512 (128-char hex) lines so a pure-SHA-512 file
+/// falls through to the next candidate.
+fn parse_sums_for_iso(body: &str, iso_filename: &str) -> Option<String> {
+    for raw_line in body.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        // BSD style.
+        if let Some(rest) = line.strip_prefix("SHA256 (")
+            && let Some(close) = rest.find(')')
+            && let Some(after) = rest[close..].strip_prefix(") = ")
+            && rest[..close] == *iso_filename
+            && is_sha256_hex(after)
+        {
+            return Some(after.to_lowercase());
+        }
+
+        // GNU style: split on whitespace into <hex> <filename>.
+        let mut parts = line.splitn(2, char::is_whitespace);
+        let hex = parts.next()?;
+        if !is_sha256_hex(hex) {
+            continue;
+        }
+        let name = parts.next()?.trim_start();
+        let name = name.strip_prefix('*').unwrap_or(name);
+        if name == iso_filename {
+            return Some(hex.to_lowercase());
+        }
+    }
+    None
+}
+
+fn is_sha256_hex(s: &str) -> bool {
+    s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// Help text for `aegis-boot add`. Extracted so `try_run_add` stays
@@ -1563,6 +1672,104 @@ use aegis_core::humanize_bytes as humanize;
 )]
 mod tests {
     use super::*;
+
+    // ---- #659: multi-ISO sums file detection ---------------------
+
+    const FAKE_HEX: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+    #[test]
+    fn parse_sums_finds_iso_in_gnu_two_space_format() {
+        let body = format!("{FAKE_HEX}  ultramarine-43.iso\n");
+        let r = parse_sums_for_iso(&body, "ultramarine-43.iso").unwrap();
+        assert_eq!(r, FAKE_HEX);
+    }
+
+    #[test]
+    fn parse_sums_finds_iso_in_gnu_binary_marker_format() {
+        let body = format!("{FAKE_HEX} *fedora-43.iso\n");
+        let r = parse_sums_for_iso(&body, "fedora-43.iso").unwrap();
+        assert_eq!(r, FAKE_HEX);
+    }
+
+    #[test]
+    fn parse_sums_finds_iso_in_bsd_format() {
+        let body = format!("SHA256 (Fedora-Server-dvd-x86_64-43-1.6.iso) = {FAKE_HEX}\n");
+        let r = parse_sums_for_iso(&body, "Fedora-Server-dvd-x86_64-43-1.6.iso").unwrap();
+        assert_eq!(r, FAKE_HEX);
+    }
+
+    #[test]
+    fn parse_sums_returns_specific_iso_among_many() {
+        let other = "1".repeat(64);
+        let body = format!("{other}  desktop.iso\n{FAKE_HEX}  server.iso\n{other}  netinst.iso\n");
+        let r = parse_sums_for_iso(&body, "server.iso").unwrap();
+        assert_eq!(r, FAKE_HEX);
+    }
+
+    #[test]
+    fn parse_sums_returns_none_when_iso_absent() {
+        let body = format!("{FAKE_HEX}  other.iso\n");
+        assert!(parse_sums_for_iso(&body, "missing.iso").is_none());
+    }
+
+    #[test]
+    fn parse_sums_ignores_sha512_lines() {
+        // Pure-SHA-512 file: 128-char hex. None matches as sha256.
+        let sha512 = "0".repeat(128);
+        let body = format!("{sha512}  debian.iso\n");
+        assert!(parse_sums_for_iso(&body, "debian.iso").is_none());
+    }
+
+    #[test]
+    fn parse_sums_ignores_comments_and_blanks() {
+        let body = format!("# header comment\n\n{FAKE_HEX}  alpine.iso\n# trailer\n");
+        let r = parse_sums_for_iso(&body, "alpine.iso").unwrap();
+        assert_eq!(r, FAKE_HEX);
+    }
+
+    #[test]
+    fn find_iso_in_multi_sums_picks_first_matching_file() {
+        let dir = tempfile::tempdir().unwrap();
+        // SHA256SUMS contains the iso; SHA512SUMS does not.
+        std::fs::write(
+            dir.path().join("SHA256SUMS"),
+            format!("{FAKE_HEX}  myiso.iso\n"),
+        )
+        .unwrap();
+        let r = find_iso_in_multi_sums(dir.path(), "myiso.iso").unwrap();
+        assert_eq!(r, FAKE_HEX);
+    }
+
+    #[test]
+    fn find_iso_in_multi_sums_returns_none_when_no_files_present() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(find_iso_in_multi_sums(dir.path(), "x.iso").is_none());
+    }
+
+    #[test]
+    fn find_iso_in_multi_sums_skips_files_without_matching_iso_line() {
+        // SHA256SUMS exists but doesn't list the iso we asked about.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("SHA256SUMS"),
+            format!("{FAKE_HEX}  some-other.iso\n"),
+        )
+        .unwrap();
+        assert!(find_iso_in_multi_sums(dir.path(), "myiso.iso").is_none());
+    }
+
+    #[test]
+    fn find_iso_in_multi_sums_accepts_lowercase_sha256sum_txt() {
+        // Linux Mint: lowercase sha256sum.txt.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("sha256sum.txt"),
+            format!("{FAKE_HEX}  linuxmint-22.iso\n"),
+        )
+        .unwrap();
+        let r = find_iso_in_multi_sums(dir.path(), "linuxmint-22.iso").unwrap();
+        assert_eq!(r, FAKE_HEX);
+    }
 
     #[test]
     fn fat32_family_accepts_canonical_names() {
