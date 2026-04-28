@@ -17,6 +17,11 @@ on:
 #   3. rescue-tui survives the whole chain and runs from the AEGIS_ISOS
 #      partition layout.
 
+# Top-level permissions: read-only default. Jobs that need write
+# access elevate explicitly. Closes Scorecard TokenPermissionsID.
+permissions:
+  contents: read
+
 jobs:
   mkusb-build:
     name: mkusb — build + boot smoke

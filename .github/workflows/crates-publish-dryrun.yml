@@ -26,6 +26,11 @@ on:
 #   - rescue-tui, aegis-fitness, aegis-bootctl, aegis-wire-formats
 #   — all repo-specific or binary crates.
 
+# Top-level permissions: read-only default. Jobs that need write
+# access elevate explicitly. Closes Scorecard TokenPermissionsID.
+permissions:
+  contents: read
+
 jobs:
   publish-dryrun:
     name: cargo publish --dry-run (iso-parser + kexec-loader)

@@ -23,6 +23,11 @@ on:
 #   4. The rotated image still boots under OVMF SecBoot enforcing and
 #      rescue-tui starts — proves the signed chain is intact.
 
+# Top-level permissions: read-only default. Jobs that need write
+# access elevate explicitly. Closes Scorecard TokenPermissionsID.
+permissions:
+  contents: read
+
 jobs:
   update-rotate-e2e:
     name: update — rotate + verify + boot under SB

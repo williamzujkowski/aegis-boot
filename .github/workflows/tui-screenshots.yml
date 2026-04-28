@@ -17,6 +17,11 @@ on:
 # captures the empty-list state of the TUI. To get the full scenario
 # set, a maintainer runs the script locally against ./test-isos.
 
+# Top-level permissions: read-only default. Jobs that need write
+# access elevate explicitly. Closes Scorecard TokenPermissionsID.
+permissions:
+  contents: read
+
 jobs:
   capture:
     name: capture rescue-tui screens from VM

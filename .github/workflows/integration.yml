@@ -7,6 +7,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Top-level permissions: read-only default. Jobs that need write
+# access elevate explicitly. Closes Scorecard TokenPermissionsID.
+permissions:
+  contents: read
+
 jobs:
   iso-probe-mount:
     name: iso-probe loop-mount integration

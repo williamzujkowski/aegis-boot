@@ -22,6 +22,11 @@ on:
 #      contrarian-flagged correctness oracle for swapping installers
 #      (per #274 RFC consensus vote).
 
+# Top-level permissions: read-only default. Jobs that need write
+# access elevate explicitly. Closes Scorecard TokenPermissionsID.
+permissions:
+  contents: read
+
 jobs:
   direct-install-e2e:
     name: direct-install — flash + boot smoke + ESP byte-parity

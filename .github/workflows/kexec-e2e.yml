@@ -28,6 +28,11 @@ on:
 # Proves the rescue-tui -> target-kernel kexec handoff works end-to-end.
 # Complements the OVMF SecBoot E2E (which proves signed-chain -> rescue-tui).
 
+# Top-level permissions: read-only default. Jobs that need write
+# access elevate explicitly. Closes Scorecard TokenPermissionsID.
+permissions:
+  contents: read
+
 jobs:
   kexec-e2e:
     name: kexec E2E (rescue-tui -> target kernel)

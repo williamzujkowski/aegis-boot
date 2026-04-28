@@ -15,6 +15,11 @@ on:
 # the firmware loads cleanly. Phase 2 (real signed shim+kernel chain) is
 # tracked separately.
 
+# Top-level permissions: read-only default. Jobs that need write
+# access elevate explicitly. Closes Scorecard TokenPermissionsID.
+permissions:
+  contents: read
+
 jobs:
   ovmf-secboot-foundation:
     name: OVMF SecBoot foundation

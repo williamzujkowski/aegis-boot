@@ -18,6 +18,11 @@ on:
 # (which embed CARGO_HOME paths in metadata). Two back-to-back builds with the
 # same SOURCE_DATE_EPOCH must produce identical sha256(rescue-tui).
 
+# Top-level permissions: read-only default. Jobs that need write
+# access elevate explicitly. Closes Scorecard TokenPermissionsID.
+permissions:
+  contents: read
+
 jobs:
   reproducible-build:
     runs-on: ubuntu-22.04
