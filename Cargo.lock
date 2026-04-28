@@ -6,6 +6,7 @@ version = 4
 name = "aegis-bootctl"
 version = "0.17.0"
 dependencies = [
+ "aegis-catalog",
  "aegis-core",
  "aegis-trust",
  "aegis-wire-formats",
@@ -19,6 +20,13 @@ dependencies = [
  "tempfile",
  "thiserror",
  "windows",
+]
+
+[[package]]
+name = "aegis-catalog"
+version = "0.17.0"
+dependencies = [
+ "thiserror",
 ]
 
 [[package]]

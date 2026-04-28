@@ -72,6 +72,9 @@ serde_json = "1.0"
 # out of inventory.rs / attest.rs / catalog.rs so future ecosystem
 # crates have a DRY home for cross-cutting primitives.
 aegis-core = { path = "../aegis-core", version = "0.17" }
+# Curated ISO catalog + per-distro URL resolvers extracted into a
+# shared crate (#655 Phase 2A) so rescue-tui can read the same data.
+aegis-catalog = { path = "../aegis-catalog", version = "0.17" }
 iso-probe = { path = "../iso-probe", version = "0.17" }
 # Signed attestation manifest types extracted for Phase 4a of #286.
 # This crate is the Rust + JSON Schema source of truth for the

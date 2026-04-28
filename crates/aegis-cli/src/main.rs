@@ -39,7 +39,6 @@ mod bundle_cache;
 mod bundle_fetch;
 mod bundle_verify;
 mod catalog;
-mod catalog_resolvers;
 mod cmd_path;
 mod compat;
 mod completions;

@@ -29,7 +29,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use crate::catalog::{Entry, SbStatus, find_entry};
+use aegis_catalog::{Entry, SbStatus, find_entry};
 
 /// Entry point for `aegis-boot fetch [--out DIR] [--no-gpg] <slug>`.
 pub fn run(args: &[String]) -> ExitCode {
@@ -384,7 +384,7 @@ pub(crate) fn filename_from_url(url: &str) -> String {
 /// if the slug is unknown to the catalog. The returned path may not
 /// exist yet — callers should check and fetch if absent.
 pub(crate) fn cached_iso_path(slug: &str) -> Option<PathBuf> {
-    let entry = crate::catalog::find_entry(slug)?;
+    let entry = find_entry(slug)?;
     Some(default_cache_dir(entry.slug).join(filename_from_url(entry.iso_url)))
 }
 

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/aegis-catalog",
     "crates/aegis-core",
     "crates/iso-parser",
     "crates/iso-probe",

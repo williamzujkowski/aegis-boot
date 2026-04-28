@@ -1,0 +1,19 @@
+[package]
+name = "aegis-catalog"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Curated ISO catalog + URL resolvers for aegis-boot. Shared by the host CLI and the rescue-tui in-rescue fetch path (#655 Phase 2)."
+readme = "README.md"
+
+include = ["src/**/*", "README.md", "Cargo.toml"]
+
+[lib]
+
+[dependencies]
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

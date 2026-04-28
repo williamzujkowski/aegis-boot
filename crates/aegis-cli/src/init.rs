@@ -29,8 +29,8 @@ use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
 
-use crate::catalog::find_entry;
 use crate::init_wizard;
+use aegis_catalog::find_entry;
 
 /// A named bundle of catalog slugs for `aegis-boot init --profile ...`.
 pub struct Profile {
