@@ -39,15 +39,19 @@ jobs:
       - run: cargo test --all-features --locked
 
   aegis-cli:
-    name: aegis-cli (Linux + macOS + Windows cross-check)
+    name: aegis-cli (Linux + Windows cross-check)
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
       - name: Install Rust toolchain (from rust-toolchain.toml) + cross targets
         run: |
           rustup show
-          rustup target add x86_64-apple-darwin
           rustup target add x86_64-pc-windows-gnu
+      - name: Install MinGW for Windows cross-compile
+        # Required by `ring`'s build.rs (transitive via aegis-fetch's
+        # ureq+rustls). Without this, ring's `cc-rs` fails with
+        # "failed to find tool x86_64-w64-mingw32-gcc". (#655 PR-C)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
       - name: Format + lint aegis-cli
         run: |
@@ -55,15 +59,20 @@ jobs:
           cargo clippy -p aegis-bootctl --all-targets -- -D warnings
       - name: Run aegis-cli tests
         run: cargo test -p aegis-bootctl --locked
-      - name: Cross-compile check for macOS
-        # Build-only gate. Confirms cross-platform flash code compiles
-        # for x86_64-apple-darwin; runtime macOS behavior is covered
-        # by fixture-based parser tests.
-        run: cargo check -p aegis-bootctl --target x86_64-apple-darwin --all-targets
       - name: Cross-compile check for Windows
-        # Same rationale as macOS: Windows detect code compiles, its
-        # PowerShell-output parser is exercised via committed fixtures.
+        # Build-only gate. Confirms Windows detect code compiles for
+        # x86_64-pc-windows-gnu via MinGW; the PowerShell-output
+        # parser is exercised via committed fixtures. Real runtime
+        # behavior is covered by `cargo check + test (windows-2022)`.
         run: cargo check -p aegis-bootctl --target x86_64-pc-windows-gnu --all-targets
+      # macOS cross-compile from a Linux runner is intentionally NOT
+      # attempted: aegis-fetch's transitive `ring` requires a C cross-
+      # compile that needs `osxcross` infrastructure. Real macOS
+      # validation lives in the dedicated `macOS native smoke
+      # (macos-14)` job, which runs the same source on a real macOS
+      # runner and catches every portability regression cross-compile
+      # would. (#655 PR-C; was blocking on ring's build.rs failing
+      # under cc when targeting x86_64-apple-darwin.)
 
   rescue-tui:
     # rescue-tui isn't part of the workspace-wide `Test` job because

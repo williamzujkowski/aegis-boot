@@ -2,14 +2,15 @@
 
 //! `aegis-boot fetch <slug>` — download + verify a catalog ISO.
 //!
-//! Resolves a slug from the catalog, downloads the ISO, the project's
-//! signed `SHA256SUMS`, and the signature on `SHA256SUMS`, then runs
-//! the verification recipe a careful operator would type by hand:
+//! Resolves a slug from the catalog and delegates the download +
+//! signed-chain verification to [`aegis_fetch::fetch_catalog_entry`]
+//! (#655 PR-C). The verification dispatches on the entry's
+//! [`aegis_catalog::SigPattern`]:
 //!
-//!   1. `sha256sum -c SHA256SUMS --ignore-missing` against the ISO
-//!   2. `gpg --verify SHA256SUMS.sig SHA256SUMS` (best-effort: gpg
-//!      won't trust unfamiliar keys; we surface the gpg output so the
-//!      operator can decide whether to import the project's key)
+//! - `ClearsignedSums` (`AlmaLinux`, Fedora, Rocky)
+//! - `DetachedSigOnSums` (Debian, Ubuntu, Kali, Linux Mint, `GParted`,
+//!   openSUSE, Pop!\_OS)
+//! - `DetachedSigOnIso` (Alpine, Manjaro, MX Linux, `SystemRescue`)
 //!
 //! On success, prints the absolute path to the downloaded ISO + a
 //! single-line `aegis-boot add` command. We do NOT auto-add because
@@ -20,16 +21,29 @@
 //! Storage: defaults to `$XDG_CACHE_HOME/aegis-boot/<slug>/` (or
 //! `$HOME/.cache/aegis-boot/<slug>/`). Override with `--out DIR`.
 //!
-//! Network + verification both shell out to system tools (curl,
-//! sha256sum, gpg) rather than pulling in reqwest + sha2 + gpgme as
-//! Rust deps. Keeps the static-musl binary small and the trust
-//! boundary explicit (system tools are visible in `aegis-boot
-//! doctor`'s prerequisite check).
+//! ## Trust boundary
+//!
+//! Network: `ureq` + rustls + ring + Mozilla CA bundle (statically
+//! linked into the binary; no system curl). Verification: rpgp
+//! pure-Rust `OpenPGP` against the embedded vendor keyring shipped
+//! in `crates/aegis-catalog/keyring/<vendor>.asc` with primary
+//! fingerprints pinned in `EMBEDDED_FINGERPRINTS`. No system gpg
+//! involved — `aegis-boot doctor`'s prerequisite check no longer
+//! lists curl / sha256sum / gpg for this codepath.
+//!
+//! `--no-gpg` is now a deprecation no-op: verification always
+//! runs. Operators with vendors not yet in the embedded keyring
+//! (the partial-coverage set of `LinuxMint` / MX / `SystemRescue` /
+//! `GParted` / System76 / openSUSE — see #655 PR-B follow-up)
+//! get `FetchError::UnknownVendor` and should use
+//! `aegis-boot add <iso-path>` with a manually-downloaded ISO
+//! until the vendor key lands.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
 
 use aegis_catalog::{Entry, SbStatus, find_entry};
+use aegis_fetch::{FetchError, FetchEvent, FetchProgress, VendorKeyring};
 
 /// Entry point for `aegis-boot fetch [--out DIR] [--no-gpg] <slug>`.
 pub fn run(args: &[String]) -> ExitCode {
@@ -73,118 +87,214 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
 
     let dest = out_dir.unwrap_or_else(|| default_cache_dir(entry.slug));
 
-    // --dry-run prints the recipe (URLs, sizes-if-already-cached,
-    // destination, GPG policy) without any network or disk writes.
-    // Useful before committing to a download — especially when
-    // prepping a stick for an offline environment or before
-    // ejecting at a customer site.
     if dry_run {
         print_dry_run(entry, &dest, skip_gpg);
         return Ok(());
     }
 
-    if let Err(e) = std::fs::create_dir_all(&dest) {
-        eprintln!("aegis-boot fetch: cannot create {}: {e}", dest.display());
-        return Err(1);
+    if skip_gpg {
+        // Deprecation: --no-gpg is now a no-op. The embedded
+        // vendor keyring + rpgp verifier means we always have
+        // the right key available, so opting out is no longer
+        // useful. Print a one-line notice and proceed with the
+        // full verification.
+        eprintln!(
+            "aegis-boot fetch: --no-gpg is deprecated and now a no-op (#655 PR-C). \
+             Verification always runs against the embedded vendor keyring."
+        );
     }
+
+    let keyring = match VendorKeyring::embedded() {
+        Ok(k) => k,
+        Err(e) => {
+            eprintln!("aegis-boot fetch: vendor keyring failed to load: {e}");
+            return Err(1);
+        }
+    };
 
     println!("Fetching {} into {}", entry.name, dest.display());
     println!();
 
-    let iso_filename = filename_from_url(entry.iso_url);
-    let sha_filename = filename_from_url(entry.sha256_url);
-    let sig_filename = filename_from_url(entry.sig_url);
-
-    // ISO is the big download — show a progress bar if enabled.
-    // SHA256SUMS + signature are ~1-2 KB each; keep them silent so
-    // the terminal scrollback isn't dominated by tiny bars.
-    if let Err(e) = download(entry.iso_url, &dest.join(&iso_filename), show_progress) {
-        eprintln!("aegis-boot fetch: ISO download failed: {e}");
-        return Err(1);
-    }
-    if let Err(e) = download(entry.sha256_url, &dest.join(&sha_filename), false) {
-        eprintln!("aegis-boot fetch: SHA256SUMS download failed: {e}");
-        return Err(1);
-    }
-    if let Err(e) = download(entry.sig_url, &dest.join(&sig_filename), false) {
-        // Sig download is best-effort if the user opts out of GPG, but
-        // useful to have on disk regardless.
-        eprintln!("aegis-boot fetch: signature download failed: {e}");
-        if !skip_gpg {
-            return Err(1);
+    let mut renderer = ProgressRenderer::new(show_progress);
+    let outcome = match aegis_fetch::fetch_catalog_entry(entry, &dest, &keyring, &mut |event| {
+        renderer.handle(&event);
+    }) {
+        Ok(o) => {
+            renderer.finish_done();
+            o
         }
-    }
+        Err(e) => {
+            renderer.finish_failed();
+            return Err(report_fetch_error(&e, entry));
+        }
+    };
 
-    println!();
-    println!("Verifying SHA-256 of {iso_filename} against {sha_filename}...");
-    if !verify_sha256(&dest, &iso_filename, &sha_filename) {
-        eprintln!();
-        eprintln!("aegis-boot fetch: SHA-256 verification FAILED");
-        eprintln!(
-            "the ISO at {} does not match the project's published checksum",
-            dest.join(&iso_filename).display()
-        );
-        eprintln!("re-fetch from a different network if you suspect MITM, or check");
-        eprintln!("the project's release page for an updated checksum file");
-        return Err(1);
-    }
-    println!("  SHA-256: OK");
-
-    if skip_gpg {
-        println!();
-        println!("(GPG verification skipped per --no-gpg)");
-    } else if let Some(code) = handle_gpg_step(&dest, &sha_filename, &sig_filename, &slug) {
-        return Err(code);
-    }
-
+    let iso_filename = outcome
+        .iso_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map_or_else(|| filename_from_url(entry.iso_url), str::to_string);
     print_success(entry, &dest, &iso_filename);
+    println!();
+    println!(
+        "Authenticated by vendor key fingerprint {}",
+        outcome.key_fingerprint
+    );
     Ok(())
 }
 
-/// Run + report GPG verification. Returns `Some(code)` to abort the
-/// whole `fetch` command (BAD signature, gpg missing); `None` to
-/// continue (OK or unknown-key — both are non-fatal because the
-/// operator can review and re-run).
-fn handle_gpg_step(dest: &Path, sums: &str, sig: &str, slug: &str) -> Option<u8> {
-    println!();
-    println!("Verifying GPG signature of {sums}...");
-    match verify_gpg(dest, sums, sig) {
-        GpgVerdict::Ok => {
-            println!("  GPG: OK");
-            None
+/// Map a [`FetchError`] from `aegis-fetch` into operator-readable
+/// stderr output + the appropriate process exit code. Distinguishes
+/// the rich error variants so the caller gets a remediation hint
+/// rather than a raw `Display` string.
+fn report_fetch_error(err: &FetchError, entry: &Entry) -> u8 {
+    eprintln!();
+    match err {
+        FetchError::Network { url, detail } => {
+            eprintln!("aegis-boot fetch: network error fetching {url}");
+            eprintln!("  {detail}");
+            eprintln!("re-try on a different network or wait — vendor mirrors flap occasionally");
+            1
         }
-        GpgVerdict::UnknownKey(stderr) => {
-            println!("  GPG: signature present but signing key not in your keyring.");
-            println!();
-            println!("  This is normal the first time you fetch from a project. Inspect");
-            println!("  the gpg output below — if you trust the project, import their key");
-            println!("  (typically a `gpg --keyserver keys.openpgp.org --recv-keys ...`)");
-            println!("  and re-run `aegis-boot fetch {slug}`.");
-            println!();
-            println!("  --- gpg --verify ---");
-            for line in stderr.lines() {
-                println!("  {line}");
+        FetchError::Filesystem { detail } => {
+            eprintln!("aegis-boot fetch: filesystem error");
+            eprintln!("  {detail}");
+            1
+        }
+        FetchError::Sha256Mismatch {
+            expected,
+            actual,
+            iso,
+        } => {
+            eprintln!("aegis-boot fetch: SHA-256 verification FAILED for {iso}");
+            eprintln!("  expected {expected}");
+            eprintln!("  actual   {actual}");
+            eprintln!("the ISO does not match the (cryptographically authenticated) sums file.");
+            eprintln!("re-fetch on a different network if you suspect MITM.");
+            1
+        }
+        FetchError::SignatureVerifyFailed {
+            entry: slug,
+            detail,
+        } => {
+            eprintln!("aegis-boot fetch: signature verification FAILED for {slug}");
+            eprintln!("  {detail}");
+            eprintln!("either the artifact was tampered with in transit, or the vendor rotated");
+            eprintln!("their signing key and the embedded keyring is stale. update aegis-boot to");
+            eprintln!("a newer release and re-try.");
+            1
+        }
+        FetchError::UnknownVendor { vendor } => {
+            eprintln!("aegis-boot fetch: vendor {vendor:?} has no key in the embedded keyring");
+            eprintln!("this catalog entry is partial-coverage in #655 Phase 2B PR-B; the vendor");
+            eprintln!("key is awaiting follow-up sourcing. workarounds:");
+            eprintln!(
+                "  - download the ISO + sums + sig manually from {} and",
+                entry.iso_url
+            );
+            eprintln!("    `aegis-boot add <iso-path>` to stage on a stick");
+            eprintln!("  - track #655 for the keyring-completion follow-up PR");
+            1
+        }
+        FetchError::IsoNotInSums { iso } => {
+            eprintln!("aegis-boot fetch: vendor sums file does not list {iso}");
+            eprintln!("this means the catalog's iso_url is out of date — vendor has rotated");
+            eprintln!("the published filename. file an issue or wait for the next");
+            eprintln!("`catalog-refresh` auto-PR.");
+            1
+        }
+        FetchError::MalformedSums => {
+            eprintln!("aegis-boot fetch: vendor sums file did not contain any sha256 lines");
+            eprintln!("the vendor may have switched to a different digest algorithm; file an");
+            eprintln!("issue with the vendor URL.");
+            1
+        }
+        FetchError::NotClearsigned => {
+            eprintln!("aegis-boot fetch: vendor's CHECKSUM file is not a clearsigned envelope");
+            eprintln!("the catalog declared this entry as ClearsignedSums; either the vendor");
+            eprintln!("switched format or the entry's verify field is wrong. file an issue.");
+            1
+        }
+    }
+}
+
+/// Render `aegis-fetch` lifecycle events as terminal output.
+///
+/// Maps `FetchEvent` to `indicatif` progress bars when stdout is a
+/// TTY, plain `println!` lines otherwise. The bar shows
+/// bytes-per-sec + ETA during the download phase and a spinner
+/// during the verify phases.
+struct ProgressRenderer {
+    show_progress: bool,
+    download_bar: Option<indicatif::ProgressBar>,
+}
+
+impl ProgressRenderer {
+    fn new(show_progress: bool) -> Self {
+        Self {
+            show_progress,
+            download_bar: None,
+        }
+    }
+
+    fn handle(&mut self, event: &FetchEvent) {
+        match event {
+            FetchEvent::Connecting => {
+                if !self.show_progress {
+                    println!("  Connecting...");
+                }
             }
-            println!("  --- end ---");
-            None
+            FetchEvent::Downloading(progress) => self.update_download(progress),
+            FetchEvent::VerifyingHash => {
+                self.finish_download();
+                println!("  Verifying SHA-256...");
+            }
+            FetchEvent::VerifyingSig => {
+                self.finish_download();
+                println!("  Verifying PGP signature...");
+            }
+            FetchEvent::Done(_) => {}
         }
-        GpgVerdict::Bad(stderr) => {
-            eprintln!();
-            eprintln!("aegis-boot fetch: GPG signature is INVALID for this signing key");
-            eprintln!("the SHA256SUMS file appears to have been tampered with, OR you've");
-            eprintln!("downloaded a stale signature; re-fetch from a different network");
-            eprintln!();
-            eprintln!("--- gpg --verify ---");
-            eprintln!("{stderr}");
-            eprintln!("--- end ---");
-            Some(1)
+    }
+
+    fn update_download(&mut self, progress: &FetchProgress) {
+        if !self.show_progress {
+            return;
         }
-        GpgVerdict::GpgMissing => {
-            eprintln!();
-            eprintln!("aegis-boot fetch: gpg not found in PATH");
-            eprintln!("install gpg (e.g. `sudo apt-get install gnupg`) and re-run, or pass");
-            eprintln!("--no-gpg to skip signature verification (NOT recommended)");
-            Some(1)
+        let bar = self.download_bar.get_or_insert_with(|| {
+            let total = progress.total.unwrap_or(0);
+            let pb = if total > 0 {
+                indicatif::ProgressBar::new(total)
+            } else {
+                indicatif::ProgressBar::new_spinner()
+            };
+            let template = if total > 0 {
+                "  [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta}, {bytes_per_sec})"
+            } else {
+                "  {spinner} {bytes} ({bytes_per_sec})"
+            };
+            #[allow(clippy::expect_used)] // hard-coded template string
+            pb.set_style(
+                indicatif::ProgressStyle::with_template(template).expect("static template parses"),
+            );
+            pb
+        });
+        bar.set_position(progress.bytes);
+    }
+
+    fn finish_download(&mut self) {
+        if let Some(bar) = self.download_bar.take() {
+            bar.finish_and_clear();
+        }
+    }
+
+    fn finish_done(&mut self) {
+        self.finish_download();
+    }
+
+    fn finish_failed(&mut self) {
+        if let Some(bar) = self.download_bar.take() {
+            bar.abandon();
         }
     }
 }
@@ -388,113 +498,7 @@ pub(crate) fn cached_iso_path(slug: &str) -> Option<PathBuf> {
     Some(default_cache_dir(entry.slug).join(filename_from_url(entry.iso_url)))
 }
 
-/// Download `url` to `dest`. When `show_progress` is true, curl
-/// runs with its `--progress-bar` (compact single-line `#` bar)
-/// instead of `--silent` — the operator sees bytes-per-sec + ETA
-/// for large ISO downloads (#311). When false, curl runs silent;
-/// used for small sidecar downloads (SHA256SUMS / signatures)
-/// where a progress bar would only clutter the output.
-///
-/// Partial-file cleanup on failure is preserved — a non-success
-/// curl exit removes `dest` so a retry doesn't see a stale partial
-/// as "already downloaded".
-fn download(url: &str, dest: &Path, show_progress: bool) -> Result<(), String> {
-    if dest.is_file() {
-        // Already downloaded; skip. Sha verification will catch a
-        // half-finished partial-download from a previous failed run.
-        println!("  skip: {} already present", dest.display());
-        return Ok(());
-    }
-    println!("  GET {url}");
-    let mut cmd = Command::new("curl");
-    cmd.args([
-        "--proto",
-        "=https",
-        "--tlsv1.2",
-        "--fail",
-        "--show-error",
-        "--location",
-    ]);
-    if show_progress {
-        // `--progress-bar` emits a compact single-line progress
-        // meter on stderr. Large ISO downloads (multi-GB from slow
-        // mirrors) no longer appear hung.
-        cmd.arg("--progress-bar");
-    } else {
-        cmd.arg("--silent");
-    }
-    cmd.arg("--output").arg(dest).arg(url);
-    let status = cmd
-        .status()
-        .map_err(|e| format!("curl exec failed: {e} (is curl installed?)"))?;
-    if !status.success() {
-        // Clean up partial file so a retry doesn't see it as "already
-        // downloaded" via the is_file() check above.
-        let _ = std::fs::remove_file(dest);
-        return Err(format!("curl exited with status {status}"));
-    }
-    Ok(())
-}
-
-fn verify_sha256(dir: &Path, iso: &str, sums: &str) -> bool {
-    let out = Command::new("sha256sum")
-        .args(["-c", "--ignore-missing", sums])
-        .current_dir(dir)
-        .output();
-    match out {
-        Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            // sha256sum output: "<file>: OK" or "<file>: FAILED"
-            // We want the line for our specific iso.
-            for line in stdout.lines() {
-                if line.starts_with(iso) {
-                    println!("  {line}");
-                    return line.ends_with(": OK");
-                }
-            }
-            // ISO not in checksums file at all? print stderr and fail.
-            eprintln!("(no entry for {iso} in {sums})");
-            eprintln!("{}", String::from_utf8_lossy(&out.stderr));
-            false
-        }
-        Err(e) => {
-            eprintln!("sha256sum exec failed: {e} (is sha256sum installed?)");
-            false
-        }
-    }
-}
-
-enum GpgVerdict {
-    Ok,
-    UnknownKey(String),
-    Bad(String),
-    GpgMissing,
-}
-
-fn verify_gpg(dir: &Path, sums: &str, sig: &str) -> GpgVerdict {
-    // gpg writes the verdict to stderr, not stdout.
-    let out = Command::new("gpg")
-        .args(["--verify", sig, sums])
-        .current_dir(dir)
-        .output();
-    let Ok(out) = out else {
-        return GpgVerdict::GpgMissing;
-    };
-    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-    if out.status.success() {
-        return GpgVerdict::Ok;
-    }
-    // gpg exit 2 + "Can't check signature: No public key" → unknown key
-    // gpg exit 1 + "BAD signature" → genuine fail
-    let lower = stderr.to_lowercase();
-    if lower.contains("no public key") || lower.contains("can't check signature") {
-        GpgVerdict::UnknownKey(stderr)
-    } else {
-        GpgVerdict::Bad(stderr)
-    }
-}
-
-fn print_success(entry: &Entry, dest: &Path, iso_filename: &str) {
+fn print_success(entry: &Entry, dest: &std::path::Path, iso_filename: &str) {
     let abs_iso = dest.join(iso_filename);
     println!();
     println!("Done. Verified ISO at:");

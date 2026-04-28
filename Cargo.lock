@@ -25,6 +25,7 @@ version = "0.17.0"
 dependencies = [
  "aegis-catalog",
  "aegis-core",
+ "aegis-fetch",
  "aegis-trust",
  "aegis-wire-formats",
  "hex",

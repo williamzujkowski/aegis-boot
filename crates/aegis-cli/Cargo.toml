@@ -75,6 +75,10 @@ aegis-core = { path = "../aegis-core", version = "0.17" }
 # Curated ISO catalog + per-distro URL resolvers extracted into a
 # shared crate (#655 Phase 2A) so rescue-tui can read the same data.
 aegis-catalog = { path = "../aegis-catalog", version = "0.17" }
+# Shared download + signed-chain verification (#655 PR-C). Replaces
+# the curl + gpg + sha256sum shell-outs in `aegis-boot fetch` with
+# a single typed verify path against the embedded vendor keyring.
+aegis-fetch = { path = "../aegis-fetch", version = "0.17" }
 iso-probe = { path = "../iso-probe", version = "0.17" }
 # Signed attestation manifest types extracted for Phase 4a of #286.
 # This crate is the Rust + JSON Schema source of truth for the
