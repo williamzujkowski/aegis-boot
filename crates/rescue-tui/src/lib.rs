@@ -32,6 +32,7 @@ pub mod network;
 pub mod persistence;
 pub mod render;
 pub mod state;
+pub mod test_mode;
 pub mod theme;
 pub mod tier_b_log;
 pub mod tpm;
