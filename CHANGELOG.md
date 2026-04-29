@@ -4,6 +4,45 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 
 ## [Unreleased]
 
+### In-rescue ISO download over network (closes #655)
+
+Thirteen PRs across three phases ship the full operator path "rescue-tui boots → operator picks a distro → ISO downloads + verifies in place." A vendor keyring is embedded in the `aegis-catalog` crate; a new `aegis-fetch` crate handles the end-to-end download + signed-chain verify; the rescue-tui Catalog + Confirm screens drive the worker; and the host CLI exposes the same primitive as `aegis-boot fetch <slug>`. No system `gpg` / `curl` / `sha256sum` involved — pure-Rust ureq + rustls + ring + rpgp.
+
+**Phase 1 — networking primitives in the rescue env**
+
+- **PR #656** — initramfs gains `udhcpc`, `iproute2`, `iputils-ping`, `ca-certificates`, and `getent` so DHCP + name resolution + cert validation actually work. No auto-DHCP at boot — operator opt-in via the rescue-tui Network screen so `aegis-boot init` workflows that don't need network don't pay the DHCP timeout.
+- **PR #657** — rescue-tui Network overlay (`n` from List). Picks an interface, runs `udhcpc -n -q -t 5 -T 2` in a worker thread, surfaces success/failure inline. Reads the resulting `/var/run/udhcpc.<iface>.lease` to display IP + gateway in the session footer.
+
+**Phase 2A — `aegis-catalog` crate extraction (PR #658)**
+
+Pulled the catalog data + `Entry` / `Vendor` / `SbStatus` / `SigPattern` / `find_entry` types into a workspace member crate. `aegis-cli` and `rescue-tui` both depend on it; `aegis-fetch` builds on top. Renamed `Distribution` → `Vendor` in catalog code so the spelling matches the GPG-signing-identity meaning the field actually carries.
+
+**Phase 2B — `aegis-fetch` crate + vendor keyring**
+
+- **PR #660** — new `aegis-fetch` crate with `fetch_catalog_entry(entry, dest_dir, keyring, on_event, cancelled)`. Composes streaming HTTPS download (`download::download_to_file`), streaming SHA-256 (`sha256::hash_file`), and the signed-chain verifier dispatched on `entry.verify`. Three `SigPattern`s wired:
+  - `ClearsignedSums` (AlmaLinux / Fedora / Rocky): rpgp `from_armor_many` over the embedded vendor cert, verify the inline-cleartext-signed `CHECKSUM` envelope, then assert that the ISO's hash is in the verified body.
+  - `DetachedSigOnSums` (Debian / Ubuntu / Kali / Linux Mint / openSUSE / GParted / Pop!_OS): pull `SHA256SUMS` + `SHA256SUMS.gpg`, verify the detached signature, then assert ISO's hash is in the verified sums.
+  - `DetachedSigOnIso` (Alpine / Manjaro / MX Linux / SystemRescue): pull the ISO + `<iso>.asc`, hash-then-verify directly.
+- **PR #662** — vendor keyring embedded as `crates/aegis-catalog/keyring/<vendor>.asc` + `keys/keyring-fingerprints.txt`. `EMBEDDED_KEYRING` + `EMBEDDED_FINGERPRINTS` ship with the binary; primary fingerprint pinning happens at parse time via `from_armor_many` + primary→subkey resolution. Empty-keyring CLI smoke test guards the embed.
+- **PR #669** — keyring completion follow-up: 6 additional vendor certs (LinuxMint / MX / openSUSE / GParted / SystemRescue / System76).
+
+**Phase 2B PR-C — operator surface (3 PRs)**
+
+- **PR #666** — `aegis-boot fetch <slug>`. Resolves catalog slug → `Entry`, downloads to `$XDG_CACHE_HOME/aegis-boot/<slug>/`, verifies, prints absolute path + a one-liner `aegis-boot add` command. `--no-gpg` becomes a deprecation no-op (verification always runs against the embedded keyring). New `FetchError::UnknownVendor` surfaces the partial-coverage gap pre-PR-B2.
+- **PR #667** — rescue-tui Catalog screen + `spawn_fetch_worker`. List view of catalog entries grouped by category (Workstation / Server / Rescue). Enter on an entry opens the Confirm screen which runs the fetch worker. `FetchEvent`s pump through a channel, drive the `CatalogOp` state machine: `Idle → Connecting → Downloading{bytes,total} → VerifyingHash → VerifyingSig → Success(outcome) | Failed(msg)`.
+- **PR #668** — network-use consent gate + lease banner. First time `n` is pressed, an explicit consent screen explains the operator is about to bring up an interface + send DHCP. Once granted, subsequent `n` presses skip the gate. Active lease (IP + gateway) renders as a footer band so the operator always sees whether they're online.
+
+**Phase 3 — durability + cancellability (4 PRs)**
+
+- **PR #670 — slice 1: atomicity.** Stream into `<iso>.partial` + rename-on-verify. The file at the final path exists iff every verify step succeeded — by construction. POSIX `rename(2)` is atomic within the data-partition mount, so iso-probe never sees a half-stream masquerading as a verified ISO.
+- **PR #672 — slice 2: HTTP Range resume.** If `<iso>.partial` exists from a prior session, send `GET … Range: bytes=N-`. HTTP 206 → append remaining bytes; HTTP 200 → server ignored the header → truncate + restart from byte 0. Resume is opportunistic; correctness is bound by the verify-from-byte-0 step at the end.
+- **PR #673 — slice 3: cooperative cancel.** Plumb a `cancelled: &AtomicBool` through `fetch_catalog_entry` → `download::pump_to_writer` + `sha256::hash_file`. Checked between 1 MiB chunks (matches the existing progress cadence). New `FetchError::Cancelled` carries the result; cancel mid-download leaves the `.partial` for the next session's slice-2 resume. rescue-tui flips the flag from Esc on the CatalogConfirm screen during a non-terminal fetch (previously the screen rejected the press).
+- **PR #678 — slice 4: rolling-window ETA.** 30-second rolling-window byte-rate tracker fed by `catalog_progress`. Renderer displays `42 KB/s — ETA 2m18s` under the bytes/total line. Fixed-window linear regression — operators read it as "in the last 30 s I've moved X bytes" and it self-corrects when a vendor mirror bursts then stalls. Returns no estimate until ≥ 2 samples span ≥ 1 s, so the first chunk doesn't flicker a meaningless ETA.
+
+**Test coverage:** 39 hermetic unit tests in `aegis-fetch` (download / pump / sha256 / verify-pattern dispatch / keyring round-trip / sums parsers); 260 in rescue-tui (state machine + render + the new rate tracker + humanize_duration). End-to-end fetch + verify is exercised against the embedded keyring + a synthetic mirror in CI.
+
+**`osv-scanner.toml` (PR #674)** — companion to `deny.toml`'s ignore for `RUSTSEC-2023-0071` (rsa Marvin Attack). Scorecard's OSV-Scanner reads its own ignore file, so the existing rationale for `cargo-deny` was invisible to it. Mirrored here. The advisory is unreachable in our verify-only fetch path: no RSA private keys held, no decryption, no signing.
+
 ### UX/UI review pass — operator surface polish (epic #537)
 
 Four-agent parallel review of the operator surface (rescue-tui, CLI subcommands, user docs, error-message contract) found 18 actionable issues. Tier-1 (bugs + quick correctness wins) shipped as five focused PRs; Tier-3/4 (rescue-tui polish, longer-horizon) filed as tracking issues for future work.
