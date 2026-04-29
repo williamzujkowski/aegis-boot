@@ -59,6 +59,8 @@ pub(crate) enum ScreenKind {
     Catalog,
     /// Catalog fetch confirm screen — Enter to start, Esc when terminal.
     CatalogConfirm,
+    /// Network-use consent prompt (#655 PR-C step 3).
+    ConsentNetworkUse,
 }
 
 impl ScreenKind {
@@ -81,6 +83,7 @@ impl ScreenKind {
             Screen::Network { .. } => Self::Network,
             Screen::Catalog { .. } => Self::Catalog,
             Screen::CatalogConfirm { .. } => Self::CatalogConfirm,
+            Screen::ConsentNetworkUse { .. } => Self::ConsentNetworkUse,
         }
     }
 }

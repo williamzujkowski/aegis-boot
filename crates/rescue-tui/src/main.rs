@@ -679,7 +679,20 @@ where
             // bound on either screen; if a future feature claims it,
             // either remap or check key.modifiers here.
             (Screen::List { .. } | Screen::Confirm { .. }, KeyCode::Char('n')) => {
-                state.enter_network(network::enumerate_interfaces());
+                // First-time-per-session network-use consent gate
+                // (#655 PR-C step 3). Subsequent presses skip this
+                // prompt because the operator has already opted in.
+                if state.session_network_consent {
+                    state.enter_network(network::enumerate_interfaces());
+                } else {
+                    state.enter_consent_network_use();
+                }
+            }
+            (Screen::ConsentNetworkUse { .. }, KeyCode::Char('y')) => {
+                state.grant_consent_network_use(network::enumerate_interfaces());
+            }
+            (Screen::ConsentNetworkUse { .. }, KeyCode::Esc | KeyCode::Char('q')) => {
+                state.cancel_consent_network_use();
             }
             (Screen::Network { .. }, KeyCode::Up | KeyCode::Char('k')) => {
                 state.network_move_selection(-1);

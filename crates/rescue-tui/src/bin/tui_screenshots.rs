@@ -130,6 +130,16 @@ fn main() -> Result<(), DynError> {
             "Catalog fetch terminal — failure rendered with operator-readable message.",
             Box::new(catalog_fetch_failed_state),
         ),
+        (
+            "20-consent-network-use",
+            "ConsentNetworkUse overlay (#655 PR-C step 3) — first-press 'n' gate.",
+            Box::new(consent_network_use_state),
+        ),
+        (
+            "21-list-with-active-lease",
+            "List screen with active DHCP lease — footer shows NET: + GW: (#655 PR-C step 3).",
+            Box::new(list_with_active_lease_state),
+        ),
     ];
 
     let mut stdout = std::io::stdout().lock();
@@ -437,6 +447,27 @@ fn catalog_fetch_failed_state() -> AppState {
                 .to_string(),
         );
     }
+    state
+}
+
+fn consent_network_use_state() -> AppState {
+    let mut state = mixed_tier_state(Pane::List, 0);
+    state.screen = Screen::ConsentNetworkUse {
+        prior: Box::new(Screen::List { selected: 0 }),
+    };
+    state
+}
+
+fn list_with_active_lease_state() -> AppState {
+    use rescue_tui::network::NetworkLease;
+    let mut state = mixed_tier_state(Pane::List, 0);
+    state.network_lease = Some(NetworkLease {
+        ipv4: "192.168.1.42/24".to_string(),
+        gateway: Some("192.168.1.1".to_string()),
+        nameservers: vec!["1.1.1.1".to_string()],
+    });
+    // Default screen is List; the session footer (drawn under the
+    // info pane) renders the new NET:/GW: spans.
     state
 }
 
