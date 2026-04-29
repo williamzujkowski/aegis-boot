@@ -744,6 +744,20 @@ fi
 
 export TERM=linux
 
+# (#675) Harness-driven test modes. Cmdline `aegis.test=<name>` sets
+# AEGIS_TEST=<name> and rescue-tui short-circuits its TUI to run the
+# named scripted check. See docs/rescue-tui-serial-format.md for the
+# serial-output contract aegis-hwsim grep-pins against. Quoted to
+# accept future modes without re-editing /init.
+for arg in $(/bin/cat /proc/cmdline 2>/dev/null); do
+    case "$arg" in
+        aegis.test=*)
+            export AEGIS_TEST="${arg#aegis.test=}"
+            /bin/echo "init: AEGIS_TEST=$AEGIS_TEST (cmdline-driven test mode)"
+            ;;
+    esac
+done
+
 # Hand off. Exit code semantics (#90):
 #   0        — operator chose Quit → drop to emergency shell (old default)
 #   42       — operator chose the rescue-shell entry explicitly

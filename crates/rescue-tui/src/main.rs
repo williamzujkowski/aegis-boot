@@ -11,7 +11,9 @@
 
 // All modules now live in lib.rs so sibling binaries like
 // tiers-docgen (#462) can share them. main.rs is a thin driver.
-use rescue_tui::{failure_log, network, persistence, render, state, theme, tier_b_log, tpm};
+use rescue_tui::{
+    failure_log, network, persistence, render, state, test_mode, theme, tier_b_log, tpm,
+};
 
 use std::collections::HashSet;
 use std::env;
@@ -40,6 +42,14 @@ const DEFAULT_ROOTS: &[&str] = &["/run/media", "/mnt"];
 
 fn main() -> ExitCode {
     tracing_subscriber_init();
+    // Harness-driven test mode (#675). When /init detects
+    // `aegis.test=<name>` on the kernel cmdline it exports
+    // `AEGIS_TEST=<name>`; this dispatcher short-circuits the TUI to
+    // run the named test and exit with its rc. See `test_mode` +
+    // `docs/rescue-tui-serial-format.md`.
+    if let Some(rc) = test_mode::dispatch_from_env() {
+        return ExitCode::from(u8::try_from(rc).unwrap_or(1));
+    }
     let roots = parse_roots(env::var("AEGIS_ISO_ROOTS").ok().as_deref());
     match run(&roots) {
         Ok(code) => ExitCode::from(code),
