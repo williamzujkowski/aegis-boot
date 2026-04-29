@@ -2006,7 +2006,12 @@ fn prev_char_boundary(buffer: &str, cursor: usize) -> usize {
 /// When the ISO has a discoverable sibling key file, step 1 becomes a
 /// literal copy-paste `mokutil --import` command. When it doesn't, step 1
 /// tells the operator how to place the key so the next run will name it.
-fn build_mokutil_remedy(iso: Option<&DiscoveredIso>) -> String {
+///
+/// `pub(crate)` so the harness-driven `mok-enroll` test mode (#676)
+/// can print the canonical walkthrough without the kexec-failure
+/// detour. Keeping the body in one place means the harness, the
+/// kexec-failure path, and #202's docstring can never drift apart.
+pub(crate) fn build_mokutil_remedy(iso: Option<&DiscoveredIso>) -> String {
     let key_hint = iso.and_then(|iso| find_sibling_key(&iso.iso_path));
     let step_one = match key_hint {
         Some(ref key_path) => format!(

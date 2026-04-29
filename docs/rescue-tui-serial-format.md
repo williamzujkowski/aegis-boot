@@ -31,6 +31,30 @@ Companion to [aegis-hwsim `scenarios/kexec_refuses_unsigned.rs`](https://github.
 
 **Why this isn't a real bzImage**: under `lockdown=integrity`, the signature check fires before the format parser. A real (signed) bzImage isn't necessary — and synthesising one would defeat the test, since we want the path that asserts "unsigned content gets rejected." The harness only cares that one of the rejection landmarks fires.
 
+### `aegis.test=mok-enroll`
+
+Companion to [aegis-hwsim `scenarios/mok_enroll_alpine.rs`](https://github.com/aegis-boot/aegis-hwsim/pull/79) (epic E5.4). Asserts that the operator-facing MOK enrollment walkthrough (#202) is intact and emits the load-bearing copy-paste command without drift.
+
+**What it does**:
+
+1. Prints a `MOK enrollment walkthrough starting` header.
+2. Prints the canonical 3-step walkthrough body — same text the rescue-tui kexec-failure path renders, sourced from `crate::state::build_mokutil_remedy`.
+3. Prints a `MOK enrollment walkthrough complete` footer + exits 0.
+
+This is a static-text mode; there's no kexec, no ISO, no kernel — just the operator-visible recovery prose, so the harness can verify the contract without driving a real unsigned-kernel boot.
+
+**Serial landmarks (exact substrings)**:
+
+| Stage | Landmark | Meaning |
+|---|---|---|
+| Walkthrough fired | `MOK enrollment walkthrough` | Confirms the stick has the test mode (not Skip). |
+| Step marker | `STEP 1/3` | Confirms the walkthrough body printed. |
+| **Load-bearing command** | `sudo mokutil --import` | The verbatim copy-paste payload from #202. Drift here leaves an operator at 2 AM with a non-working command line — the harness exists to catch exactly this. |
+
+**Process exit code**: always `0`. The harness validates by grep, not exit status.
+
+**Why we render the no-key variant**: with no real ISO at hand, `build_mokutil_remedy(None)` gives the prose-step-1 form which still contains the load-bearing `sudo mokutil --import` substring (under "aegis-boot will then generate the exact `sudo mokutil --import <path>` command for you"). Operators in the field hit the with-key variant when they have a sibling `.pub`/`.key`/`.der` on the stick; the substring contract holds in both.
+
 ## Stability policy
 
 Strings in the **Serial landmarks** tables are part of aegis-boot's published external contract. They follow these rules:

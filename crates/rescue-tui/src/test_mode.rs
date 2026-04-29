@@ -43,6 +43,7 @@ pub fn dispatch_from_env() -> Option<i32> {
     let mode = std::env::var("AEGIS_TEST").ok()?;
     match mode.as_str() {
         "kexec-unsigned" => Some(run_kexec_unsigned()),
+        "mok-enroll" => Some(run_mok_enroll()),
         // Unknown / future test modes — log + treat as "no test
         // matched" so a stale aegis.test= cmdline against a newer
         // stick doesn't silently disable the TUI.
@@ -131,6 +132,33 @@ fn real_kexec(blob_path: &Path) -> Result<(), KexecError> {
     })
 }
 
+/// Print the canonical MOK enrollment walkthrough (#202) so
+/// aegis-hwsim's `mok_enroll_alpine` scenario (#676 companion to E5.4)
+/// can grep-pin the load-bearing strings without a real
+/// unsigned-kernel kexec failure.
+///
+/// The walkthrough body comes from [`crate::state::build_mokutil_remedy`]
+/// — the same function the kexec-failure path uses — so the harness
+/// assertion is checking the actual operator-visible text. Drift
+/// here would surface as a failed harness assertion, which is the
+/// whole point of the contract.
+///
+/// Always returns 0: this mode renders a static walkthrough; there's
+/// no failure path to assert against. The harness only validates the
+/// landmarks are present.
+#[must_use]
+pub fn run_mok_enroll() -> i32 {
+    println!("aegis-boot-test: MOK enrollment walkthrough starting");
+    // No-key variant — harness drives this without a real ISO on
+    // disk, so build_mokutil_remedy(None) gives the prose-step-1
+    // form. The substring `sudo mokutil --import` still appears in
+    // step 1's body.
+    let walkthrough = crate::state::build_mokutil_remedy(None);
+    println!("{walkthrough}");
+    println!("aegis-boot-test: MOK enrollment walkthrough complete");
+    0
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
@@ -174,6 +202,33 @@ mod tests {
         // kernel accepted an unsigned blob.
         let rc = run_with_kexec(|_| Ok(()));
         assert_eq!(rc, 1);
+    }
+
+    // ---- #676 mok-enroll landmarks ----------------------------------
+
+    #[test]
+    fn mok_enroll_walkthrough_contains_required_landmarks() {
+        // Render the same body the test mode prints so we don't
+        // depend on stdout capture. If aegis-hwsim's TEST_LANDMARKS
+        // ever drifts from these, the harness assertion fails and
+        // we land here.
+        let body = crate::state::build_mokutil_remedy(None);
+        assert!(
+            body.contains("STEP 1/3"),
+            "mok-enroll walkthrough missing STEP 1/3: {body}"
+        );
+        assert!(
+            body.contains("sudo mokutil --import"),
+            "mok-enroll walkthrough missing 'sudo mokutil --import': {body}"
+        );
+    }
+
+    #[test]
+    fn mok_enroll_returns_zero() {
+        // Static walkthrough has no failure path; should always
+        // exit 0 so the harness records a Pass when it grep-finds
+        // the landmarks.
+        assert_eq!(run_mok_enroll(), 0);
     }
 
     // dispatch_from_env() is intentionally not unit-tested: it reads
