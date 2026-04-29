@@ -2397,6 +2397,23 @@ fn draw_catalog_confirm_overlay(
             progress_text,
             Style::default().fg(Color::DarkGray),
         )));
+        // Rolling-window rate + ETA, only when the tracker has
+        // crossed its minimum-sample threshold (#655 Phase 3
+        // slice 4). One operator-readable line: `42 KB/s — ETA 2m18s`.
+        if let Some(stats) = state.download_rate.stats(*total) {
+            let rate_text = format!(
+                "         {}/s{}",
+                humanize_bytes(stats.bytes_per_sec),
+                stats
+                    .eta_seconds
+                    .map(|s| format!(" — ETA {}", humanize_duration(s)))
+                    .unwrap_or_default()
+            );
+            lines.push(Line::from(Span::styled(
+                rate_text,
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
     }
 
     lines.push(Line::from(""));
@@ -2405,7 +2422,7 @@ fn draw_catalog_confirm_overlay(
         crate::state::CatalogOp::Connecting
         | crate::state::CatalogOp::Downloading { .. }
         | crate::state::CatalogOp::VerifyingHash
-        | crate::state::CatalogOp::VerifyingSig => "[fetch in flight — Esc locked]",
+        | crate::state::CatalogOp::VerifyingSig => "[Esc] cancel fetch",
         crate::state::CatalogOp::Success(_) | crate::state::CatalogOp::Failed(_) => {
             "[Esc] back to catalog"
         }
@@ -2493,6 +2510,24 @@ fn draw_consent_network_use_overlay(frame: &mut Frame<'_>, area: Rect, state: &A
     frame.render_widget(para, panel);
 }
 
+/// Render an elapsed-seconds count as a compact duration string
+/// (`< 1s`, `42s`, `5m13s`, `1h05m`). Used by the catalog-fetch ETA
+/// line (#655 Phase 3 slice 4); keeps the format short enough to fit
+/// in the existing single-line progress band.
+fn humanize_duration(seconds: u64) -> String {
+    if seconds < 60 {
+        return format!("{seconds}s");
+    }
+    let minutes = seconds / 60;
+    let secs = seconds % 60;
+    if minutes < 60 {
+        return format!("{minutes}m{secs:02}s");
+    }
+    let hours = minutes / 60;
+    let mins = minutes % 60;
+    format!("{hours}h{mins:02}m")
+}
+
 /// Render `n` bytes as a humane size string (B / KiB / MiB / GiB).
 fn humanize_bytes(n: u64) -> String {
     const KIB: u64 = 1024;
@@ -2522,6 +2557,29 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use std::path::PathBuf;
+
+    // ---- #655 Phase 3 slice 4: humanize_duration --------------------------
+
+    #[test]
+    fn humanize_duration_sub_minute() {
+        assert_eq!(humanize_duration(0), "0s");
+        assert_eq!(humanize_duration(1), "1s");
+        assert_eq!(humanize_duration(59), "59s");
+    }
+
+    #[test]
+    fn humanize_duration_minutes_zero_pads_seconds() {
+        assert_eq!(humanize_duration(60), "1m00s");
+        assert_eq!(humanize_duration(73), "1m13s");
+        assert_eq!(humanize_duration(3599), "59m59s");
+    }
+
+    #[test]
+    fn humanize_duration_hours_zero_pads_minutes() {
+        assert_eq!(humanize_duration(3600), "1h00m");
+        assert_eq!(humanize_duration(3660), "1h01m");
+        assert_eq!(humanize_duration(7320), "2h02m");
+    }
 
     // ---- #274 Phase 6c: subfolder-prefix rendering ------------------------
 

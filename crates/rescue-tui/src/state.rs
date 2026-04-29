@@ -421,6 +421,12 @@ pub struct AppState {
     /// to true via [`Self::grant_consent_network_use`]. Once true,
     /// `n` opens [`Screen::Network`] directly without re-prompting.
     pub session_network_consent: bool,
+    /// Rolling-window byte-rate tracker for the active catalog
+    /// download (#655 Phase 3 slice 4). Empty when no fetch is in
+    /// flight or the operator hasn't crossed the first sample
+    /// boundary yet. Read by the renderer to compute `KB/s` + ETA
+    /// on the [`Screen::CatalogConfirm`] progress line.
+    pub download_rate: DownloadRateTracker,
     /// Most recent successful DHCP lease, if any. Set by
     /// [`Self::network_finish_dhcp`] on the Ok branch and consumed
     /// by `Screen::Catalog` to gate fetch availability + by the
@@ -622,6 +628,101 @@ impl TpmStatus {
     }
 }
 
+/// Rolling-window byte-rate tracker (#655 Phase 3 slice 4).
+///
+/// Holds up to [`Self::WINDOW`]-seconds of `(timestamp, bytes_so_far)`
+/// samples and exposes a `bytes_per_sec` + `eta_seconds` derivative.
+/// Single-window EMA was tempting (smoother) but a fixed-window
+/// linear regression is what an operator actually expects to see —
+/// "in the last 30 s I've moved X bytes" — and it self-corrects when
+/// a vendor mirror bursts then stalls.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DownloadRateTracker {
+    samples: std::collections::VecDeque<(std::time::Instant, u64)>,
+}
+
+/// Snapshot of the live download rate. Returned by
+/// [`DownloadRateTracker::stats`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DownloadStats {
+    /// Average rate over the rolling window.
+    pub bytes_per_sec: u64,
+    /// Estimated seconds remaining, only Some when `total` is known
+    /// AND the rate is non-zero.
+    pub eta_seconds: Option<u64>,
+}
+
+impl DownloadRateTracker {
+    /// Window length over which the rate is averaged. 30 s is long
+    /// enough to absorb chunk-level jitter (a 1 MiB read on a fast
+    /// link is sub-second; on a slow link it's seconds) and short
+    /// enough that a stall is reflected in the displayed ETA within
+    /// half a window.
+    pub const WINDOW: std::time::Duration = std::time::Duration::from_secs(30);
+
+    /// Record a `bytes_so_far` sample. Wall-clock variant used by
+    /// the worker; see [`Self::record_at`] for tests.
+    pub fn record(&mut self, bytes: u64) {
+        self.record_at(std::time::Instant::now(), bytes);
+    }
+
+    /// Test-injectable variant of [`Self::record`]. Drops samples
+    /// older than [`Self::WINDOW`] before pushing the new one.
+    pub fn record_at(&mut self, now: std::time::Instant, bytes: u64) {
+        while let Some(&(t, _)) = self.samples.front() {
+            if now.duration_since(t) > Self::WINDOW {
+                self.samples.pop_front();
+            } else {
+                break;
+            }
+        }
+        self.samples.push_back((now, bytes));
+    }
+
+    /// Drop all samples. Called when the fetch transitions out of
+    /// the Downloading state (success, failure, or a fresh restart)
+    /// so the next download starts with a clean window.
+    pub fn reset(&mut self) {
+        self.samples.clear();
+    }
+
+    /// Compute live rate + ETA. Returns `None` if there are fewer
+    /// than 2 samples or the elapsed window is < 1 s — both cases
+    /// produce noisy estimates that would flicker in the UI.
+    #[must_use]
+    pub fn stats(&self, total: Option<u64>) -> Option<DownloadStats> {
+        if self.samples.len() < 2 {
+            return None;
+        }
+        let (t_first, b_first) = *self.samples.front()?;
+        let (t_last, b_last) = *self.samples.back()?;
+        let dt = t_last.duration_since(t_first).as_secs_f64();
+        if dt < 1.0 {
+            return None;
+        }
+        let db = b_last.saturating_sub(b_first);
+        // Cast through f64 for the divide; round down on the way back
+        // to u64 so a sub-1 B/s rate reports as 0 (and the ETA call
+        // below falls through to None).
+        #[allow(
+            clippy::cast_precision_loss,
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss
+        )]
+        let bps = (db as f64 / dt) as u64;
+        if bps == 0 {
+            return None;
+        }
+        let eta_seconds = total
+            .and_then(|t| t.checked_sub(b_last))
+            .map(|remaining| remaining / bps);
+        Some(DownloadStats {
+            bytes_per_sec: bps,
+            eta_seconds,
+        })
+    }
+}
+
 impl AppState {
     /// Build a fresh state from a discovery result.
     #[must_use]
@@ -645,6 +746,7 @@ impl AppState {
             audit_warning: None,
             session_consent: false,
             session_network_consent: false,
+            download_rate: DownloadRateTracker::default(),
             network_lease: None,
         }
     }
@@ -1617,6 +1719,17 @@ impl AppState {
     /// with the typed result, and that's the canonical path to
     /// Success/Failed.
     pub fn catalog_progress(&mut self, ev: &aegis_fetch::FetchEvent) {
+        // Feed / reset the rolling-window rate tracker so the
+        // renderer can compute KB/s + ETA on the progress line
+        // (#655 Phase 3 slice 4). Done before the screen-mutation
+        // borrow to keep the partial-borrow simple.
+        match ev {
+            aegis_fetch::FetchEvent::Downloading(p) => self.download_rate.record(p.bytes),
+            aegis_fetch::FetchEvent::Connecting
+            | aegis_fetch::FetchEvent::VerifyingHash
+            | aegis_fetch::FetchEvent::VerifyingSig => self.download_rate.reset(),
+            aegis_fetch::FetchEvent::Done(_) => {}
+        }
         let Screen::CatalogConfirm { op, .. } = &mut self.screen else {
             return;
         };
@@ -1638,6 +1751,7 @@ impl AppState {
     /// Apply the worker's terminal `FetchMsg::Done` result. Flips
     /// the op state to Success or Failed.
     pub fn catalog_finish_fetch(&mut self, result: Result<aegis_fetch::FetchOutcome, String>) {
+        self.download_rate.reset();
         let Screen::CatalogConfirm { op, .. } = &mut self.screen else {
             return;
         };
@@ -2079,6 +2193,88 @@ mod tests {
     use super::*;
     use iso_probe::Distribution;
     use std::path::PathBuf;
+    use std::time::{Duration, Instant};
+
+    // ---- #655 Phase 3 slice 4: DownloadRateTracker ------------------------
+
+    #[test]
+    fn rate_tracker_returns_none_with_one_sample() {
+        let mut t = DownloadRateTracker::default();
+        t.record_at(Instant::now(), 1024);
+        assert!(t.stats(Some(2048)).is_none());
+    }
+
+    #[test]
+    fn rate_tracker_returns_none_when_window_too_narrow() {
+        let mut t = DownloadRateTracker::default();
+        let t0 = Instant::now();
+        t.record_at(t0, 0);
+        // 200 ms apart — under the 1 s threshold so the rate would
+        // be noisy. Tracker correctly returns None.
+        t.record_at(t0 + Duration::from_millis(200), 1024 * 100);
+        assert!(t.stats(Some(1_000_000)).is_none());
+    }
+
+    #[test]
+    fn rate_tracker_computes_rate_and_eta() {
+        let mut t = DownloadRateTracker::default();
+        let t0 = Instant::now();
+        t.record_at(t0, 0);
+        t.record_at(t0 + Duration::from_secs(2), 200_000); // 100 KB/s
+        let stats = t.stats(Some(1_000_000)).unwrap_or_else(|| panic!("stats"));
+        assert_eq!(stats.bytes_per_sec, 100_000);
+        // Remaining = 1_000_000 - 200_000 = 800_000 / 100_000 = 8 s
+        assert_eq!(stats.eta_seconds, Some(8));
+    }
+
+    #[test]
+    fn rate_tracker_no_eta_when_total_unknown() {
+        let mut t = DownloadRateTracker::default();
+        let t0 = Instant::now();
+        t.record_at(t0, 0);
+        t.record_at(t0 + Duration::from_secs(2), 200_000);
+        let stats = t.stats(None).unwrap_or_else(|| panic!("stats"));
+        assert_eq!(stats.bytes_per_sec, 100_000);
+        assert!(stats.eta_seconds.is_none());
+    }
+
+    #[test]
+    fn rate_tracker_drops_samples_outside_window() {
+        let mut t = DownloadRateTracker::default();
+        let t0 = Instant::now();
+        // Stale sample 60 s in the past.
+        t.record_at(t0, 0);
+        // Two fresh samples 2 s apart at the current time.
+        let now = t0 + Duration::from_secs(60);
+        t.record_at(now, 5_000_000); // first stale-prune purges t0
+        t.record_at(now + Duration::from_secs(2), 5_200_000);
+        let stats = t.stats(None).unwrap_or_else(|| panic!("stats"));
+        // Window is the two fresh samples: 200_000 B / 2 s = 100 KB/s.
+        // (If the stale t0 had leaked in, rate would be ~86 KB/s.)
+        assert_eq!(stats.bytes_per_sec, 100_000);
+    }
+
+    #[test]
+    fn rate_tracker_reset_clears_window() {
+        let mut t = DownloadRateTracker::default();
+        let t0 = Instant::now();
+        t.record_at(t0, 0);
+        t.record_at(t0 + Duration::from_secs(2), 200_000);
+        assert!(t.stats(Some(1_000_000)).is_some());
+        t.reset();
+        assert!(t.stats(Some(1_000_000)).is_none());
+    }
+
+    #[test]
+    fn rate_tracker_zero_byte_progress_returns_none() {
+        let mut t = DownloadRateTracker::default();
+        let t0 = Instant::now();
+        // Two samples but no bytes moved → 0 B/s rate → stats None
+        // (avoids divide-by-zero in the ETA calc).
+        t.record_at(t0, 5000);
+        t.record_at(t0 + Duration::from_secs(2), 5000);
+        assert!(t.stats(Some(1_000_000)).is_none());
+    }
 
     fn fake_iso(label: &str) -> DiscoveredIso {
         DiscoveredIso {
