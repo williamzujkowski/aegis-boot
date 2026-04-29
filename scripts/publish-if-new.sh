@@ -66,15 +66,27 @@ fi
 # 404 case (crate not yet published at all) returns "" → we'll
 # always publish. Any other JSON-parse failure also returns "" so
 # we err on the side of attempting the publish.
-LIVE_VERSION="$(
-    curl --silent --fail --show-error \
+#
+# Two-step (download → parse) instead of a `curl | python3` pipe
+# so Scorecard's PinnedDependenciesID heuristic doesn't flag this
+# as a `downloadThenRun` pattern: the fetched bytes are JSON
+# data, not a script.
+CRATES_IO_RESPONSE="$(mktemp)"
+trap 'rm -f "$CRATES_IO_RESPONSE"' EXIT
+LIVE_VERSION=""
+if curl --silent --fail --show-error \
         --header 'User-Agent: aegis-boot publish-if-new wrapper' \
-        "https://crates.io/api/v1/crates/${CRATE}" \
-        2>/dev/null \
-        | python3 -c 'import sys, json; d=json.load(sys.stdin); print(d.get("crate", {}).get("max_version", ""))' \
-        2>/dev/null \
-        || echo ""
-)"
+        --output "$CRATES_IO_RESPONSE" \
+        "https://crates.io/api/v1/crates/${CRATE}" 2>/dev/null; then
+    LIVE_VERSION="$(
+        python3 -c '
+import sys, json
+with open(sys.argv[1]) as fp:
+    d = json.load(fp)
+print(d.get("crate", {}).get("max_version", ""))
+' "$CRATES_IO_RESPONSE" 2>/dev/null || echo ""
+    )"
+fi
 
 echo "publish-if-new: ${CRATE} — workspace=${WORKSPACE_VERSION}, live=${LIVE_VERSION:-<not on registry>}"
 

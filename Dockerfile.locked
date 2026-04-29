@@ -47,12 +47,19 @@ ENV RUSTUP_HOME=/opt/rust/rustup
 ENV CARGO_HOME=/opt/rust/cargo
 ENV RUST_VERSION=1.95.0
 
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-    | sh -s -- -y \
+# Pin rustup-init.sh by its current SHA-256 (Scorecard PinnedDependenciesID).
+# Update this hash + the pinned URL when bumping rustup. The official
+# rustup release history at https://github.com/rust-lang/rustup/releases
+# documents the script content + when it changes.
+ENV RUSTUP_INIT_SHA256=6c30b75a75b28a96fd913a037c8581b580080b6ee9b8169a3c0feb1af7fe8caf
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh \
+    && echo "${RUSTUP_INIT_SHA256}  /tmp/rustup-init.sh" | sha256sum -c - \
+    && sh /tmp/rustup-init.sh -y \
         --default-toolchain ${RUST_VERSION} \
         --profile minimal \
         --component rustfmt \
-        --component clippy
+        --component clippy \
+    && rm /tmp/rustup-init.sh
 ENV PATH="${CARGO_HOME}/bin:${PATH}"
 
 WORKDIR /build
