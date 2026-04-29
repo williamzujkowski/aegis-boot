@@ -70,9 +70,26 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
 
       - name: Install initramfs build dependencies
+        # linux-image-virtual provides the 5.15.0-*-generic vmlinuz +
+        # /lib/modules/<ver>/ that build-initramfs.sh bakes in. Consumers
+        # (kexec-e2e-shared) install the same package on their own
+        # runner; modules + kernel must match or modprobe fails inside
+        # QEMU and `ip link set lo up` panics PID 1. Without this step
+        # build-initramfs.sh falls back to the runner host's
+        # 6.8.0-*-azure modules, which don't load on a 5.15-virtual
+        # boot.
+        #
+        # qemu-smoke-shared works around this gap because qemu-smoke.sh
+        # doesn't modprobe anything; kexec-e2e.sh DOES (loop / isofs /
+        # udf for the fixture-ISO mount path). Adding the kernel here
+        # is what makes that consumer green.
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends busybox-static cpio
+          sudo apt-get install -y --no-install-recommends \
+            busybox-static cpio \
+            linux-image-virtual
+          sudo chmod 0644 /boot/vmlinuz-* /boot/initrd.img-* 2>/dev/null || true
+          ls -l /boot/vmlinuz-* /boot/initrd.img-*
 
       - name: Install Rust toolchain (from rust-toolchain.toml)
         run: rustup show
@@ -182,3 +199,53 @@ jobs:
         env:
           TIMEOUT_SECONDS: "90"
         run: ./scripts/qemu-smoke.sh
+
+  # Phase 2c canary — kexec-e2e using the shared build artifacts.
+  # Runs alongside the standalone .github/workflows/kexec-e2e.yml until
+  # 5 PRs of green-parity, then a follow-up PR retires the standalone
+  # using the same pattern as Phase 2b (qemu-smoke retirement).
+  kexec-e2e-shared:
+    name: kexec E2E (shared-build canary)
+    needs: build-shared
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
+
+      - name: Install runtime + fixture-build tools
+        # Mirror of kexec-e2e.yml's deps, minus the rescue-tui /
+        # initramfs build prereqs (busybox-static + cpio for those
+        # are still pulled because qemu-kexec-e2e.sh's fixture build
+        # uses busybox internally).
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 \
+            linux-image-virtual \
+            busybox-static cpio \
+            xorriso util-linux mount
+          sudo chmod 0644 /boot/vmlinuz-* /boot/initrd.img-* 2>/dev/null || true
+          ls -l /boot/vmlinuz-* /boot/initrd.img-*
+
+      - name: Download shared artifacts
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5
+        with:
+          name: e2e-shared-build
+          path: shared/
+
+      - name: Reposition artifacts to expected paths
+        run: |
+          mkdir -p target/release out
+          mv shared/rescue-tui                  target/release/rescue-tui
+          mv shared/initramfs.cpio.gz           out/initramfs.cpio.gz
+          mv shared/initramfs.cpio.gz.sha256    out/initramfs.cpio.gz.sha256
+          chmod +x target/release/rescue-tui
+          ls -lh target/release/rescue-tui out/initramfs.cpio.gz
+
+      - name: Run kexec E2E
+        env:
+          TIMEOUT_SECONDS: "180"
+        run: sudo -E ./scripts/qemu-kexec-e2e.sh
