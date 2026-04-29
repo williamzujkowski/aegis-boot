@@ -30,6 +30,9 @@ use rescue_tui::state::{AppState, Pane, Screen};
 type DynError = Box<dyn std::error::Error>;
 type Scenario = (&'static str, &'static str, Box<dyn Fn() -> AppState>);
 
+// Allowed: this function is just a list-of-fixtures + dispatch
+// loop; splitting helpers won't reduce the visible vec literal.
+#[allow(clippy::too_many_lines)]
 fn main() -> Result<(), DynError> {
     let scenarios: Vec<Scenario> = vec![
         (
@@ -91,6 +94,41 @@ fn main() -> Result<(), DynError> {
             "12-network-overlay-success",
             "Network overlay after successful DHCP — IP/gateway/DNS shown.",
             Box::new(network_success_state),
+        ),
+        (
+            "13-catalog-list",
+            "Catalog overlay (#655 PR-C step 2) — grouped browse list.",
+            Box::new(catalog_list_state),
+        ),
+        (
+            "14-catalog-list-no-lease",
+            "Catalog overlay opened with no DHCP lease — inline hint to press 'n' first.",
+            Box::new(catalog_list_no_lease_state),
+        ),
+        (
+            "15-catalog-confirm-idle",
+            "Catalog confirm screen at op=Idle, ready to start fetch.",
+            Box::new(catalog_confirm_idle_state),
+        ),
+        (
+            "16-catalog-fetch-downloading",
+            "Catalog fetch mid-download — gauge + bytes/total + percent.",
+            Box::new(catalog_fetch_downloading_state),
+        ),
+        (
+            "17-catalog-fetch-verifying-sig",
+            "Catalog fetch in PGP verify phase — locked Esc until terminal.",
+            Box::new(catalog_fetch_verifying_sig_state),
+        ),
+        (
+            "18-catalog-fetch-success",
+            "Catalog fetch terminal — ISO verified, path + fingerprint shown.",
+            Box::new(catalog_fetch_success_state),
+        ),
+        (
+            "19-catalog-fetch-failed",
+            "Catalog fetch terminal — failure rendered with operator-readable message.",
+            Box::new(catalog_fetch_failed_state),
         ),
     ];
 
@@ -281,6 +319,124 @@ fn network_success_state() -> AppState {
         },
         prior: Box::new(Screen::List { selected: 0 }),
     };
+    state
+}
+
+// ---- Catalog fixtures (#655 PR-C step 2) -----------------------------
+
+fn catalog_list_state() -> AppState {
+    use rescue_tui::network::NetworkLease;
+    let mut state = mixed_tier_state(Pane::List, 0);
+    // Stash a successful lease so the overlay does NOT show the
+    // "no network" hint — this is the primary "operator with
+    // network" rendering.
+    state.network_lease = Some(NetworkLease {
+        ipv4: "192.168.1.42/24".to_string(),
+        gateway: Some("192.168.1.1".to_string()),
+        nameservers: vec!["1.1.1.1".to_string()],
+    });
+    state.screen = Screen::Catalog {
+        entries: aegis_catalog::CATALOG,
+        selected: 0,
+        scroll: 0,
+        prior: Box::new(Screen::List { selected: 0 }),
+    };
+    state
+}
+
+fn catalog_list_no_lease_state() -> AppState {
+    let mut state = mixed_tier_state(Pane::List, 0);
+    // No network_lease — overlay renders the "press 'n' to enable
+    // networking" hint at the top.
+    state.screen = Screen::Catalog {
+        entries: aegis_catalog::CATALOG,
+        selected: 0,
+        scroll: 0,
+        prior: Box::new(Screen::List { selected: 0 }),
+    };
+    state
+}
+
+fn catalog_confirm_idle_state() -> AppState {
+    use rescue_tui::state::CatalogOp;
+    let mut state = mixed_tier_state(Pane::List, 0);
+    let entry = aegis_catalog::CATALOG
+        .iter()
+        .find(|e| e.slug == "ubuntu-24.04-live-server")
+        .unwrap_or(&aegis_catalog::CATALOG[0]);
+    state.screen = Screen::CatalogConfirm {
+        entry,
+        free_bytes: 8_000_000_000,
+        op: CatalogOp::Idle,
+        prior: Box::new(Screen::Catalog {
+            entries: aegis_catalog::CATALOG,
+            selected: 0,
+            scroll: 0,
+            prior: Box::new(Screen::List { selected: 0 }),
+        }),
+    };
+    state
+}
+
+fn catalog_fetch_downloading_state() -> AppState {
+    use rescue_tui::state::CatalogOp;
+    let mut state = catalog_confirm_idle_state();
+    if let Screen::CatalogConfirm { op, .. } = &mut state.screen {
+        *op = CatalogOp::Downloading {
+            bytes: 412_000_000,
+            total: Some(2_470_000_000),
+        };
+    }
+    state
+}
+
+fn catalog_fetch_verifying_sig_state() -> AppState {
+    use rescue_tui::state::CatalogOp;
+    let mut state = catalog_confirm_idle_state();
+    if let Screen::CatalogConfirm { op, .. } = &mut state.screen {
+        *op = CatalogOp::VerifyingSig;
+    }
+    state
+}
+
+fn catalog_fetch_success_state() -> AppState {
+    use aegis_fetch::FetchOutcome;
+    use rescue_tui::state::CatalogOp;
+    let mut state = catalog_confirm_idle_state();
+    if let Screen::CatalogConfirm { op, entry, .. } = &mut state.screen {
+        *op = CatalogOp::Success(FetchOutcome {
+            iso_path: std::path::PathBuf::from(format!(
+                "/run/media/aegis-isos/{}",
+                entry
+                    .iso_url
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or("ubuntu-24.04.4-live-server-amd64.iso")
+            )),
+            bytes: 2_470_000_000,
+            sha256_hex: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                .to_string(),
+            vendor: entry.vendor,
+            // Synthetic fingerprint — fixture-only. The real
+            // Ubuntu CD-signing key fingerprint is pinned in
+            // crates/aegis-catalog/keyring/fingerprints.toml; using
+            // the real value here trips secret-scanner heuristics.
+            key_fingerprint: "0000DEADBEEF1111000022223333444455556666".to_string(),
+        });
+    }
+    state
+}
+
+fn catalog_fetch_failed_state() -> AppState {
+    use rescue_tui::state::CatalogOp;
+    let mut state = catalog_confirm_idle_state();
+    if let Screen::CatalogConfirm { op, .. } = &mut state.screen {
+        *op = CatalogOp::Failed(
+            "signature: verify failed for ubuntu-24.04-live-server: \
+             no cert in keyring matched signature"
+                .to_string(),
+        );
+    }
     state
 }
 

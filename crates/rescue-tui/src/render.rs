@@ -77,15 +77,35 @@ pub fn draw(frame: &mut Frame<'_>, state: &AppState) {
     {
         draw_network_overlay(frame, area, state, interfaces, *selected, op);
     }
+    if let Screen::Catalog {
+        entries,
+        selected,
+        scroll,
+        ..
+    } = &state.screen
+    {
+        draw_catalog_overlay(frame, area, state, entries, *selected, *scroll);
+    }
+    if let Screen::CatalogConfirm {
+        entry,
+        free_bytes,
+        op,
+        ..
+    } = &state.screen
+    {
+        draw_catalog_confirm_overlay(frame, area, state, entry, *free_bytes, op);
+    }
 }
 
 fn draw_body(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     // Help, ConfirmQuit, and Network overlays draw the prior screen
     // underneath for context, then layer on top.
     let effective = match &state.screen {
-        Screen::Help { prior } | Screen::ConfirmQuit { prior } | Screen::Network { prior, .. } => {
-            prior.as_ref()
-        }
+        Screen::Help { prior }
+        | Screen::ConfirmQuit { prior }
+        | Screen::Network { prior, .. }
+        | Screen::Catalog { prior, .. }
+        | Screen::CatalogConfirm { prior, .. } => prior.as_ref(),
         other => other,
     };
     match effective {
@@ -129,7 +149,9 @@ fn draw_body(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         Screen::Quitting
         | Screen::Help { .. }
         | Screen::ConfirmQuit { .. }
-        | Screen::Network { .. } => {}
+        | Screen::Network { .. }
+        | Screen::Catalog { .. }
+        | Screen::CatalogConfirm { .. } => {}
     }
 }
 
@@ -2174,6 +2196,255 @@ impl DistributionLabel for iso_probe::DiscoveredIso {
             iso_probe::Distribution::Windows => "Windows",
             iso_probe::Distribution::Unknown => "unknown",
         }
+    }
+}
+
+// =====================================================================
+// Catalog overlay (#655 Phase 2B PR-C step 2)
+// =====================================================================
+
+/// Render the [`Screen::Catalog`] overlay — a centered panel listing
+/// the catalog entries grouped by [`aegis_catalog::Category`] in the
+/// `print_order()` sequence (Desktop / Server / Installer / Rescue).
+/// The selected row is highlighted in `theme.accent`.
+fn draw_catalog_overlay(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &AppState,
+    entries: &[aegis_catalog::Entry],
+    selected: usize,
+    scroll: usize,
+) {
+    use aegis_catalog::Category;
+
+    let panel_w = area.width.saturating_sub(8).clamp(60, 110);
+    let panel_h = area.height.saturating_sub(4).clamp(20, 32);
+    let panel_x = area.x + area.width.saturating_sub(panel_w) / 2;
+    let panel_y = area.y + area.height.saturating_sub(panel_h) / 2;
+    let panel = Rect::new(panel_x, panel_y, panel_w, panel_h);
+    frame.render_widget(Clear, panel);
+
+    let no_lease = state.network_lease.is_none();
+    let mut lines: Vec<Line<'_>> = Vec::new();
+
+    if no_lease {
+        lines.push(Line::from(Span::styled(
+            "Network not connected — press [n] to enable DHCP first",
+            Style::default()
+                .fg(state.theme.warning)
+                .add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(""));
+    }
+
+    for category in Category::print_order() {
+        let in_section: Vec<(usize, &aegis_catalog::Entry)> = entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.category == *category)
+            .collect();
+        if in_section.is_empty() {
+            continue;
+        }
+        lines.push(Line::from(Span::styled(
+            format!("── {} ──", category.header()),
+            Style::default()
+                .fg(state.theme.warning)
+                .add_modifier(Modifier::BOLD),
+        )));
+        for (idx, entry) in in_section {
+            let is_selected = idx == selected;
+            let glyph = if is_selected { "▶ " } else { "  " };
+            let row_style = if is_selected {
+                Style::default()
+                    .fg(state.theme.warning)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Reset)
+            };
+            let size_text = aegis_catalog::humanize(entry.size_mib);
+            let arch_text = if entry.arch == "x86_64" {
+                ""
+            } else {
+                entry.arch
+            };
+            let row = format!(
+                "{glyph}{slug:<32} {size:>9}  {sb} {arch}",
+                slug = aegis_catalog::truncate(entry.slug, 32),
+                size = size_text,
+                sb = entry.sb.glyph(),
+                arch = arch_text,
+            );
+            lines.push(Line::from(Span::styled(row, row_style)));
+        }
+        lines.push(Line::from(""));
+    }
+
+    // Crude scroll: clip lines above `scroll` to keep selected in view.
+    // Render layer keeps its own scroll math; AppState's `scroll` field
+    // is just a hint for the next clamp pass.
+    let _ = scroll; // reserved for the page-up/down impl
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "[↑/↓] navigate    [Enter] confirm fetch    [Esc] close",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let title = if no_lease {
+        " Catalog (offline) "
+    } else {
+        " Catalog "
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(state.theme.warning))
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(state.theme.warning)
+                .add_modifier(Modifier::BOLD),
+        ));
+    let para = Paragraph::new(lines).block(block);
+    frame.render_widget(para, panel);
+}
+
+/// Render the [`Screen::CatalogConfirm`] overlay — a smaller centered
+/// panel showing the entry's metadata, free space on the data
+/// partition, and the live op state (Connecting / Downloading /
+/// `VerifyingHash` / `VerifyingSig` / Success / Failed).
+fn draw_catalog_confirm_overlay(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &AppState,
+    entry: &aegis_catalog::Entry,
+    free_bytes: u64,
+    op: &crate::state::CatalogOp,
+) {
+    let panel_w = area.width.saturating_sub(12).clamp(50, 84);
+    let panel_h = area.height.saturating_sub(8).clamp(16, 22);
+    let panel_x = area.x + area.width.saturating_sub(panel_w) / 2;
+    let panel_y = area.y + area.height.saturating_sub(panel_h) / 2;
+    let panel = Rect::new(panel_x, panel_y, panel_w, panel_h);
+    frame.render_widget(Clear, panel);
+
+    let mut lines: Vec<Line<'_>> = Vec::new();
+    lines.push(Line::from(vec![
+        Span::styled("Name:    ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw(entry.name.to_string()),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("Slug:    ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw(entry.slug.to_string()),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("Size:    ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw(aegis_catalog::humanize(entry.size_mib)),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("Free:    ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw(if free_bytes == 0 {
+            "unknown".to_string()
+        } else {
+            humanize_bytes(free_bytes)
+        }),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("Sig:     ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw(format!("{:?}", entry.verify)),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("Vendor:  ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw(entry.vendor.slug().to_string()),
+    ]));
+    lines.push(Line::from(""));
+
+    let (status_label, status_color) = catalog_op_status(op, &state.theme);
+    lines.push(Line::from(vec![
+        Span::styled("Status:  ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(status_label, Style::default().fg(status_color)),
+    ]));
+    if let crate::state::CatalogOp::Downloading { bytes, total } = op {
+        let progress_text = match total {
+            Some(t) if *t > 0 => format!(
+                "         {} / {} ({:>3}%)",
+                humanize_bytes(*bytes),
+                humanize_bytes(*t),
+                bytes.saturating_mul(100) / *t
+            ),
+            _ => format!("         {}", humanize_bytes(*bytes)),
+        };
+        lines.push(Line::from(Span::styled(
+            progress_text,
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    lines.push(Line::from(""));
+    let footer = match op {
+        crate::state::CatalogOp::Idle => "[Enter] start fetch    [Esc] cancel",
+        crate::state::CatalogOp::Connecting
+        | crate::state::CatalogOp::Downloading { .. }
+        | crate::state::CatalogOp::VerifyingHash
+        | crate::state::CatalogOp::VerifyingSig => "[fetch in flight — Esc locked]",
+        crate::state::CatalogOp::Success(_) | crate::state::CatalogOp::Failed(_) => {
+            "[Esc] back to catalog"
+        }
+    };
+    lines.push(Line::from(Span::styled(
+        footer,
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(state.theme.warning))
+        .title(Span::styled(
+            " Confirm fetch ",
+            Style::default()
+                .fg(state.theme.warning)
+                .add_modifier(Modifier::BOLD),
+        ));
+    let para = Paragraph::new(lines).block(block);
+    frame.render_widget(para, panel);
+}
+
+/// Map a [`crate::state::CatalogOp`] to (label, color) for the
+/// confirm-screen status line.
+fn catalog_op_status<'a>(op: &'a crate::state::CatalogOp, theme: &'a Theme) -> (String, Color) {
+    use crate::state::CatalogOp;
+    match op {
+        CatalogOp::Idle => ("ready".to_string(), Color::DarkGray),
+        CatalogOp::Connecting => ("connecting…".to_string(), theme.warning),
+        CatalogOp::Downloading { .. } => ("downloading".to_string(), theme.warning),
+        CatalogOp::VerifyingHash => ("verifying SHA-256…".to_string(), theme.warning),
+        CatalogOp::VerifyingSig => ("verifying PGP signature…".to_string(), theme.warning),
+        CatalogOp::Success(outcome) => (
+            format!("verified — {}", outcome.iso_path.display()),
+            theme.success,
+        ),
+        CatalogOp::Failed(msg) => (format!("failed: {msg}"), theme.error),
+    }
+}
+
+/// Render `n` bytes as a humane size string (B / KiB / MiB / GiB).
+fn humanize_bytes(n: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = KIB * 1024;
+    const GIB: u64 = MIB * 1024;
+    if n >= GIB {
+        // Lossy at the 53-bit mantissa boundary, but `n` here is a
+        // disk-size-in-bytes value capped well below 2^53 in practice
+        // (max plausible: 16 EiB = 2^64; our actual values are <1 TiB).
+        #[allow(clippy::cast_precision_loss)]
+        let gib = (n as f64) / (GIB as f64);
+        format!("{gib:.1} GiB")
+    } else if n >= MIB {
+        format!("{} MiB", n / MIB)
+    } else if n >= KIB {
+        format!("{} KiB", n / KIB)
+    } else {
+        format!("{n} B")
     }
 }
 

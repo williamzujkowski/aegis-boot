@@ -35,7 +35,7 @@ use std::process::Command;
 // =====================================================================
 
 /// Secure Boot posture of the ISO's kernel under aegis-boot.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SbStatus {
     /// Kernel is signed by a CA in shim's built-in keyring; boots
     /// without MOK enrollment. The string names the signing CA.
@@ -246,6 +246,15 @@ impl Vendor {
 }
 
 /// One catalog entry.
+///
+/// `Debug` is auto-derived for logging. Equality is by `slug`
+/// alone: the slug is the unique catalog identifier and two
+/// entries with the same slug are by construction the same
+/// catalog row even if a downstream consumer mutated other
+/// fields. This avoids relying on function-pointer comparison
+/// for the optional resolver — fn-pointer equality is not
+/// load-bearing here, so we don't pretend it is.
+#[derive(Debug)]
 pub struct Entry {
     /// Stable slug operators type: `ubuntu-24.04-live-server`.
     pub slug: &'static str,
@@ -283,6 +292,14 @@ pub struct Entry {
     /// freshness check.
     pub resolver: Option<fn() -> Result<ResolvedUrls, ResolverError>>,
 }
+
+impl PartialEq for Entry {
+    fn eq(&self, other: &Self) -> bool {
+        self.slug == other.slug
+    }
+}
+
+impl Eq for Entry {}
 
 // =====================================================================
 // Resolver framework (#646)

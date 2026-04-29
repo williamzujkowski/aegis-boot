@@ -311,6 +311,11 @@ where
     // Active DHCP worker (#655 Phase 1B). Same ownership shape as
     // verify: Some(rx) while udhcpc runs, None otherwise.
     let mut active_dhcp: Option<Receiver<NetworkMsg>> = None;
+    // Active catalog-fetch worker (#655 PR-C step 2). Some(rx) while
+    // fetch_catalog_entry runs in a thread, None otherwise. Single
+    // in-flight by construction — the UI locks Esc on CatalogConfirm
+    // while op is non-terminal so a second fetch can't be spawned.
+    let mut active_fetch: Option<Receiver<FetchMsg>> = None;
 
     loop {
         terminal.draw(|f| render::draw(f, state))?;
@@ -334,6 +339,27 @@ where
                     Err(TryRecvError::Empty) => break,
                     Err(TryRecvError::Disconnected) => {
                         active_dhcp = None;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Drain catalog-fetch worker messages (#655 PR-C step 2).
+        if let Some(rx) = active_fetch.as_ref() {
+            loop {
+                match rx.try_recv() {
+                    Ok(FetchMsg::Event(ev)) => {
+                        state.catalog_progress(&ev);
+                    }
+                    Ok(FetchMsg::Done(result)) => {
+                        state.catalog_finish_fetch(result);
+                        active_fetch = None;
+                        break;
+                    }
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        active_fetch = None;
                         break;
                     }
                 }
@@ -672,6 +698,65 @@ where
             }
             (Screen::Network { .. }, KeyCode::Esc | KeyCode::Char('q')) => {
                 state.cancel_network();
+            }
+
+            // ---- Catalog overlay (#655 PR-C step 2) -------------
+            // `f` from List or Confirm opens the catalog browse.
+            // The Catalog screen renders an inline hint when no DHCP
+            // lease is held — the operator presses `n` first to
+            // enable networking and re-presses `f` after the lease
+            // arrives. Step 3 of #655 will auto-chain Network →
+            // Catalog after a successful first lease.
+            (Screen::List { .. } | Screen::Confirm { .. }, KeyCode::Char('f')) => {
+                state.enter_catalog(aegis_catalog::CATALOG);
+            }
+            (Screen::Catalog { .. }, KeyCode::Up | KeyCode::Char('k')) => {
+                state.catalog_move_selection(-1);
+            }
+            (Screen::Catalog { .. }, KeyCode::Down | KeyCode::Char('j')) => {
+                state.catalog_move_selection(1);
+            }
+            (Screen::Catalog { .. }, KeyCode::PageUp) => {
+                state.catalog_move_selection(-10);
+            }
+            (Screen::Catalog { .. }, KeyCode::PageDown) => {
+                state.catalog_move_selection(10);
+            }
+            (Screen::Catalog { .. }, KeyCode::Enter) => {
+                // Free-space precheck deferred — `unsafe_code = forbid`
+                // on rescue-tui blocks raw libc::statvfs, and pulling
+                // `nix` for one syscall is overweight for this PR.
+                // Pass `0` so the renderer shows "unknown" free
+                // space; ENOSPC mid-stream surfaces as a Failed
+                // state with a clean message. (#655 PR-C step 2;
+                // follow-up: precheck via a small safe wrapper.)
+                let _ = state.catalog_open_confirm(0);
+            }
+            (Screen::Catalog { .. }, KeyCode::Esc | KeyCode::Char('q')) => {
+                state.cancel_catalog();
+            }
+            (Screen::CatalogConfirm { .. }, KeyCode::Enter) => {
+                if let Some(entry) = state.catalog_begin_fetch() {
+                    // Load the embedded keyring once per fetch — load
+                    // is fast (parse 8 .asc files + fingerprint
+                    // pin-check) and side-steps thread-safety
+                    // questions about VendorKeyring.
+                    match aegis_fetch::VendorKeyring::embedded() {
+                        Ok(keyring) => {
+                            let dest = std::path::PathBuf::from(CATALOG_FETCH_DEST_DIR);
+                            let rx = spawn_fetch_worker(entry, dest, keyring);
+                            active_fetch = Some(rx);
+                        }
+                        Err(e) => {
+                            state.catalog_finish_fetch(Err(format!(
+                                "embedded keyring load failed: {e}"
+                            )));
+                        }
+                    }
+                }
+            }
+            (Screen::CatalogConfirm { .. }, KeyCode::Esc | KeyCode::Char('q')) => {
+                state.catalog_cancel_confirm();
             }
             (Screen::Confirm { selected }, KeyCode::Char('v')) => {
                 let real_idx = *selected;
@@ -1097,6 +1182,53 @@ enum NetworkMsg {
         iface: String,
         result: Result<network::NetworkLease, String>,
     },
+}
+
+/// Default catalog-fetch destination — the `AEGIS_ISOS` data
+/// partition mount inside the rescue env. ISOs landed here show up
+/// in the next iso-probe scan automatically (no manual hand-off).
+/// (#655 PR-C step 2.)
+const CATALOG_FETCH_DEST_DIR: &str = "/run/media/aegis-isos";
+
+/// Catalog-fetch worker channel messages (#655 PR-C step 2).
+/// `Event` carries lifecycle events from `aegis_fetch::fetch_catalog_entry`;
+/// `Done` carries the terminal result. Sent on a separate channel
+/// per fetch (no in-band Done event — the worker suppresses
+/// `FetchEvent::Done` so this channel is the canonical terminal).
+#[derive(Debug)]
+enum FetchMsg {
+    /// Lifecycle event from the fetch path. Translated into a
+    /// `CatalogOp` transition by [`crate::state::AppState::catalog_progress`].
+    Event(aegis_fetch::FetchEvent),
+    /// Terminal result. `Ok(outcome)` is rendered as a Success
+    /// state with the verified ISO path; `Err(msg)` is rendered as
+    /// a Failed state with the message verbatim.
+    Done(Result<aegis_fetch::FetchOutcome, String>),
+}
+
+/// Spawn a thread that runs `aegis_fetch::fetch_catalog_entry` and
+/// emits Event + Done messages on the returned Receiver. The
+/// thread terminates after Done is sent. The fetch is synchronous
+/// and uncancellable in this PR — Phase 3 of #655 will add resume
+/// + cancellation.
+fn spawn_fetch_worker(
+    entry: &'static aegis_catalog::Entry,
+    dest_dir: std::path::PathBuf,
+    keyring: aegis_fetch::VendorKeyring,
+) -> Receiver<FetchMsg> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let tx_inner = tx.clone();
+        let result = aegis_fetch::fetch_catalog_entry(entry, &dest_dir, &keyring, &mut |ev| {
+            // Suppress the in-band Done — `FetchMsg::Done` below
+            // is the canonical terminal transition.
+            if !matches!(ev, aegis_fetch::FetchEvent::Done(_)) {
+                let _ = tx_inner.send(FetchMsg::Event(ev));
+            }
+        });
+        let _ = tx.send(FetchMsg::Done(result.map_err(|e| e.to_string())));
+    });
+    rx
 }
 
 /// Spawn a thread that runs `udhcpc -i <iface> -n -q -t 5 -T 2` and

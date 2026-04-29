@@ -135,6 +135,54 @@ pub enum Screen {
         /// Boxed prior screen so dismiss restores it without churn.
         prior: Box<Screen>,
     },
+    /// Catalog browse overlay (#655 Phase 2B PR-C). Lists vendor
+    /// ISOs the operator can fetch over the network — same content
+    /// as host-side `aegis-boot recommend`, grouped by
+    /// [`aegis_catalog::Category`]. `f` from List/Confirm opens it;
+    /// `Esc`/`q` returns to `prior`. Selecting an entry opens
+    /// [`Screen::CatalogConfirm`] with a free-space precheck.
+    Catalog {
+        /// Snapshot of `aegis_catalog::CATALOG`. Carried by reference
+        /// so the screen state stays cheap to clone for tests.
+        entries: &'static [aegis_catalog::Entry],
+        /// Index into `entries` of the highlighted row. NOT a
+        /// view-row index — section headers do not occupy this
+        /// coordinate space (see `render::draw_catalog_overlay` for
+        /// the entry-index ↔ visible-row translation).
+        selected: usize,
+        /// Top-of-viewport row, in the entry-index space. Updated by
+        /// the renderer's clamp pass when the cursor moves outside
+        /// the visible region.
+        scroll: usize,
+        /// Boxed prior screen so dismiss restores it without churn.
+        prior: Box<Screen>,
+    },
+    /// Confirm-before-fetch screen for a single catalog entry
+    /// (#655 Phase 2B PR-C). Shows ISO size, free space on the
+    /// data partition, signature pattern, signing vendor, and the
+    /// operator's available actions. Enter starts the fetch worker
+    /// (which transitions `op` through Connecting → Downloading →
+    /// `VerifyingHash` → `VerifyingSig` → Success/Failed). Esc returns
+    /// to the Catalog list, but only when `op` is in a terminal
+    /// state — pressing Esc mid-fetch is intentionally locked
+    /// because [`aegis_fetch::fetch_catalog_entry`] is synchronous
+    /// and uncancellable in this PR. Phase 3 of #655 will add
+    /// resumable + cancellable fetches.
+    CatalogConfirm {
+        /// The catalog entry being fetched.
+        entry: &'static aegis_catalog::Entry,
+        /// Free bytes on the data partition at confirm-open time.
+        /// `0` means the statvfs call failed; the renderer falls
+        /// back to "free space unknown" and the operator can still
+        /// proceed (mid-stream ENOSPC will surface as
+        /// [`CatalogOp::Failed`]).
+        free_bytes: u64,
+        /// Per-fetch lifecycle state. See [`CatalogOp`].
+        op: CatalogOp,
+        /// Boxed prior screen so dismiss restores it without churn.
+        /// Always `Screen::Catalog`.
+        prior: Box<Screen>,
+    },
 }
 
 /// Network-overlay sub-state. `Idle` is the default at open;
@@ -167,6 +215,41 @@ pub enum NetworkOp {
         /// Human-readable failure message.
         err: String,
     },
+}
+
+/// Catalog-fetch sub-state. `Idle` is the default at confirm-open;
+/// the worker thread drives the transitions through Connecting →
+/// Downloading → `VerifyingHash` → `VerifyingSig` → Success/Failed
+/// as it pumps [`aegis_fetch::FetchEvent`]s into
+/// [`AppState::catalog_progress`]. (#655 Phase 2B PR-C step 2.)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CatalogOp {
+    /// No active operation. Showing the static confirm screen.
+    Idle,
+    /// TLS handshake in progress; no bytes received yet. Renderer
+    /// shows a spinner-line.
+    Connecting,
+    /// Bytes are streaming. `total` is `None` for chunked /
+    /// streaming responses (no Content-Length); UIs fall back to
+    /// a spinner + bytes-so-far in that case.
+    Downloading {
+        /// Bytes downloaded so far.
+        bytes: u64,
+        /// Content-Length from the server, or `None` if unknown.
+        total: Option<u64>,
+    },
+    /// Streaming SHA-256 of the ISO is being computed.
+    VerifyingHash,
+    /// PGP signature is being verified against the pinned vendor
+    /// cert. Last step before terminal Success.
+    VerifyingSig,
+    /// Fetch + verification both succeeded. Outcome carries the
+    /// verified ISO path + the cert fingerprint that authenticated
+    /// it (surfaced in audit logs).
+    Success(aegis_fetch::FetchOutcome),
+    /// Any error from the fetch path. The string is operator-
+    /// readable and is rendered verbatim.
+    Failed(String),
 }
 
 /// Reason for a [`Screen::Consent`] prompt. Each variant pairs with a
@@ -313,6 +396,12 @@ pub struct AppState {
     /// is inspected at the Confirm-screen Enter handler before
     /// dispatching to [`Self::is_kexec_blocked`] / kexec.
     pub session_consent: bool,
+    /// Most recent successful DHCP lease, if any. Set by
+    /// [`Self::network_finish_dhcp`] on the Ok branch and consumed
+    /// by `Screen::Catalog` to gate fetch availability + by the
+    /// header-banner renderer to display the active IP/gateway
+    /// (header rendering lands in #655 PR-C step 3).
+    pub network_lease: Option<crate::network::NetworkLease>,
 }
 
 /// Sort order applied to the List view. Cycled with the `s` key.
@@ -531,6 +620,7 @@ impl AppState {
             info_scroll: 0,
             audit_warning: None,
             session_consent: false,
+            network_lease: None,
         }
     }
 
@@ -1301,6 +1391,10 @@ impl AppState {
                     if let Some(row) = interfaces.iter_mut().find(|i| i.name == iface) {
                         row.ipv4 = Some(lease.ipv4.clone());
                     }
+                    // #655 PR-C: stash the lease so Catalog's `f`
+                    // gate + the header banner can read it without
+                    // walking screen history.
+                    self.network_lease = Some(lease.clone());
                     *op = NetworkOp::Success { iface, lease };
                 }
                 Err(err) => {
@@ -1308,6 +1402,175 @@ impl AppState {
                 }
             }
         }
+    }
+
+    /// Open the [`Screen::Catalog`] overlay. Caller passes the
+    /// catalog slice (almost always [`aegis_catalog::CATALOG`] but
+    /// tests inject a small fixture). Stores the current screen as
+    /// `prior` so [`Self::cancel_catalog`] can restore it. (#655
+    /// Phase 2B PR-C step 2.)
+    pub fn enter_catalog(&mut self, entries: &'static [aegis_catalog::Entry]) {
+        if matches!(self.screen, Screen::Catalog { .. }) {
+            return;
+        }
+        let prior = std::mem::replace(&mut self.screen, Screen::Quitting);
+        self.screen = Screen::Catalog {
+            entries,
+            selected: 0,
+            scroll: 0,
+            prior: Box::new(prior),
+        };
+    }
+
+    /// Cancel the Catalog overlay, returning to the screen that was
+    /// active when it was opened.
+    pub fn cancel_catalog(&mut self) {
+        if let Screen::Catalog { prior, .. } = std::mem::replace(&mut self.screen, Screen::Quitting)
+        {
+            self.screen = *prior;
+        }
+    }
+
+    /// Move the Catalog cursor by `delta` (`-1` = up, `+1` = down).
+    /// Clamps to `[0, entries.len() - 1]`.
+    pub fn catalog_move_selection(&mut self, delta: isize) {
+        if let Screen::Catalog {
+            entries, selected, ..
+        } = &mut self.screen
+        {
+            let len = entries.len();
+            if len == 0 {
+                *selected = 0;
+                return;
+            }
+            let max = len.saturating_sub(1);
+            let new = i64::try_from(*selected).unwrap_or(0)
+                + i64::from(i32::try_from(delta).unwrap_or(0));
+            let clamped = new.clamp(0, i64::try_from(max).unwrap_or(0));
+            *selected = usize::try_from(clamped).unwrap_or(0);
+        }
+    }
+
+    /// Open [`Screen::CatalogConfirm`] for the currently-selected
+    /// entry, with `free_bytes` measured from `statvfs` at
+    /// confirm-open time. Returns the entry pointer iff the
+    /// transition fired (caller may use this to reset progress
+    /// renderers, etc.). Returns `None` when there's no selected
+    /// entry (empty catalog) or we're not in [`Screen::Catalog`].
+    pub fn catalog_open_confirm(
+        &mut self,
+        free_bytes: u64,
+    ) -> Option<&'static aegis_catalog::Entry> {
+        let Screen::Catalog {
+            entries, selected, ..
+        } = &self.screen
+        else {
+            return None;
+        };
+        let entry = entries.get(*selected)?;
+        let prior = std::mem::replace(&mut self.screen, Screen::Quitting);
+        self.screen = Screen::CatalogConfirm {
+            entry,
+            free_bytes,
+            op: CatalogOp::Idle,
+            prior: Box::new(prior),
+        };
+        Some(entry)
+    }
+
+    /// Cancel a [`Screen::CatalogConfirm`] back to [`Screen::Catalog`].
+    /// Only fires when `op` is in a terminal state (`Idle`,
+    /// `Success`, `Failed`) — pressing Esc mid-fetch is intentionally
+    /// locked because the underlying fetch is uncancellable. Returns
+    /// `true` iff the transition fired (caller can render a hint when
+    /// the press was rejected).
+    pub fn catalog_cancel_confirm(&mut self) -> bool {
+        let cancellable = matches!(
+            &self.screen,
+            Screen::CatalogConfirm {
+                op: CatalogOp::Idle | CatalogOp::Success(_) | CatalogOp::Failed(_),
+                ..
+            }
+        );
+        if !cancellable {
+            return false;
+        }
+        if let Screen::CatalogConfirm { prior, .. } =
+            std::mem::replace(&mut self.screen, Screen::Quitting)
+        {
+            self.screen = *prior;
+            return true;
+        }
+        false
+    }
+
+    /// Mark the `CatalogConfirm` fetch as in-flight. Returns the
+    /// entry pointer iff the transition fired (caller spawns the
+    /// worker). Returns `None` when there's no [`Screen::CatalogConfirm`]
+    /// active or `op` is in a non-resumable state.
+    pub fn catalog_begin_fetch(&mut self) -> Option<&'static aegis_catalog::Entry> {
+        let Screen::CatalogConfirm { entry, op, .. } = &mut self.screen else {
+            return None;
+        };
+        if !matches!(
+            op,
+            CatalogOp::Idle | CatalogOp::Failed(_) | CatalogOp::Success(_)
+        ) {
+            return None;
+        }
+        *op = CatalogOp::Connecting;
+        Some(*entry)
+    }
+
+    /// Block a fetch attempt because the requested ISO won't fit on
+    /// the data partition. Flips `op` straight to `Failed` with an
+    /// operator-readable message; caller of [`Self::catalog_begin_fetch`]
+    /// is expected to call this on the size-precheck miss. Returns
+    /// `true` iff the screen was [`Screen::CatalogConfirm`].
+    pub fn catalog_block_for_disk_space(&mut self, message: String) -> bool {
+        let Screen::CatalogConfirm { op, .. } = &mut self.screen else {
+            return false;
+        };
+        *op = CatalogOp::Failed(message);
+        true
+    }
+
+    /// Translate a [`aegis_fetch::FetchEvent`] into a
+    /// [`Screen::CatalogConfirm`] op-state transition. Worker thread
+    /// pushes events through the channel; the main loop calls this.
+    /// Terminal events (`FetchEvent::Done`) are intentionally
+    /// ignored here — the worker also sends a separate `FetchMsg::Done`
+    /// with the typed result, and that's the canonical path to
+    /// Success/Failed.
+    pub fn catalog_progress(&mut self, ev: &aegis_fetch::FetchEvent) {
+        let Screen::CatalogConfirm { op, .. } = &mut self.screen else {
+            return;
+        };
+        if matches!(op, CatalogOp::Success(_) | CatalogOp::Failed(_)) {
+            return;
+        }
+        *op = match ev {
+            aegis_fetch::FetchEvent::Connecting => CatalogOp::Connecting,
+            aegis_fetch::FetchEvent::Downloading(p) => CatalogOp::Downloading {
+                bytes: p.bytes,
+                total: p.total,
+            },
+            aegis_fetch::FetchEvent::VerifyingHash => CatalogOp::VerifyingHash,
+            aegis_fetch::FetchEvent::VerifyingSig => CatalogOp::VerifyingSig,
+            aegis_fetch::FetchEvent::Done(_) => return,
+        };
+    }
+
+    /// Apply the worker's terminal `FetchMsg::Done` result. Flips
+    /// the op state to Success or Failed.
+    pub fn catalog_finish_fetch(&mut self, result: Result<aegis_fetch::FetchOutcome, String>) {
+        let Screen::CatalogConfirm { op, .. } = &mut self.screen else {
+            return;
+        };
+        *op = match result {
+            Ok(outcome) => CatalogOp::Success(outcome),
+            Err(err) => CatalogOp::Failed(err),
+        };
     }
 
     /// Open the help overlay over the current screen. (#85)

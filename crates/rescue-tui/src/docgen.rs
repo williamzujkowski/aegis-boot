@@ -145,6 +145,8 @@ fn screen_short_name(s: ScreenKind) -> String {
         ScreenKind::Consent => "Consent",
         ScreenKind::ConfirmDelete => "ConfirmDelete",
         ScreenKind::Network => "Network",
+        ScreenKind::Catalog => "Catalog",
+        ScreenKind::CatalogConfirm => "CatalogConfirm",
     };
     name.to_string()
 }

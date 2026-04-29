@@ -55,6 +55,10 @@ pub(crate) enum ScreenKind {
     ConfirmDelete,
     /// Network overlay — DHCP per-interface (#655 Phase 1B).
     Network,
+    /// Catalog browse overlay — pick an ISO to fetch (#655 PR-C step 2).
+    Catalog,
+    /// Catalog fetch confirm screen — Enter to start, Esc when terminal.
+    CatalogConfirm,
 }
 
 impl ScreenKind {
@@ -75,6 +79,8 @@ impl ScreenKind {
             Screen::Consent { .. } => Self::Consent,
             Screen::ConfirmDelete { .. } => Self::ConfirmDelete,
             Screen::Network { .. } => Self::Network,
+            Screen::Catalog { .. } => Self::Catalog,
+            Screen::CatalogConfirm { .. } => Self::CatalogConfirm,
         }
     }
 }

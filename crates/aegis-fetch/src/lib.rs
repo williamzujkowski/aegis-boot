@@ -85,7 +85,7 @@ pub enum FetchEvent {
 }
 
 /// Successful fetch result.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FetchOutcome {
     /// Absolute path to the verified ISO on disk.
     pub iso_path: PathBuf,
