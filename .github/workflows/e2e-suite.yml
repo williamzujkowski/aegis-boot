@@ -1,35 +1,34 @@
 name: E2E suite (shared-build)
 
-# #580 Phase 2 — shared-artifact pattern. The standalone E2E workflows
-# (kexec-e2e, ovmf-secboot, direct-install-e2e, mkusb, update-rotate-e2e)
-# each rebuild rescue-tui + initramfs.cpio.gz from scratch. This workflow
-# produces those artifacts ONCE in a `build-shared` job and feeds them
-# to consumer jobs via `needs:` + actions/download-artifact.
+# #580 Phase 2 — shared-artifact pattern. Produces rescue-tui + the
+# aegis-bootctl release binary + initramfs.cpio.gz ONCE in a `build-shared`
+# job and feeds them to consumer jobs via `needs:` + download-artifact.
+# Phase 2 is COMPLETE: this is the sole owner of the QEMU E2E gates.
 #
-# Status:
-#   - Phase 2a (PR #614): canary qemu-smoke-shared added alongside the
-#     standalone qemu-smoke.yml. Both ran in parallel for observation.
-#   - Phase 2b (this PR): canary criterion met (10+ consecutive
-#     green-parity PRs against the 5-PR threshold). qemu-smoke.yml
-#     retired; qemu-smoke-shared in this file is now the sole gate.
-#   - Phase 2c–2f (pending): migrate kexec-e2e → mkusb → direct-install
-#     → update-rotate → ovmf-secboot using the same canary-then-retire
-#     pattern.
+# Phase history:
+#   - 2a (PR #614): canary qemu-smoke-shared, parallel to standalone.
+#   - 2b (PR #685): qemu-smoke.yml standalone retired; canary became sole.
+#   - 2c (PR #686): kexec-e2e-shared added. Bug fix: install
+#     linux-image-virtual in build-shared so initramfs modules match
+#     the consumer kernel.
+#   - 2d (PR #687): mkusb-shared added.
+#   - 2e (PR #688): direct-install-shared added; build-shared extended
+#     to also produce aegis-bootctl.
+#   - 2f (PR #689): update-rotate-shared added.
+#   - 2g (PR #690): ovmf-secboot-shared added.
+#   - Retirement (PR #691): kexec-e2e.yml + mkusb.yml + direct-install-e2e.yml
+#     + update-rotate-e2e.yml deleted; ovmf-secboot-e2e job removed
+#     (foundation stays). Combined savings: ~7.5 CPU min/PR.
 #
 # RISK NOTE (Architect's condition on consensus_vote 2026-04-25):
-# `build-shared` is a single point of failure for downstream consumers
-# once migration completes. A flaky toolchain install would block the
-# entire E2E suite instead of one workflow. Mitigations:
+# `build-shared` is now a single point of failure for downstream
+# consumers. A flaky toolchain install blocks the entire E2E suite.
+# Mitigations:
 #   - retention-days: 1 (consumer-side artifact rot is bounded)
 #   - if `build-shared` fails, downstream jobs skip cleanly via `needs:`
-#   - the remaining standalone workflows stay as fallbacks during the
-#     2c–2f rollout
-#
-# CANARY EXIT CRITERIA (DevEx + Architect's conditions):
-# Retire each standalone after EITHER:
-#   - 5 consecutive merged PRs where both pipelines pass with parity, OR
-#   - explicit maintainer go-ahead based on observation.
-# Whichever lands first.
+#   - if regression is observed, revert this retirement PR — the
+#     standalone workflows can be restored from git history in one
+#     atomic commit.
 
 on:
   push:

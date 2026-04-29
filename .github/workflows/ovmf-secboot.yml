@@ -1,7 +1,9 @@
 name: OVMF SecBoot
 
 on:
-  # #580 Phase 1: skip on docs-only PRs. See kexec-e2e.yml for rationale.
+  # Foundation job is cheap (~30s) and proves the OVMF firmware itself
+  # boots under MS-enrolled vars. No Rust deps; markdown changes can't
+  # break it. Filter still applies to keep PR check counts predictable.
   push:
     branches: [main]
     paths-ignore: ['**/*.md', 'docs/**', '.github/ISSUE_TEMPLATE/**', 'LICENSE*']
@@ -12,8 +14,13 @@ on:
 
 # Phase 1 of issue #16: validate the OVMF SecBoot environment in CI by
 # launching QEMU with the MS-enrolled Ubuntu OVMF variables and asserting
-# the firmware loads cleanly. Phase 2 (real signed shim+kernel chain) is
-# tracked separately.
+# the firmware loads cleanly.
+#
+# The Phase 2 E2E job (signed chain → rescue-tui) used to live here as
+# `ovmf-secboot-e2e`. It moved to e2e-suite.yml's `ovmf-secboot-shared`
+# job in #580 Phase 2g (PR #690) and was retired from this file in
+# Phase 2 retirement (PR #691). Foundation stays — it has no shared
+# build deps, so it doesn't benefit from the build-shared producer.
 
 # Top-level permissions: read-only default. Jobs that need write
 # access elevate explicitly. Closes Scorecard TokenPermissionsID.
@@ -42,40 +49,3 @@ jobs:
         env:
           TIMEOUT_SECONDS: "30"
         run: ./scripts/ovmf-secboot-smoke.sh
-
-  ovmf-secboot-e2e:
-    name: OVMF SecBoot E2E (signed chain → rescue-tui)
-    runs-on: ubuntu-22.04
-    permissions:
-      contents: read
-    timeout-minutes: 15
-
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
-      - name: Install signed boot chain + tooling
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            qemu-system-x86 ovmf \
-            shim-signed grub-efi-amd64-signed linux-image-generic \
-            mtools dosfstools exfatprogs gdisk \
-            busybox-static cpio
-          # Kernels under /boot are typically 0600; SB E2E needs them readable.
-          sudo chmod 0644 /boot/vmlinuz-*-generic /boot/initrd.img-*-generic || true
-
-      - name: Install Rust toolchain (from rust-toolchain.toml)
-        run: rustup show
-      - name: Build rescue-tui (release)
-        env:
-          SOURCE_DATE_EPOCH: "1700000000"
-        run: cargo build --release -p rescue-tui
-
-      - name: Build initramfs
-        env:
-          SOURCE_DATE_EPOCH: "1700000000"
-        run: ./scripts/build-initramfs.sh
-
-      - name: Run OVMF SecBoot E2E
-        env:
-          TIMEOUT_SECONDS: "120"
-        run: ./scripts/ovmf-secboot-e2e.sh
