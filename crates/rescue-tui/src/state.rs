@@ -135,6 +135,18 @@ pub enum Screen {
         /// Boxed prior screen so dismiss restores it without churn.
         prior: Box<Screen>,
     },
+    /// One-shot consent prompt fired the first time per session
+    /// the operator opts in to networking (#655 PR-C step 3).
+    /// Trust-model: the rescue env is offline by default; opting
+    /// in makes it talk to vendor mirrors over HTTPS, which the
+    /// operator should consciously consent to. Granted consent is
+    /// stored on `AppState.session_network_consent` and persists
+    /// for the rest of the session — subsequent `n` presses go
+    /// straight to [`Screen::Network`] without re-prompting.
+    ConsentNetworkUse {
+        /// Boxed prior screen so dismiss restores it without churn.
+        prior: Box<Screen>,
+    },
     /// Catalog browse overlay (#655 Phase 2B PR-C). Lists vendor
     /// ISOs the operator can fetch over the network — same content
     /// as host-side `aegis-boot recommend`, grouped by
@@ -317,6 +329,14 @@ impl ConsentKind {
 }
 
 /// Top-level application state.
+// Allowed: AppState carries 4 boolean flags (filter_editing,
+// shell_requested, session_consent, session_network_consent), each
+// orthogonal to the others — they don't form a state machine that
+// would benefit from being a single enum. Splitting would either
+// introduce non-orthogonal pairs or duplicate state machines for
+// what's currently three independent on/off operator-session
+// signals + the filter-edit transient.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppState {
     /// All discovered ISOs.
@@ -396,11 +416,15 @@ pub struct AppState {
     /// is inspected at the Confirm-screen Enter handler before
     /// dispatching to [`Self::is_kexec_blocked`] / kexec.
     pub session_consent: bool,
+    /// True iff the operator has explicitly opted in to networking
+    /// for this session (#655 PR-C step 3). Default false; flipped
+    /// to true via [`Self::grant_consent_network_use`]. Once true,
+    /// `n` opens [`Screen::Network`] directly without re-prompting.
+    pub session_network_consent: bool,
     /// Most recent successful DHCP lease, if any. Set by
     /// [`Self::network_finish_dhcp`] on the Ok branch and consumed
     /// by `Screen::Catalog` to gate fetch availability + by the
-    /// header-banner renderer to display the active IP/gateway
-    /// (header rendering lands in #655 PR-C step 3).
+    /// session-footer renderer to display the active IP/gateway.
     pub network_lease: Option<crate::network::NetworkLease>,
 }
 
@@ -620,6 +644,7 @@ impl AppState {
             info_scroll: 0,
             audit_warning: None,
             session_consent: false,
+            session_network_consent: false,
             network_lease: None,
         }
     }
@@ -1268,6 +1293,55 @@ impl AppState {
             ),
             return_to,
         };
+    }
+
+    /// Open the [`Screen::ConsentNetworkUse`] one-shot prompt over
+    /// the current screen. Idempotent — re-pressing `n` from inside
+    /// the prompt is a no-op. (#655 PR-C step 3)
+    pub fn enter_consent_network_use(&mut self) {
+        if matches!(self.screen, Screen::ConsentNetworkUse { .. }) {
+            return;
+        }
+        let prior = std::mem::replace(&mut self.screen, Screen::Quitting);
+        self.screen = Screen::ConsentNetworkUse {
+            prior: Box::new(prior),
+        };
+    }
+
+    /// Grant network-use consent for the current session. Sets
+    /// [`Self::session_network_consent`] = true and routes the
+    /// operator to [`Screen::Network`] with the supplied iface
+    /// list (caller enumerates). Subsequent `n` presses skip the
+    /// consent prompt for the rest of the session. (#655 PR-C step 3)
+    pub fn grant_consent_network_use(&mut self, interfaces: Vec<crate::network::NetworkIface>) {
+        if !matches!(self.screen, Screen::ConsentNetworkUse { .. }) {
+            return;
+        }
+        self.session_network_consent = true;
+        let consent_prior = if let Screen::ConsentNetworkUse { prior } =
+            std::mem::replace(&mut self.screen, Screen::Quitting)
+        {
+            *prior
+        } else {
+            Screen::List { selected: 0 }
+        };
+        self.screen = Screen::Network {
+            interfaces,
+            selected: 0,
+            op: NetworkOp::Idle,
+            prior: Box::new(consent_prior),
+        };
+    }
+
+    /// Cancel a network-use consent prompt without granting.
+    /// Restores the prior screen; networking stays opt-in.
+    /// (#655 PR-C step 3)
+    pub fn cancel_consent_network_use(&mut self) {
+        if let Screen::ConsentNetworkUse { prior } =
+            std::mem::replace(&mut self.screen, Screen::Quitting)
+        {
+            self.screen = *prior;
+        }
     }
 
     /// Open the [`Screen::Network`] overlay. Caller passes the

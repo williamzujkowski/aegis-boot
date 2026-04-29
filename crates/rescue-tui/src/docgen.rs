@@ -147,6 +147,7 @@ fn screen_short_name(s: ScreenKind) -> String {
         ScreenKind::Network => "Network",
         ScreenKind::Catalog => "Catalog",
         ScreenKind::CatalogConfirm => "CatalogConfirm",
+        ScreenKind::ConsentNetworkUse => "ConsentNetworkUse",
     };
     name.to_string()
 }

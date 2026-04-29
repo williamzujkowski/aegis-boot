@@ -77,6 +77,9 @@ pub fn draw(frame: &mut Frame<'_>, state: &AppState) {
     {
         draw_network_overlay(frame, area, state, interfaces, *selected, op);
     }
+    if matches!(state.screen, Screen::ConsentNetworkUse { .. }) {
+        draw_consent_network_use_overlay(frame, area, state);
+    }
     if let Screen::Catalog {
         entries,
         selected,
@@ -104,6 +107,7 @@ fn draw_body(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         Screen::Help { prior }
         | Screen::ConfirmQuit { prior }
         | Screen::Network { prior, .. }
+        | Screen::ConsentNetworkUse { prior }
         | Screen::Catalog { prior, .. }
         | Screen::CatalogConfirm { prior, .. } => prior.as_ref(),
         other => other,
@@ -150,6 +154,7 @@ fn draw_body(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         | Screen::Help { .. }
         | Screen::ConfirmQuit { .. }
         | Screen::Network { .. }
+        | Screen::ConsentNetworkUse { .. }
         | Screen::Catalog { .. }
         | Screen::CatalogConfirm { .. } => {}
     }
@@ -1146,7 +1151,7 @@ fn draw_session_footer(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         crate::state::TpmStatus::Absent => state.theme.warning,
     };
     let brand = ratatui::style::Color::Rgb(0x3B, 0x82, 0xF6);
-    let line = Line::from(vec![
+    let mut spans = vec![
         Span::styled(
             " ◆ ",
             Style::default().fg(brand).add_modifier(Modifier::BOLD),
@@ -1159,8 +1164,22 @@ fn draw_session_footer(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         Span::styled(state.secure_boot.summary(), Style::default().fg(sb_color)),
         Span::raw("   "),
         Span::styled(state.tpm.summary(), Style::default().fg(tpm_color)),
-    ]);
-    frame.render_widget(Paragraph::new(line), area);
+    ];
+    // #655 PR-C step 3: surface the active network lease in the
+    // session footer so the operator can see at a glance that
+    // catalog-fetch is online + which IP/gateway is in play.
+    if let Some(lease) = &state.network_lease {
+        let net_label = lease.gateway.as_ref().map_or_else(
+            || format!("NET:{}", lease.ipv4),
+            |gw| format!("NET:{} GW:{gw}", lease.ipv4),
+        );
+        spans.push(Span::raw("   "));
+        spans.push(Span::styled(
+            net_label,
+            Style::default().fg(state.theme.success),
+        ));
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 /// Border style for a pane based on focus state. Focused panes use
@@ -2425,6 +2444,53 @@ fn catalog_op_status<'a>(op: &'a crate::state::CatalogOp, theme: &'a Theme) -> (
         ),
         CatalogOp::Failed(msg) => (format!("failed: {msg}"), theme.error),
     }
+}
+
+/// Render the [`Screen::ConsentNetworkUse`] one-shot consent
+/// prompt (#655 PR-C step 3) — a small centered panel asking
+/// the operator to opt in to networking before the rescue env
+/// reaches out to vendor mirrors.
+fn draw_consent_network_use_overlay(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
+    let panel_w = area.width.saturating_sub(12).clamp(50, 76);
+    let panel_h = area.height.saturating_sub(8).clamp(14, 18);
+    let panel_x = area.x + area.width.saturating_sub(panel_w) / 2;
+    let panel_y = area.y + area.height.saturating_sub(panel_h) / 2;
+    let panel = Rect::new(panel_x, panel_y, panel_w, panel_h);
+    frame.render_widget(Clear, panel);
+
+    let lines: Vec<Line<'_>> = vec![
+        Line::from(Span::styled(
+            "This stick is about to talk to the network.",
+            Style::default()
+                .fg(state.theme.warning)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from("Enabling DHCP lets the rescue env reach vendor"),
+        Line::from("mirrors over HTTPS to fetch ISOs from the catalog."),
+        Line::from("All downloads are PGP-verified against pinned"),
+        Line::from("vendor keys before they hit the data partition."),
+        Line::from(""),
+        Line::from("Press 'y' to grant network use for this session."),
+        Line::from("Press Esc to keep the rescue env offline."),
+        Line::from(""),
+        Line::from(Span::styled(
+            "[y] grant    [Esc] cancel",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(state.theme.warning))
+        .title(Span::styled(
+            " Network use — consent ",
+            Style::default()
+                .fg(state.theme.warning)
+                .add_modifier(Modifier::BOLD),
+        ));
+    let para = Paragraph::new(lines).block(block);
+    frame.render_widget(para, panel);
 }
 
 /// Render `n` bytes as a humane size string (B / KiB / MiB / GiB).
