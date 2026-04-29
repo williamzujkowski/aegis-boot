@@ -1,0 +1,11 @@
+pub   rsa4096/8E94C9CD163E3FB0 2017-09-18 [SC]
+      Key fingerprint = EB1D D5BF 6F88 820B BCF5  356C 8E94 C9CD 163E 3FB0
+uid                            Steven Shiau (In Freedom We Trust) <steven@stevenshiau.org>
+uid                            Steven Shiau <steven@narlabs.org.tw>
+uid                            Steven Shiau <steven@nchc.org.tw>
+uid                            Steven Shiau <shiau.steven@gmail.com>
+uid                            Steven Shiau <jhshiau@yahoo.com>
+uid                            Steven Shiau <steven@nchc.narl.org.tw>
+uid                            Steven Shiau (Clonezilla project) <steven@clonezilla.org>
+sub   rsa4096/3279E7C94ACACAAC 2017-09-18 [E]
+

@@ -1,0 +1,5 @@
+pub   rsa4096/9B68A1E8B9B6375C 2017-09-06 [SC]
+      Key fingerprint = F62E DEAA 3AE7 0A9C 99DA  C418 9B68 A1E8 B9B6 375C
+uid                            Dolphin Oracle (mxlinux) <dolphinoracle@gmail.com>
+sub   rsa4096/3A11F4B3AB351FEA 2017-09-06 [E]
+

@@ -209,41 +209,32 @@ mod tests {
     }
 
     #[test]
-    fn embedded_loads_eight_vendors_with_valid_pinned_fingerprints() {
-        // PR-B populates 8 of 14 vendors. Each .asc must parse and
-        // its primary-fingerprint set must equal the pin (or the
-        // pin is empty, opting into "validate parse only" — this
-        // is the case for Manjaro's 27-key developer bundle).
+    fn embedded_loads_all_fourteen_vendors_with_valid_pinned_fingerprints() {
+        // PR-B + PR-B2 together populate all 14 vendors. Each .asc
+        // must parse and its primary-fingerprint set must equal the
+        // pin (or the pin is empty, opting into "validate parse
+        // only" — this is the case for Manjaro's 27-key developer
+        // bundle).
         let k = VendorKeyring::embedded().expect("embedded ok");
-        assert_eq!(k.len(), 8, "PR-B ships 8 of 14 vendors");
-        for v in [
-            Vendor::Ubuntu,
-            Vendor::Debian,
-            Vendor::Fedora,
-            Vendor::AlmaLinux,
-            Vendor::Rocky,
-            Vendor::Kali,
-            Vendor::Alpine,
-            Vendor::Manjaro,
-        ] {
+        assert_eq!(
+            k.len(),
+            14,
+            "all 14 catalog vendors have embedded keys (PR-B + PR-B2)"
+        );
+        for v in Vendor::all() {
             assert!(
-                k.cert_armor(v).is_some(),
+                k.cert_armor(*v).is_some(),
                 "embedded keyring missing vendor {v:?}"
             );
         }
-        // Vendors awaiting PR-B follow-up populate are absent.
+        // Sanity: at least one vendor from each PR's batch.
         for v in [
+            Vendor::Ubuntu,
+            Vendor::Manjaro, // PR-B
             Vendor::LinuxMint,
-            Vendor::Mx,
-            Vendor::Opensuse,
-            Vendor::Gparted,
-            Vendor::SystemRescue,
-            Vendor::System76,
+            Vendor::SystemRescue, // PR-B2
         ] {
-            assert!(
-                k.cert_armor(v).is_none(),
-                "vendor {v:?} unexpectedly populated — update test"
-            );
+            assert!(k.cert_armor(v).is_some(), "missing expected vendor {v:?}");
         }
     }
 

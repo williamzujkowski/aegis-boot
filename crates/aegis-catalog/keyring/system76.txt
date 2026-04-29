@@ -1,0 +1,5 @@
+pub   rsa4096/204DD8AEC33A7AFF 2017-06-22 [SC]
+      Key fingerprint = 63C4 6DF0 140D 7389 6142  9F4E 204D D8AE C33A 7AFF
+uid                            Pop OS (ISO Signing Key) <info@system76.com>
+sub   rsa4096/49F26BFD279696B5 2017-06-22 [E]
+

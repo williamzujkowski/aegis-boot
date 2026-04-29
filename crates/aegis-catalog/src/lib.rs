@@ -673,6 +673,19 @@ pub const EMBEDDED_KEYRING: &[(Vendor, &[u8])] = &[
     (Vendor::Kali, include_bytes!("../keyring/kali.asc")),
     (Vendor::Alpine, include_bytes!("../keyring/alpine.asc")),
     (Vendor::Manjaro, include_bytes!("../keyring/manjaro.asc")),
+    // PR-B2: completing the partial-coverage set (#655).
+    (
+        Vendor::LinuxMint,
+        include_bytes!("../keyring/linuxmint.asc"),
+    ),
+    (Vendor::Mx, include_bytes!("../keyring/mx.asc")),
+    (Vendor::Opensuse, include_bytes!("../keyring/opensuse.asc")),
+    (Vendor::Gparted, include_bytes!("../keyring/gparted.asc")),
+    (Vendor::System76, include_bytes!("../keyring/system76.asc")),
+    (
+        Vendor::SystemRescue,
+        include_bytes!("../keyring/system-rescue.asc"),
+    ),
 ];
 
 /// Vendor → set of pinned primary-key fingerprints (uppercase hex,
@@ -722,6 +735,28 @@ pub const EMBEDDED_FINGERPRINTS: &[(Vendor, &[&str])] = &[
     // catalog-refresh workflow surfaces any new cert as a
     // reviewable PR.
     (Vendor::Manjaro, &[]),
+    // PR-B2: 6 follow-up vendors completing partial coverage (#655).
+    (
+        Vendor::LinuxMint,
+        &["27DEB15644C6B3CF3BD7D291300F846BA25BAE09"],
+    ),
+    (Vendor::Mx, &["F62EDEAA3AE70A9C99DAC4189B68A1E8B9B6375C"]),
+    (
+        Vendor::Opensuse,
+        &["AD485664E901B867051AB15F35A2F86E29B700A4"],
+    ),
+    (
+        Vendor::Gparted,
+        &["EB1DD5BF6F88820BBCF5356C8E94C9CD163E3FB0"],
+    ),
+    (
+        Vendor::System76,
+        &["63C46DF0140D738961429F4E204DD8AEC33A7AFF"],
+    ),
+    (
+        Vendor::SystemRescue,
+        &["0FF11AF081E98345594812037091115F8320B897"],
+    ),
 ];
 
 // =====================================================================

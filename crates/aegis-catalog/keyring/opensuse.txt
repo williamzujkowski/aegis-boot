@@ -1,0 +1,4 @@
+pub   rsa4096/35A2F86E29B700A4 2022-06-20 [SC] [expires: 2026-06-19]
+      Key fingerprint = AD48 5664 E901 B867 051A  B15F 35A2 F86E 29B7 00A4
+uid                            openSUSE Project Signing Key <opensuse@opensuse.org>
+
