@@ -20,10 +20,15 @@
 name: cargo-machete
 
 on:
+  # #580 Phase 1: skip on docs-only PRs. cargo-machete reads Cargo.toml
+  # to detect unused deps; markdown changes can't introduce or hide
+  # unused-dep findings.
   pull_request:
     branches: [main]
+    paths-ignore: ['**/*.md', 'docs/**', '.github/ISSUE_TEMPLATE/**', 'LICENSE*']
   push:
     branches: [main]
+    paths-ignore: ['**/*.md', 'docs/**', '.github/ISSUE_TEMPLATE/**', 'LICENSE*']
   workflow_dispatch:
 
 permissions:

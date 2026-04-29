@@ -1,10 +1,16 @@
 name: Initramfs Build
 
 on:
+  # #580 Phase 1: skip on docs-only PRs. The reproducible-initramfs
+  # build doesn't depend on markdown content (the binary is built from
+  # the rescue-tui Rust source); skipping saves ~3 CPU min per docs PR.
+  # See kexec-e2e.yml for the rationale + dummy-pass policy.
   push:
     branches: [main]
+    paths-ignore: ['**/*.md', 'docs/**', '.github/ISSUE_TEMPLATE/**', 'LICENSE*']
   pull_request:
     branches: [main]
+    paths-ignore: ['**/*.md', 'docs/**', '.github/ISSUE_TEMPLATE/**', 'LICENSE*']
   workflow_dispatch:
 
 # Top-level permissions: read-only default. Jobs that need write

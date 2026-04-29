@@ -1,10 +1,15 @@
 name: Integration
 
 on:
+  # #580 Phase 1: skip on docs-only PRs. The iso-probe loop-mount
+  # integration test exercises Rust source against a real kernel mount
+  # path; markdown changes can't affect it. Saves ~2 CPU min per docs PR.
   push:
     branches: [main]
+    paths-ignore: ['**/*.md', 'docs/**', '.github/ISSUE_TEMPLATE/**', 'LICENSE*']
   pull_request:
     branches: [main]
+    paths-ignore: ['**/*.md', 'docs/**', '.github/ISSUE_TEMPLATE/**', 'LICENSE*']
   workflow_dispatch:
 
 # Top-level permissions: read-only default. Jobs that need write
