@@ -249,3 +249,81 @@ jobs:
         env:
           TIMEOUT_SECONDS: "180"
         run: sudo -E ./scripts/qemu-kexec-e2e.sh
+
+  # Phase 2d canary — mkusb image build + SB-enforcing boot smoke using
+  # the shared rescue-tui + initramfs. Runs alongside the standalone
+  # .github/workflows/mkusb.yml until 5 PRs of green-parity, then a
+  # follow-up PR retires the standalone.
+  mkusb-shared:
+    name: mkusb — build + boot smoke (shared-build canary)
+    needs: build-shared
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
+
+      - name: Install signed boot chain + image tooling
+        # Mirror of mkusb.yml's deps minus busybox-static + cpio (the
+        # initramfs is consumed pre-built; we don't rebuild it here).
+        # linux-image-virtual still needed because mkusb.sh reads
+        # /boot/vmlinuz-* + /boot/initrd.img-* to assemble the image.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 ovmf \
+            shim-signed grub-efi-amd64-signed linux-image-virtual \
+            mtools dosfstools exfatprogs gdisk
+          sudo chmod 0644 /boot/vmlinuz-* /boot/initrd.img-* 2>/dev/null || true
+          ls -l /boot/vmlinuz-* /boot/initrd.img-*
+
+      - name: Download shared artifacts
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5
+        with:
+          name: e2e-shared-build
+          path: shared/
+
+      - name: Reposition artifacts to expected paths
+        run: |
+          mkdir -p target/release out
+          mv shared/rescue-tui                  target/release/rescue-tui
+          mv shared/initramfs.cpio.gz           out/initramfs.cpio.gz
+          mv shared/initramfs.cpio.gz.sha256    out/initramfs.cpio.gz.sha256
+          chmod +x target/release/rescue-tui
+          ls -lh target/release/rescue-tui out/initramfs.cpio.gz
+
+      - name: Run mkusb
+        run: |
+          DISK_SIZE_MB=1024 MKUSB_GRUB_DEFAULT=1 ./scripts/mkusb.sh
+          ls -lh out/aegis-boot.img out/aegis-boot.img.sha256
+          sgdisk -p out/aegis-boot.img
+
+      - name: Boot the image under OVMF SecBoot
+        env:
+          TIMEOUT_SECONDS: "120"
+        run: |
+          cp /usr/share/OVMF/OVMF_VARS_4M.ms.fd /tmp/vars.fd
+          chmod 0644 /tmp/vars.fd
+          timeout "$TIMEOUT_SECONDS" qemu-system-x86_64 \
+            -nographic \
+            -no-reboot \
+            -machine q35,smm=on \
+            -global driver=cfi.pflash01,property=secure,value=on \
+            -m 1024M \
+            -drive if=pflash,format=raw,unit=0,file=/usr/share/OVMF/OVMF_CODE_4M.secboot.fd,readonly=on \
+            -drive if=pflash,format=raw,unit=1,file=/tmp/vars.fd \
+            -drive if=ide,format=raw,file=out/aegis-boot.img \
+            -boot order=c \
+            -serial mon:stdio </dev/null > /tmp/mkusb-boot.log 2>&1 || true
+          echo "--- mkusb QEMU serial output (last 60 lines) ---"
+          tail -60 /tmp/mkusb-boot.log
+          echo "--- end ---"
+          if grep -qiE 'secure boot (is )?enabled|secureboot.*enabled' /tmp/mkusb-boot.log \
+             && grep -q 'aegis-boot rescue-tui starting' /tmp/mkusb-boot.log; then
+            echo "mkusb image boots cleanly under SB + rescue-tui runs: PASS"
+          else
+            echo "mkusb boot smoke FAILED"
+            exit 1
+          fi
