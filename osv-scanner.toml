@@ -1,0 +1,23 @@
+# osv-scanner.toml — ignore-list for OSV-Scanner / Scorecard's
+# `Vulnerabilities` (RUSTSEC) check.
+#
+# Why this file exists separately from `deny.toml`:
+# `cargo-deny` reads `deny.toml`; the OSSF Scorecard
+# `VulnerabilitiesID` check shells out to OSV-Scanner, which has its
+# own ignore format. We mirror the same set of advisories + rationale
+# here so the two tools stay in sync. If you're adding/removing an
+# advisory, edit BOTH files in the same commit.
+#
+# Format reference:
+#   https://github.com/google/osv-scanner#ignore-vulnerabilities-by-id
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2023-0071"
+# Mirrors the rationale in deny.toml. RustCrypto/rsa Marvin Attack —
+# timing sidechannel on private-key operations. Pulled in transitively
+# via pgp (rpgp) -> aegis-fetch (#655 Phase 2B). aegis-fetch is
+# verify-only: we hold no RSA private keys and never decrypt or sign,
+# so the sidechannel is not exploitable in our threat model.
+# Re-evaluate if rpgp ever gains a signing-side consumer here, or if a
+# constant-time rsa fix ships upstream.
+reason = "transitive via pgp/rpgp; aegis-fetch is verify-only and holds no RSA private keys, so the timing sidechannel on private-key operations is not exploitable in our threat model"
