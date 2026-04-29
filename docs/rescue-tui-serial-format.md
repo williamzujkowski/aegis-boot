@@ -55,6 +55,34 @@ This is a static-text mode; there's no kexec, no ISO, no kernel — just the ope
 
 **Why we render the no-key variant**: with no real ISO at hand, `build_mokutil_remedy(None)` gives the prose-step-1 form which still contains the load-bearing `sudo mokutil --import` substring (under "aegis-boot will then generate the exact `sudo mokutil --import <path>` command for you"). Operators in the field hit the with-key variant when they have a sibling `.pub`/`.key`/`.der` on the stick; the substring contract holds in both.
 
+### `aegis.test=manifest-roundtrip`
+
+Companion to [aegis-hwsim's E6 attestation-roundtrip scenario](https://github.com/aegis-boot/aegis-hwsim/issues/6) (#695). Mounts the ESP, parses the on-stick attestation manifest via `aegis-wire-formats::Manifest`, and (when populated) compares each `expected_pcrs[]` entry to the live PCR.
+
+**What it does**:
+
+1. Resolves the ESP block device via `/dev/disk/by-label/AEGIS_ESP` (the canonical udev symlink).
+2. Mounts read-only at `/run/aegis-test-esp`.
+3. Reads `aegis-boot-manifest.json` from the ESP root, parses via the in-tree `Manifest` type.
+4. If `expected_pcrs[]` is empty (PR3-era; current shipped behavior per `docs/attestation-manifest.md`), prints the `empty-pcrs` landmark and exits 0. Harness fail-opens — counts as Pass.
+5. If populated, iterates each entry: reads `/sys/class/tpm/tpm0/pcr-<bank>/<idx>` and emits a MATCH or MISMATCH landmark. Exit 0 only if every entry matches.
+
+**Serial landmarks (exact substrings)**:
+
+| Stage | Landmark | Meaning |
+|---|---|---|
+| Test start | `aegis-boot-test: manifest-roundtrip starting` | Confirms the stick has the test mode (not Skip). |
+| Manifest parsed | `aegis-boot-test: manifest-roundtrip parsed (schema_version=N, esp_files=N, expected_pcrs=N)` | Manifest read + parsed cleanly. The numeric fields are operator-readable; the harness can grep on the "parsed" head string. |
+| **Empty PCRs (current shipped behavior)** | `aegis-boot-test: manifest-roundtrip empty-pcrs (PR3-era; harness fail-opens per attestation-manifest.md contract)` | Pass-via-fail-open — no PCRs to compare against yet. Stays valid until aegis-boot starts populating `expected_pcrs[]`. |
+| PCR match (post-population) | `aegis-boot-test: manifest-roundtrip pcr_index=N bank=sha256 MATCH` | One per matching entry. |
+| **PCR mismatch (regression)** | `aegis-boot-test: manifest-roundtrip pcr_index=N bank=sha256 MISMATCH (expected=... live=...)` | One per drifting entry. Either the manifest doesn't reflect the current measured boot, or the boot chain has regressed. |
+| PCR read failure | `aegis-boot-test: manifest-roundtrip pcr_index=N bank=sha256 READ-FAILED (...)` | Sysfs path unreadable — TPM driver problem, not a chain regression. |
+| Pre-comparison failure | `aegis-boot-test: manifest-roundtrip FAILED (esp-find: ...)` / `(esp-mount: ...)` / `(read ...: ...)` / `(parse: ...)` | Couldn't get to the comparison step. Distinct head string per error stage so the harness log is self-explanatory. |
+
+**Process exit code**: `0` for any Pass landmark (including empty-pcrs); `1` for any FAILED / MISMATCH / READ-FAILED.
+
+**Why the empty-pcrs landmark exists**: the attestation-manifest contract pinned in [docs/attestation-manifest.md](attestation-manifest.md) keeps `schema_version` at 1 even when `expected_pcrs[]` starts being populated. Consumers (including this test mode) fail-open on the empty case, so the test mode flips from skip-via-fail-open to active-comparison the moment aegis-boot starts emitting PCR entries — no harness-side change required.
+
 ## Stability policy
 
 Strings in the **Serial landmarks** tables are part of aegis-boot's published external contract. They follow these rules:

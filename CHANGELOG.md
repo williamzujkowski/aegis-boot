@@ -6,7 +6,7 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 
 ### `MKUSB_TEST_MODE` env var bakes `aegis.test=<NAME>` into grub.cfg (closes #694)
 
-Aegis-hwsim's E5.3 / E5.4 / E6 scenarios depend on the rescue-tui test modes shipped in PRs #680 / #681 / (forthcoming for #695). The harness side grep-pins the serial landmarks correctly, but a default-flashed stick doesn't carry `aegis.test=<NAME>` on the kernel cmdline — so the test mode never fires and the harness reports Skip.
+Aegis-hwsim's E5.3 / E5.4 / E6 scenarios depend on the rescue-tui test modes shipped in PRs #680 / #681 / #697. The harness side grep-pins the serial landmarks correctly, but a default-flashed stick doesn't carry `aegis.test=<NAME>` on the kernel cmdline — so the test mode never fires and the harness reports Skip.
 
 This release adds `MKUSB_TEST_MODE=<NAME>` (env var honored by both `scripts/mkusb.sh` and `aegis-boot flash --direct-install`'s `render_grub_cfg`). Set to one of `kexec-unsigned`, `mok-enroll`, or `manifest-roundtrip` and the cmdline marker is baked onto every menuentry in the resulting grub.cfg. Unknown slugs are rejected with an operator-readable error before any disk write happens.
 
@@ -17,6 +17,22 @@ MKUSB_TEST_MODE=mok-enroll aegis-boot flash --direct-install /dev/sdX
 ```
 
 The byte-parity invariant between `mkusb.sh` and `direct_install::build_grub_cfg_body` (asserted by `e2e-suite.yml::direct-install-shared`) is preserved — both paths produce identical bytes when no test mode is set, and identical bytes when the same test mode is set.
+
+### `aegis.test=manifest-roundtrip` rescue-tui test mode (closes #695)
+
+Companion to [aegis-hwsim's E6 attestation-roundtrip scenario](https://github.com/aegis-boot/aegis-hwsim/issues/6). Added alongside the existing `kexec-unsigned` (#675) and `mok-enroll` (#676) modes.
+
+When the kernel cmdline carries `aegis.test=manifest-roundtrip` (typically baked in via the `MKUSB_TEST_MODE` env var from #694), rescue-tui short-circuits the TUI and:
+
+1. Resolves `/dev/disk/by-label/AEGIS_ESP` → mounts read-only at `/run/aegis-test-esp`.
+2. Reads `aegis-boot-manifest.json` from the ESP root, parses via `aegis-wire-formats::Manifest`.
+3. Emits a `parsed (schema_version=N, esp_files=N, expected_pcrs=N)` landmark.
+4. If `expected_pcrs[]` is empty (current shipped state — see `docs/attestation-manifest.md` contract), emits the `empty-pcrs` landmark and exits 0 (harness counts as Pass-via-fail-open).
+5. If populated, iterates each entry: reads live `/sys/class/tpm/tpm0/pcr-<bank>/<idx>` and emits MATCH or MISMATCH per entry. Exits 0 only if every entry matches.
+
+The mode flips automatically from skip-via-fail-open to active comparison the moment aegis-boot starts emitting populated `expected_pcrs[]` — no harness-side change required, by design of the manifest contract pinned in PR #682.
+
+6 new hermetic unit tests via injectable PCR-reader fn (rescue-tui test count 266 → 272).
 
 ### CI feedback-loop speedup — paths-ignore + shared-artifact pattern (#580 Phases 1+2)
 
