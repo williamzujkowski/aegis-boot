@@ -210,23 +210,54 @@ pub fn fetch_catalog_entry(
     })?;
 
     let iso_filename = filename_from_url(entry.iso_url);
-    let iso_path = dest_dir.join(iso_filename);
-    let bytes = download::download_to_file(entry.iso_url, &iso_path, on_event)?;
+    let final_path = dest_dir.join(iso_filename);
+    // Stream into `<iso>.partial` so an interrupted / failed fetch
+    // can never masquerade as a verified ISO on the next session's
+    // iso-probe scan. The rename to the final path happens only
+    // after every verify step succeeds — the file at `final_path`
+    // is, by construction, the byte sequence the vendor signed.
+    // (#655 Phase 3 atomicity property.)
+    let partial_path = dest_dir.join(format!("{iso_filename}.partial"));
+    let bytes = download::download_to_file(entry.iso_url, &partial_path, on_event)?;
 
     let fingerprint = match entry.verify {
         SigPattern::ClearsignedSums => {
-            verify_clearsigned_path(entry, cert_bytes, &iso_path, on_event)?
+            verify_clearsigned_path(entry, cert_bytes, &partial_path, on_event)
         }
         SigPattern::DetachedSigOnSums => {
-            verify_detached_on_sums_path(entry, cert_bytes, &iso_path, on_event)?
+            verify_detached_on_sums_path(entry, cert_bytes, &partial_path, on_event)
         }
         SigPattern::DetachedSigOnIso => {
-            verify_detached_on_iso_path(entry, cert_bytes, &iso_path, on_event)?
+            verify_detached_on_iso_path(entry, cert_bytes, &partial_path, on_event)
+        }
+    };
+    // On any verify failure, drop the .partial so a retry doesn't
+    // see a half-stream + skip the download. Best-effort — a stale
+    // .partial left behind by an OS crash mid-fetch is recoverable
+    // because the next session re-downloads from byte 0 (until
+    // resume lands as a follow-up to this slice).
+    let fingerprint = match fingerprint {
+        Ok(fp) => fp,
+        Err(e) => {
+            let _ = std::fs::remove_file(&partial_path);
+            return Err(e);
         }
     };
 
+    // Atomic rename: the file at `final_path` exists iff every
+    // verify step above succeeded. POSIX rename(2) is atomic
+    // within the same filesystem (which is true here — the data
+    // partition is a single mount).
+    std::fs::rename(&partial_path, &final_path).map_err(|e| FetchError::Filesystem {
+        detail: format!(
+            "rename {} -> {}: {e}",
+            partial_path.display(),
+            final_path.display()
+        ),
+    })?;
+
     let outcome = FetchOutcome {
-        iso_path,
+        iso_path: final_path,
         bytes,
         sha256_hex: fingerprint.iso_sha256_hex,
         vendor: entry.vendor,
