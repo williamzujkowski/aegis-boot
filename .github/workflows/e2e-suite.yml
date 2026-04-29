@@ -105,10 +105,15 @@ jobs:
           # jobs so this job's first build doesn't poison their keys.
           shared-key: e2e-shared-build
 
-      - name: Build rescue-tui (release)
+      - name: Build rescue-tui + aegis-bootctl (release)
+        # aegis-bootctl is required by the direct-install canary
+        # (Phase 2e) which runs `aegis-boot flash --direct-install`
+        # against a loop image. Building both binaries in one cargo
+        # invocation is faster than two separate build steps because
+        # cargo's dep graph is computed once.
         env:
           SOURCE_DATE_EPOCH: "1700000000"
-        run: cargo build --release -p rescue-tui
+        run: cargo build --release -p rescue-tui -p aegis-bootctl
 
       - name: Build initramfs (out/initramfs.cpio.gz)
         env:
@@ -119,12 +124,18 @@ jobs:
         run: |
           # The producer assembles a flat layout for consumers:
           #   shared/rescue-tui              (release binary)
+          #   shared/aegis-boot              (aegis-bootctl release binary)
           #   shared/initramfs.cpio.gz       (deterministic image)
           #   shared/initramfs.cpio.gz.sha256 (for integrity check)
           # Consumers reposition into target/release/ and out/ so
           # existing scripts/*.sh keep working unchanged.
+          #
+          # aegis-bootctl is only consumed by the direct-install canary.
+          # Other consumers ignore the file; the upload cost is bounded
+          # (binary is ~10 MB).
           mkdir -p shared
           cp target/release/rescue-tui                shared/rescue-tui
+          cp target/release/aegis-boot                shared/aegis-boot
           cp out/initramfs.cpio.gz                    shared/initramfs.cpio.gz
           cp out/initramfs.cpio.gz.sha256             shared/initramfs.cpio.gz.sha256
           ls -lh shared/
@@ -325,5 +336,164 @@ jobs:
             echo "mkusb image boots cleanly under SB + rescue-tui runs: PASS"
           else
             echo "mkusb boot smoke FAILED"
+            exit 1
+          fi
+
+  # Phase 2e canary — direct-install end-to-end on the shared rescue-tui
+  # + aegis-bootctl + initramfs. Most complex consumer: builds both
+  # paths (mkusb + direct-install), diffs ESP byte-parity between them,
+  # validates the Stage 7 attestation manifest, then SB-boots the
+  # direct-install image. Runs alongside the standalone
+  # .github/workflows/direct-install-e2e.yml until 5 PRs of green-parity.
+  direct-install-shared:
+    name: direct-install — flash + boot smoke + ESP byte-parity (shared-build canary)
+    needs: build-shared
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
+
+      - name: Install signed boot chain + image tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 ovmf \
+            shim-signed grub-efi-amd64-signed linux-image-virtual \
+            mtools dosfstools exfatprogs gdisk \
+            util-linux diffutils
+          sudo chmod 0644 /boot/vmlinuz-* /boot/initrd.img-* 2>/dev/null || true
+          ls -l /boot/vmlinuz-* /boot/initrd.img-*
+
+      - name: Download shared artifacts
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5
+        with:
+          name: e2e-shared-build
+          path: shared/
+
+      - name: Reposition artifacts to expected paths
+        run: |
+          mkdir -p target/release out
+          mv shared/rescue-tui                  target/release/rescue-tui
+          mv shared/aegis-boot                  target/release/aegis-boot
+          mv shared/initramfs.cpio.gz           out/initramfs.cpio.gz
+          mv shared/initramfs.cpio.gz.sha256    out/initramfs.cpio.gz.sha256
+          chmod +x target/release/rescue-tui target/release/aegis-boot
+          ls -lh target/release/rescue-tui target/release/aegis-boot out/initramfs.cpio.gz
+
+      # ---- Path A: build via direct-install onto a loop device ---------------
+
+      - name: Create blank loop image (direct-install target)
+        run: |
+          dd if=/dev/zero of=/tmp/direct-install.img bs=1M count=1024 status=none
+          sudo losetup --find --partscan --show /tmp/direct-install.img > /tmp/direct-install.loop
+          echo "loop device: $(cat /tmp/direct-install.loop)"
+
+      - name: Flash via --direct-install
+        env:
+          MKUSB_GRUB_DEFAULT: "1"
+          AEGIS_ALLOW_LOOP_DEVICE: "1"
+        run: |
+          LOOP=$(cat /tmp/direct-install.loop)
+          sudo -E ./target/release/aegis-boot flash --direct-install --yes \
+            --out-dir ./out "$LOOP"
+          sudo partprobe "$LOOP"
+          ls -l "${LOOP}p1" "${LOOP}p2"
+
+      - name: Capture direct-install ESP file inventory + sha256s
+        run: |
+          LOOP=$(cat /tmp/direct-install.loop)
+          mkdir -p /tmp/esp-direct
+          sudo mount -o ro "${LOOP}p1" /tmp/esp-direct
+          (cd /tmp/esp-direct && find . -type f \
+            ! -name 'aegis-boot-manifest.json' \
+            ! -name 'aegis-boot-manifest.json.minisig' | sort) \
+            > /tmp/direct-install.files
+          (cd /tmp/esp-direct && find . -type f \
+            ! -name 'aegis-boot-manifest.json' \
+            ! -name 'aegis-boot-manifest.json.minisig' | sort \
+            | xargs sha256sum 2>/dev/null) > /tmp/direct-install.sha256
+          sudo umount /tmp/esp-direct
+
+      # ---- Path B: build via mkusb.sh for byte-parity comparison ------------
+
+      - name: Build via mkusb.sh
+        env:
+          MKUSB_GRUB_DEFAULT: "1"
+        run: |
+          DISK_SIZE_MB=1024 MKUSB_GRUB_DEFAULT=1 ./scripts/mkusb.sh
+          ls -lh out/aegis-boot.img
+
+      - name: Capture mkusb.sh ESP file inventory + sha256s
+        run: |
+          MKUSB_LOOP=$(sudo losetup --find --partscan --show out/aegis-boot.img)
+          mkdir -p /tmp/esp-mkusb
+          sudo mount -o ro "${MKUSB_LOOP}p1" /tmp/esp-mkusb
+          (cd /tmp/esp-mkusb && find . -type f | sort) > /tmp/mkusb.files
+          (cd /tmp/esp-mkusb && find . -type f | sort \
+            | xargs sha256sum 2>/dev/null) > /tmp/mkusb.sha256
+          sudo umount /tmp/esp-mkusb
+          sudo losetup -d "$MKUSB_LOOP"
+
+      - name: ESP byte-parity diff
+        run: |
+          if ! diff -u /tmp/mkusb.files /tmp/direct-install.files; then
+            echo "ESP file SET differs"
+            exit 1
+          fi
+          if ! diff -u /tmp/mkusb.sha256 /tmp/direct-install.sha256; then
+            echo "ESP file CONTENTS differ"
+            exit 1
+          fi
+          echo "ESP byte-parity: PASS"
+
+      - name: Verify Stage 7 attestation manifest
+        run: |
+          LOOP=$(cat /tmp/direct-install.loop)
+          mkdir -p /tmp/esp-direct-verify
+          sudo mount -o ro "${LOOP}p1" /tmp/esp-direct-verify
+          if [ ! -f /tmp/esp-direct-verify/aegis-boot-manifest.json ]; then
+            echo "MISSING: aegis-boot-manifest.json"
+            sudo umount /tmp/esp-direct-verify
+            exit 1
+          fi
+          sudo cp /tmp/esp-direct-verify/aegis-boot-manifest.json /tmp/manifest.json
+          python3 <<'PY'
+          import json
+          m = json.load(open('/tmp/manifest.json'))
+          assert m['schema_version'] == 1, m
+          assert len(m['esp_files']) == 6, m['esp_files']
+          print(f"manifest OK: schema_version={m['schema_version']}, esp_files={len(m['esp_files'])}, manifest_sequence={m['manifest_sequence']}")
+          PY
+          sudo umount /tmp/esp-direct-verify
+
+      - name: Boot the direct-install image under OVMF SecBoot
+        env:
+          TIMEOUT_SECONDS: "120"
+        run: |
+          sudo losetup -d "$(cat /tmp/direct-install.loop)" || true
+          cp /usr/share/OVMF/OVMF_VARS_4M.ms.fd /tmp/vars.fd
+          chmod 0644 /tmp/vars.fd
+          timeout "$TIMEOUT_SECONDS" qemu-system-x86_64 \
+            -nographic \
+            -no-reboot \
+            -machine q35,smm=on \
+            -global driver=cfi.pflash01,property=secure,value=on \
+            -m 1024M \
+            -drive if=pflash,format=raw,unit=0,file=/usr/share/OVMF/OVMF_CODE_4M.secboot.fd,readonly=on \
+            -drive if=pflash,format=raw,unit=1,file=/tmp/vars.fd \
+            -drive if=ide,format=raw,file=/tmp/direct-install.img \
+            -boot order=c \
+            -serial mon:stdio </dev/null > /tmp/direct-install-boot.log 2>&1 || true
+          echo "--- direct-install QEMU serial output (last 60 lines) ---"
+          tail -60 /tmp/direct-install-boot.log
+          echo "--- end ---"
+          if grep -qiE 'secure boot (is )?enabled|secureboot.*enabled' /tmp/direct-install-boot.log \
+             && grep -q 'aegis-boot rescue-tui starting' /tmp/direct-install-boot.log; then
+            echo "direct-install boots cleanly under SB + rescue-tui runs: PASS"
+          else
+            echo "direct-install boot smoke FAILED"
             exit 1
           fi
