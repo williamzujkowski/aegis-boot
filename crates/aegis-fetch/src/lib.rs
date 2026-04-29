@@ -38,6 +38,7 @@
 #![warn(missing_docs)]
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 
 use aegis_catalog::{Entry, SigPattern, Vendor};
 
@@ -176,6 +177,14 @@ pub enum FetchError {
     /// file that wasn't actually a clearsigned envelope.
     #[error("sums: not a clearsigned envelope")]
     NotClearsigned,
+    /// Fetch was cancelled by the caller via the `cancelled`
+    /// `AtomicBool` passed to [`fetch_catalog_entry`]. Mid-stream
+    /// cancel is cooperative — checked between chunks, not on every
+    /// byte. Caller's `<iso>.partial` is left on disk so the next
+    /// fetch resumes from where the cancel landed (#655 Phase 3
+    /// slice 3).
+    #[error("fetch cancelled by caller")]
+    Cancelled,
 }
 
 /// Download + verify a catalog [`Entry`] end-to-end, writing the
@@ -198,6 +207,7 @@ pub fn fetch_catalog_entry(
     dest_dir: &Path,
     keyring: &VendorKeyring,
     on_event: &mut dyn FnMut(FetchEvent),
+    cancelled: &AtomicBool,
 ) -> Result<FetchOutcome, FetchError> {
     let cert_bytes = keyring
         .cert_armor(entry.vendor)
@@ -218,26 +228,27 @@ pub fn fetch_catalog_entry(
     // is, by construction, the byte sequence the vendor signed.
     // (#655 Phase 3 atomicity property.)
     let partial_path = dest_dir.join(format!("{iso_filename}.partial"));
-    let bytes = download::download_to_file(entry.iso_url, &partial_path, on_event)?;
+    let bytes = download::download_to_file(entry.iso_url, &partial_path, on_event, cancelled)?;
 
     let fingerprint = match entry.verify {
         SigPattern::ClearsignedSums => {
-            verify_clearsigned_path(entry, cert_bytes, &partial_path, on_event)
+            verify_clearsigned_path(entry, cert_bytes, &partial_path, on_event, cancelled)
         }
         SigPattern::DetachedSigOnSums => {
-            verify_detached_on_sums_path(entry, cert_bytes, &partial_path, on_event)
+            verify_detached_on_sums_path(entry, cert_bytes, &partial_path, on_event, cancelled)
         }
         SigPattern::DetachedSigOnIso => {
-            verify_detached_on_iso_path(entry, cert_bytes, &partial_path, on_event)
+            verify_detached_on_iso_path(entry, cert_bytes, &partial_path, on_event, cancelled)
         }
     };
     // On any verify failure, drop the .partial so a retry doesn't
-    // see a half-stream + skip the download. Best-effort — a stale
-    // .partial left behind by an OS crash mid-fetch is recoverable
-    // because the next session re-downloads from byte 0 (until
-    // resume lands as a follow-up to this slice).
+    // see a half-stream + skip the download. Cancellation is
+    // intentionally NOT a verify failure — keep the partial so a
+    // resume from the cancel point picks up cleanly (#655 Phase 3
+    // slice 3).
     let fingerprint = match fingerprint {
         Ok(fp) => fp,
+        Err(FetchError::Cancelled) => return Err(FetchError::Cancelled),
         Err(e) => {
             let _ = std::fs::remove_file(&partial_path);
             return Err(e);
@@ -280,6 +291,7 @@ fn verify_clearsigned_path(
     cert_bytes: &[u8],
     iso_path: &Path,
     on_event: &mut dyn FnMut(FetchEvent),
+    cancelled: &AtomicBool,
 ) -> Result<VerifyResult, FetchError> {
     // sha256_url == sig_url for ClearsignedSums; one fetch.
     let sums_bytes = download::download_to_vec(entry.sha256_url)?;
@@ -293,9 +305,7 @@ fn verify_clearsigned_path(
     let verified = verify::verify_clearsigned_sums(cert_bytes, sums_text, entry.slug)?;
 
     on_event(FetchEvent::VerifyingHash);
-    let mut last_hash_bytes: u64 = 0;
-    let (iso_sha256_hex, _bytes) = sha256::hash_file(iso_path, &mut |b| last_hash_bytes = b)?;
-    let _ = last_hash_bytes;
+    let (iso_sha256_hex, _bytes) = sha256::hash_file(iso_path, &mut |_| {}, cancelled)?;
 
     let iso_filename = filename_from_url(entry.iso_url);
     let expected = sums::find_iso_sha256(&verified.signed_text, iso_filename)?;
@@ -317,6 +327,7 @@ fn verify_detached_on_sums_path(
     cert_bytes: &[u8],
     iso_path: &Path,
     on_event: &mut dyn FnMut(FetchEvent),
+    cancelled: &AtomicBool,
 ) -> Result<VerifyResult, FetchError> {
     let sums_bytes = download::download_to_vec(entry.sha256_url)?;
     let sig_bytes = download::download_to_vec(entry.sig_url)?;
@@ -326,7 +337,7 @@ fn verify_detached_on_sums_path(
         verify::verify_detached_sig_on_sums(cert_bytes, &sig_bytes, &sums_bytes, entry.slug)?;
 
     on_event(FetchEvent::VerifyingHash);
-    let (iso_sha256_hex, _bytes) = sha256::hash_file(iso_path, &mut |_| {})?;
+    let (iso_sha256_hex, _bytes) = sha256::hash_file(iso_path, &mut |_| {}, cancelled)?;
 
     let sums_text = std::str::from_utf8(&sums_bytes).map_err(|_| FetchError::MalformedSums)?;
     let iso_filename = filename_from_url(entry.iso_url);
@@ -349,6 +360,7 @@ fn verify_detached_on_iso_path(
     cert_bytes: &[u8],
     iso_path: &Path,
     on_event: &mut dyn FnMut(FetchEvent),
+    cancelled: &AtomicBool,
 ) -> Result<VerifyResult, FetchError> {
     let sig_bytes = download::download_to_vec(entry.sig_url)?;
 
@@ -360,7 +372,7 @@ fn verify_detached_on_iso_path(
     // sha256 here is informational, surfaced in FetchOutcome for
     // audit logs and `aegis-boot doctor` output.
     on_event(FetchEvent::VerifyingHash);
-    let (iso_sha256_hex, _bytes) = sha256::hash_file(iso_path, &mut |_| {})?;
+    let (iso_sha256_hex, _bytes) = sha256::hash_file(iso_path, &mut |_| {}, cancelled)?;
 
     Ok(VerifyResult {
         iso_sha256_hex,
@@ -392,8 +404,15 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let keyring = VendorKeyring::empty();
         let mut events: Vec<FetchEvent> = Vec::new();
-        let err = fetch_catalog_entry(entry, dir.path(), &keyring, &mut |e| events.push(e))
-            .expect_err("must fail without keyring");
+        let cancelled = AtomicBool::new(false);
+        let err = fetch_catalog_entry(
+            entry,
+            dir.path(),
+            &keyring,
+            &mut |e| events.push(e),
+            &cancelled,
+        )
+        .expect_err("must fail without keyring");
         assert!(matches!(
             err,
             FetchError::UnknownVendor {

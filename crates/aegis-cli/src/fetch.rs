@@ -41,6 +41,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::atomic::AtomicBool;
 
 use aegis_catalog::{Entry, SbStatus, find_entry};
 use aegis_fetch::{FetchError, FetchEvent, FetchProgress, VendorKeyring};
@@ -116,9 +117,17 @@ pub(crate) fn try_run(args: &[String]) -> Result<(), u8> {
     println!();
 
     let mut renderer = ProgressRenderer::new(show_progress);
-    let outcome = match aegis_fetch::fetch_catalog_entry(entry, &dest, &keyring, &mut |event| {
-        renderer.handle(&event);
-    }) {
+    // CLI has no Esc handler — pass a permanently-false flag.
+    let cancelled = AtomicBool::new(false);
+    let outcome = match aegis_fetch::fetch_catalog_entry(
+        entry,
+        &dest,
+        &keyring,
+        &mut |event| {
+            renderer.handle(&event);
+        },
+        &cancelled,
+    ) {
         Ok(o) => {
             renderer.finish_done();
             o
@@ -214,6 +223,12 @@ fn report_fetch_error(err: &FetchError, entry: &Entry) -> u8 {
             eprintln!("the catalog declared this entry as ClearsignedSums; either the vendor");
             eprintln!("switched format or the entry's verify field is wrong. file an issue.");
             1
+        }
+        FetchError::Cancelled => {
+            // The CLI never sets the cancel flag (no Esc handler);
+            // this arm exists only for exhaustive matching.
+            eprintln!("aegis-boot fetch: cancelled");
+            130
         }
     }
 }

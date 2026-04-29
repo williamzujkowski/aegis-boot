@@ -27,6 +27,7 @@
 use std::fs::File;
 use std::io::{BufWriter, Read, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use ureq::Agent;
@@ -80,6 +81,7 @@ pub(crate) fn download_to_file(
     url: &str,
     dest: &Path,
     on_event: &mut dyn FnMut(FetchEvent),
+    cancelled: &AtomicBool,
 ) -> Result<u64, FetchError> {
     on_event(FetchEvent::Connecting);
     let agent = build_agent();
@@ -89,7 +91,7 @@ pub(crate) fn download_to_file(
     let existing = std::fs::metadata(dest).map_or(0, |m| m.len());
 
     if existing > 0 {
-        match try_resume(&agent, url, dest, existing, on_event)? {
+        match try_resume(&agent, url, dest, existing, on_event, cancelled)? {
             ResumeOutcome::Resumed(total) => return Ok(total),
             ResumeOutcome::FullRestart => {
                 // Server returned 200 instead of 206. Fall through
@@ -108,7 +110,14 @@ pub(crate) fn download_to_file(
     let file = File::create(dest).map_err(|e| FetchError::Filesystem {
         detail: format!("create {}: {e}", dest.display()),
     })?;
-    let written = pump_to_writer(reader, BufWriter::new(file), total, on_event, dest)?;
+    let written = pump_to_writer(
+        reader,
+        BufWriter::new(file),
+        total,
+        on_event,
+        dest,
+        cancelled,
+    )?;
     Ok(written)
 }
 
@@ -135,6 +144,7 @@ fn try_resume(
     dest: &Path,
     existing: u64,
     on_event: &mut dyn FnMut(FetchEvent),
+    cancelled: &AtomicBool,
 ) -> Result<ResumeOutcome, FetchError> {
     let range_header = format!("bytes={existing}-");
     let mut resp = match agent.get(url).header("Range", &range_header).call() {
@@ -187,6 +197,7 @@ fn try_resume(
         existing,
         on_event,
         dest,
+        cancelled,
     )?;
     Ok(ResumeOutcome::Resumed(existing.saturating_add(appended)))
 }
@@ -239,10 +250,14 @@ fn pump_to_writer_with_offset<R: Read, W: Write>(
     offset: u64,
     on_event: &mut dyn FnMut(FetchEvent),
     dest: &Path,
+    cancelled: &AtomicBool,
 ) -> Result<u64, FetchError> {
     let mut buf = vec![0u8; CHUNK_BYTES];
     let mut appended: u64 = 0;
     loop {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(FetchError::Cancelled);
+        }
         let n = reader.read(&mut buf).map_err(|e| FetchError::Network {
             url: dest.display().to_string(),
             detail: format!("read body: {e}"),
@@ -275,10 +290,14 @@ fn pump_to_writer<R: Read, W: Write>(
     total: Option<u64>,
     on_event: &mut dyn FnMut(FetchEvent),
     dest: &Path,
+    cancelled: &AtomicBool,
 ) -> Result<u64, FetchError> {
     let mut buf = vec![0u8; CHUNK_BYTES];
     let mut written: u64 = 0;
     loop {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(FetchError::Cancelled);
+        }
         let n = reader.read(&mut buf).map_err(|e| FetchError::Network {
             url: dest.display().to_string(),
             detail: format!("read body: {e}"),
@@ -321,12 +340,14 @@ mod tests {
         let file = File::create(&dest).expect("create");
         let mut events: Vec<FetchEvent> = Vec::new();
         let mut on_event = |e: FetchEvent| events.push(e);
+        let cancelled = AtomicBool::new(false);
         let n = pump_to_writer(
             cursor,
             BufWriter::new(file),
             Some(payload.len() as u64),
             &mut on_event,
             &dest,
+            &cancelled,
         )
         .expect("pump");
         assert_eq!(n, payload.len() as u64);
@@ -364,8 +385,15 @@ mod tests {
         let file = File::create(&dest).expect("create");
         let mut events: Vec<FetchEvent> = Vec::new();
         let mut on_event = |e: FetchEvent| events.push(e);
-        let n = pump_to_writer(cursor, BufWriter::new(file), Some(0), &mut on_event, &dest)
-            .expect("pump");
+        let n = pump_to_writer(
+            cursor,
+            BufWriter::new(file),
+            Some(0),
+            &mut on_event,
+            &dest,
+            &AtomicBool::new(false),
+        )
+        .expect("pump");
         assert_eq!(n, 0);
         let downloading = events
             .iter()
@@ -391,8 +419,15 @@ mod tests {
                 totals.push(p.total);
             }
         };
-        let _ =
-            pump_to_writer(cursor, BufWriter::new(file), None, &mut on_event, &dest).expect("pump");
+        let _ = pump_to_writer(
+            cursor,
+            BufWriter::new(file),
+            None,
+            &mut on_event,
+            &dest,
+            &AtomicBool::new(false),
+        )
+        .expect("pump");
         assert!(downloading_seen >= 2);
         assert!(totals.iter().all(Option::is_none));
     }
@@ -427,6 +462,7 @@ mod tests {
             prior_size,
             &mut on_event,
             &dest,
+            &AtomicBool::new(false),
         )
         .expect("resume pump");
         assert_eq!(appended, new_payload.len() as u64);
@@ -452,8 +488,56 @@ mod tests {
             6,
             &mut |_| {},
             &dest,
+            &AtomicBool::new(false),
         )
         .expect("pump");
         assert_eq!(std::fs::read(&dest).expect("read"), b"hello world");
+    }
+
+    // ---- Phase 3 slice 3: cooperative cancellation ------------------
+
+    #[test]
+    fn pump_with_pre_set_cancel_flag_returns_cancelled() {
+        // Caller flips the AtomicBool before any bytes flow. The
+        // first loop iteration's cancel check must short-circuit
+        // with FetchError::Cancelled — no bytes written, no panic.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dest = dir.path().join("dl");
+        let file = File::create(&dest).expect("create");
+        let payload: Vec<u8> = vec![0u8; CHUNK_BYTES * 2];
+        let cancelled = AtomicBool::new(true);
+        let err = pump_to_writer(
+            Cursor::new(payload),
+            BufWriter::new(file),
+            None,
+            &mut |_| {},
+            &dest,
+            &cancelled,
+        )
+        .expect_err("should be cancelled");
+        assert!(matches!(err, FetchError::Cancelled));
+    }
+
+    #[test]
+    fn pump_with_offset_pre_set_cancel_returns_cancelled() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dest = dir.path().join("dl");
+        std::fs::write(&dest, b"prior").expect("seed");
+        let file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&dest)
+            .expect("open");
+        let cancelled = AtomicBool::new(true);
+        let err = pump_to_writer_with_offset(
+            Cursor::new(vec![0u8; CHUNK_BYTES]),
+            BufWriter::new(file),
+            Some((CHUNK_BYTES + 5) as u64),
+            5,
+            &mut |_| {},
+            &dest,
+            &cancelled,
+        )
+        .expect_err("should be cancelled");
+        assert!(matches!(err, FetchError::Cancelled));
     }
 }

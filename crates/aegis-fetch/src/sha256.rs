@@ -9,6 +9,7 @@
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use sha2::{Digest, Sha256};
 
@@ -32,6 +33,7 @@ const CHUNK_BYTES: usize = 1 << 20;
 pub(crate) fn hash_file(
     path: &Path,
     on_progress: &mut dyn FnMut(u64),
+    cancelled: &AtomicBool,
 ) -> Result<(String, u64), FetchError> {
     let file = File::open(path).map_err(|e| FetchError::Filesystem {
         detail: format!("open {} for hashing: {e}", path.display()),
@@ -41,6 +43,9 @@ pub(crate) fn hash_file(
     let mut buf = vec![0u8; CHUNK_BYTES];
     let mut total: u64 = 0;
     loop {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(FetchError::Cancelled);
+        }
         let n = reader.read(&mut buf).map_err(|e| FetchError::Filesystem {
             detail: format!("read {}: {e}", path.display()),
         })?;
@@ -76,7 +81,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("empty");
         std::fs::write(&path, b"").expect("write");
-        let (hex, n) = hash_file(&path, &mut |_| {}).expect("hash");
+        let (hex, n) = hash_file(&path, &mut |_| {}, &AtomicBool::new(false)).expect("hash");
         // SHA-256 of empty input is a well-known fixed value.
         assert_eq!(
             hex,
@@ -91,7 +96,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("abc");
         std::fs::write(&path, b"abc").expect("write");
-        let (hex, n) = hash_file(&path, &mut |_| {}).expect("hash");
+        let (hex, n) = hash_file(&path, &mut |_| {}, &AtomicBool::new(false)).expect("hash");
         assert_eq!(
             hex,
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
@@ -107,7 +112,8 @@ mod tests {
         let big = vec![0u8; (CHUNK_BYTES * 5) / 2];
         std::fs::write(&path, &big).expect("write");
         let mut callbacks: Vec<u64> = Vec::new();
-        let (_, n) = hash_file(&path, &mut |b| callbacks.push(b)).expect("hash");
+        let (_, n) =
+            hash_file(&path, &mut |b| callbacks.push(b), &AtomicBool::new(false)).expect("hash");
         assert_eq!(n, big.len() as u64);
         assert!(
             callbacks.len() >= 3,
@@ -121,10 +127,23 @@ mod tests {
     }
 
     #[test]
+    fn hash_with_cancelled_flag_returns_cancelled() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("big");
+        // Big enough that the cancel check fires between chunks
+        // (one 1 MiB chunk = 1 cancel check minimum).
+        std::fs::write(&path, vec![0u8; CHUNK_BYTES * 3]).expect("write");
+        let cancelled = AtomicBool::new(true); // already-cancelled
+        let err = hash_file(&path, &mut |_| {}, &cancelled).expect_err("cancelled");
+        assert!(matches!(err, FetchError::Cancelled));
+    }
+
+    #[test]
     fn hash_missing_file_is_filesystem_error() {
         let err = hash_file(
             std::path::Path::new("/nonexistent/aegis-fetch-test"),
             &mut |_| {},
+            &AtomicBool::new(false),
         )
         .expect_err("should fail");
         assert!(matches!(err, FetchError::Filesystem { .. }));

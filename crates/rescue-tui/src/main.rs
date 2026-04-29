@@ -18,6 +18,8 @@ use std::env;
 use std::io;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 use std::time::Duration;
@@ -311,11 +313,13 @@ where
     // Active DHCP worker (#655 Phase 1B). Same ownership shape as
     // verify: Some(rx) while udhcpc runs, None otherwise.
     let mut active_dhcp: Option<Receiver<NetworkMsg>> = None;
-    // Active catalog-fetch worker (#655 PR-C step 2). Some(rx) while
-    // fetch_catalog_entry runs in a thread, None otherwise. Single
-    // in-flight by construction — the UI locks Esc on CatalogConfirm
-    // while op is non-terminal so a second fetch can't be spawned.
-    let mut active_fetch: Option<Receiver<FetchMsg>> = None;
+    // Active catalog-fetch worker (#655 PR-C step 2). Some(rx, cancel)
+    // while fetch_catalog_entry runs in a thread, None otherwise.
+    // Single in-flight by construction. The Arc<AtomicBool> is shared
+    // with the worker so Esc-during-fetch flips it and the worker
+    // returns FetchError::Cancelled at the next 1 MiB boundary
+    // (#655 Phase 3 slice 3).
+    let mut active_fetch: Option<(Receiver<FetchMsg>, Arc<AtomicBool>)> = None;
 
     loop {
         terminal.draw(|f| render::draw(f, state))?;
@@ -346,7 +350,7 @@ where
         }
 
         // Drain catalog-fetch worker messages (#655 PR-C step 2).
-        if let Some(rx) = active_fetch.as_ref() {
+        if let Some((rx, _)) = active_fetch.as_ref() {
             loop {
                 match rx.try_recv() {
                     Ok(FetchMsg::Event(ev)) => {
@@ -757,8 +761,10 @@ where
                     match aegis_fetch::VendorKeyring::embedded() {
                         Ok(keyring) => {
                             let dest = std::path::PathBuf::from(CATALOG_FETCH_DEST_DIR);
-                            let rx = spawn_fetch_worker(entry, dest, keyring);
-                            active_fetch = Some(rx);
+                            let cancelled = Arc::new(AtomicBool::new(false));
+                            let rx =
+                                spawn_fetch_worker(entry, dest, keyring, Arc::clone(&cancelled));
+                            active_fetch = Some((rx, cancelled));
                         }
                         Err(e) => {
                             state.catalog_finish_fetch(Err(format!(
@@ -769,7 +775,18 @@ where
                 }
             }
             (Screen::CatalogConfirm { .. }, KeyCode::Esc | KeyCode::Char('q')) => {
-                state.catalog_cancel_confirm();
+                // Esc during a non-terminal fetch flips the shared
+                // cancel flag; the worker returns FetchError::Cancelled
+                // at the next 1 MiB boundary, and catalog_finish_fetch
+                // routes it as a Failed state. If no fetch is in
+                // flight, fall through to the state machine which
+                // dismisses the confirm screen back to the Catalog
+                // list (#655 Phase 3 slice 3).
+                if let Some((_, cancelled)) = active_fetch.as_ref() {
+                    cancelled.store(true, Ordering::Relaxed);
+                } else {
+                    state.catalog_cancel_confirm();
+                }
             }
             (Screen::Confirm { selected }, KeyCode::Char('v')) => {
                 let real_idx = *selected;
@@ -1221,24 +1238,34 @@ enum FetchMsg {
 
 /// Spawn a thread that runs `aegis_fetch::fetch_catalog_entry` and
 /// emits Event + Done messages on the returned Receiver. The
-/// thread terminates after Done is sent. The fetch is synchronous
-/// and uncancellable in this PR — Phase 3 of #655 will add resume
-/// + cancellation.
+/// thread terminates after Done is sent.
+///
+/// `cancelled` is a shared flag the UI flips to request cooperative
+/// cancellation (#655 Phase 3 slice 3). The worker passes the flag
+/// to `aegis_fetch`, which polls it between 1 MiB chunks during
+/// download + hash, returning `FetchError::Cancelled` once set.
 fn spawn_fetch_worker(
     entry: &'static aegis_catalog::Entry,
     dest_dir: std::path::PathBuf,
     keyring: aegis_fetch::VendorKeyring,
+    cancelled: Arc<AtomicBool>,
 ) -> Receiver<FetchMsg> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         let tx_inner = tx.clone();
-        let result = aegis_fetch::fetch_catalog_entry(entry, &dest_dir, &keyring, &mut |ev| {
-            // Suppress the in-band Done — `FetchMsg::Done` below
-            // is the canonical terminal transition.
-            if !matches!(ev, aegis_fetch::FetchEvent::Done(_)) {
-                let _ = tx_inner.send(FetchMsg::Event(ev));
-            }
-        });
+        let result = aegis_fetch::fetch_catalog_entry(
+            entry,
+            &dest_dir,
+            &keyring,
+            &mut |ev| {
+                // Suppress the in-band Done — `FetchMsg::Done` below
+                // is the canonical terminal transition.
+                if !matches!(ev, aegis_fetch::FetchEvent::Done(_)) {
+                    let _ = tx_inner.send(FetchMsg::Event(ev));
+                }
+            },
+            &cancelled,
+        );
         let _ = tx.send(FetchMsg::Done(result.map_err(|e| e.to_string())));
     });
     rx
