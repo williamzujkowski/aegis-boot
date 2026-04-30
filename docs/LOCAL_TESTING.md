@@ -16,6 +16,9 @@ tools/local-ci.sh kexec        # rescue-tui → target-kernel kexec under QEMU (
 tools/local-ci.sh ovmf-secboot # SB-enforcing signed chain → rescue-tui (~4 min)
 tools/local-ci.sh mkusb        # build USB image + boot smoke (~4 min)
 tools/local-ci.sh qemu-smoke   # minimal initramfs boot (~2 min)
+tools/local-ci.sh test-mode kexec-unsigned    # smoke aegis-hwsim test mode (~2 min)
+tools/local-ci.sh test-mode mok-enroll        # smoke aegis-hwsim test mode (~2 min)
+tools/local-ci.sh test-mode manifest-roundtrip # smoke aegis-hwsim test mode (~2 min)
 tools/local-ci.sh thumb-drive --confirm-write /dev/sdX  # real USB (operator-only)
 tools/local-ci.sh all          # full suite sans thumb-drive (~12 min)
 ```

@@ -200,6 +200,56 @@ cmd_qemu_smoke() {
     echo "✓ QEMU smoke passed"
 }
 
+cmd_test_mode() {
+    # Local QEMU smoke for the aegis-hwsim test modes (#675/#676/#695).
+    # Builds rescue-tui + initramfs, boots under QEMU with
+    # `aegis.test=<NAME>` injected via QEMU_SMOKE_TEST_MODE, asserts
+    # the per-mode start landmark fires.
+    #
+    # Use to verify the dispatcher + landmark wording locally without
+    # running a full aegis-hwsim scenario over real hardware. ~2-3 min
+    # per mode on a moderate dev host.
+    local mode="${1:-}"
+    case "$mode" in
+        kexec-unsigned|mok-enroll|manifest-roundtrip)
+            ;;
+        ""|--help|-h)
+            cat >&2 <<EOF
+error: test-mode subcommand requires a mode name
+
+Usage:
+  tools/local-ci.sh test-mode <NAME>
+
+Where <NAME> is one of:
+  kexec-unsigned        attempt unsigned kexec; expect EKEYREJECTED (#675)
+  mok-enroll            print MOK enrollment walkthrough (#676)
+  manifest-roundtrip    parse on-stick manifest, compare PCRs (#695)
+
+See docs/rescue-tui-serial-format.md for the landmarks each mode emits.
+EOF
+            exit 2
+            ;;
+        *)
+            echo "error: unknown test-mode '$mode'" >&2
+            echo "  valid: kexec-unsigned, mok-enroll, manifest-roundtrip" >&2
+            exit 2
+            ;;
+    esac
+    require_qemu
+    require_rust
+    warn_about_toolchain_once
+    require_file ./scripts/qemu-smoke.sh "expected at scripts/qemu-smoke.sh"
+    echo "==> Building rescue-tui (release)"
+    SOURCE_DATE_EPOCH=1700000000 cargo_run build --release -p rescue-tui
+    echo "==> Building initramfs"
+    SOURCE_DATE_EPOCH=1700000000 ./scripts/build-initramfs.sh
+    echo "==> Running QEMU smoke with aegis.test=$mode"
+    QEMU_SMOKE_TEST_MODE="$mode" \
+        TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-60}" \
+        ./scripts/qemu-smoke.sh
+    echo "✓ test-mode '$mode' smoke passed"
+}
+
 cmd_thumb_drive() {
     # Real-hardware E2E against the operator's attached USB stick. Writes to
     # the device — gated behind --confirm-write so a typo can't nuke /dev/sda.
@@ -284,6 +334,8 @@ Subcommands:
   ovmf-secboot    SB-enforcing signed chain → rescue-tui under QEMU (~4min)
   mkusb           build bootable image + boot smoke under QEMU (~4min)
   qemu-smoke      minimal initramfs boot smoke (~2min)
+  test-mode <NAME>  smoke an aegis-hwsim test mode (kexec-unsigned, mok-enroll,
+                    manifest-roundtrip) — ~2min per mode
   thumb-drive     write to attached USB stick (requires --confirm-write /dev/sdX)
   all             run the full suite (sans thumb-drive), fail-fast (~12min)
   --help          this help
@@ -321,10 +373,11 @@ main() {
         ovmf-secboot)  cmd_ovmf_secboot "$@" ;;
         mkusb)         cmd_mkusb "$@" ;;
         qemu-smoke)    cmd_qemu_smoke "$@" ;;
+        test-mode)     cmd_test_mode "$@" ;;
         thumb-drive)   cmd_thumb_drive "$@" ;;
         all)           cmd_all "$@" ;;
         --help|-h)     print_help ;;
-        --list)        echo "quick kexec ovmf-secboot mkusb qemu-smoke thumb-drive all" ;;
+        --list)        echo "quick kexec ovmf-secboot mkusb qemu-smoke test-mode thumb-drive all" ;;
         *)
             echo "error: unknown subcommand '$sub'" >&2
             echo "       run 'tools/local-ci.sh --help' for usage" >&2

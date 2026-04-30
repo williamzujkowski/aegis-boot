@@ -82,6 +82,38 @@ if [[ ! -r "$KERNEL" ]]; then
     log "copied kernel to $tmp_kernel for read access"
 fi
 
+# QEMU_SMOKE_TEST_MODE (optional) — when set to one of the closed-set
+# dispatcher slugs, append `aegis.test=<NAME>` to the kernel cmdline so
+# /init's grep-and-export hook (PR #680) flips rescue-tui into the
+# named scripted mode. Default success grep also switches to the
+# test-mode start landmark instead of the rescue-tui banner.
+#
+# Used by tools/local-ci.sh test-mode <NAME> to smoke each test mode
+# locally without a full aegis-hwsim run.
+QEMU_SMOKE_TEST_MODE="${QEMU_SMOKE_TEST_MODE:-}"
+EXTRA_CMDLINE=""
+SUCCESS_GREP='aegis-boot rescue-tui starting|No bootable ISOs|aegis-boot — pick an ISO'
+case "$QEMU_SMOKE_TEST_MODE" in
+    "")
+        ;;
+    kexec-unsigned|mok-enroll|manifest-roundtrip)
+        EXTRA_CMDLINE=" aegis.test=${QEMU_SMOKE_TEST_MODE}"
+        # Grep for the per-mode start landmark (substring-stable per
+        # docs/rescue-tui-serial-format.md). All three modes emit
+        # `aegis-boot-test: <NAME> starting` (kexec-unsigned) or a
+        # close variant (`MOK enrollment walkthrough starting`,
+        # `manifest-roundtrip starting`); the broad regex below
+        # covers all three.
+        SUCCESS_GREP="aegis-boot-test: ${QEMU_SMOKE_TEST_MODE}|MOK enrollment walkthrough starting|manifest-roundtrip starting"
+        log "test-mode smoke: ${QEMU_SMOKE_TEST_MODE} (cmdline gets aegis.test=${QEMU_SMOKE_TEST_MODE})"
+        ;;
+    *)
+        echo "qemu-smoke: ERROR — unknown QEMU_SMOKE_TEST_MODE '$QEMU_SMOKE_TEST_MODE'" >&2
+        echo "  valid: kexec-unsigned, mok-enroll, manifest-roundtrip" >&2
+        exit 2
+        ;;
+esac
+
 log "booting under QEMU (timeout ${TIMEOUT_SECONDS}s)"
 output_file="$(mktemp --tmpdir qemu-smoke-out-XXXXXX.log)"
 trap '[[ -n "${output_file:-}" ]] && rm -f -- "$output_file"' EXIT
@@ -97,7 +129,7 @@ timeout "$TIMEOUT_SECONDS" qemu-system-x86_64 \
     -m 512M \
     -kernel "$KERNEL" \
     -initrd "$OUT_DIR/initramfs.cpio.gz" \
-    -append 'console=ttyS0 panic=5 rdinit=/init quiet loglevel=3' \
+    -append "console=ttyS0 panic=5 rdinit=/init quiet loglevel=3${EXTRA_CMDLINE}" \
     </dev/null \
     >"$output_file" 2>&1
 qemu_exit=$?
@@ -108,12 +140,21 @@ echo "--- QEMU serial output ---"
 cat "$output_file"
 echo "--- end QEMU serial output ---"
 
-# Look for our startup banner (stderr → serial console) — reliable even
-# when the serial TTY doesn't report a size and ratatui renders blank.
-if grep -qE 'aegis-boot rescue-tui starting|No bootable ISOs|aegis-boot — pick an ISO' "$output_file"; then
-    log "rescue-tui rendered — boot smoke PASSED"
+# Look for the success landmark. Default: rescue-tui banner. Test-mode:
+# the per-mode start landmark.
+if grep -qE "$SUCCESS_GREP" "$output_file"; then
+    if [[ -n "$QEMU_SMOKE_TEST_MODE" ]]; then
+        log "test-mode '${QEMU_SMOKE_TEST_MODE}' dispatched — start landmark detected"
+    else
+        log "rescue-tui rendered — boot smoke PASSED"
+    fi
     exit 0
 fi
 
-echo "rescue-tui output not detected; qemu exit=$qemu_exit" >&2
+if [[ -n "$QEMU_SMOKE_TEST_MODE" ]]; then
+    echo "test-mode '${QEMU_SMOKE_TEST_MODE}' did not fire; qemu exit=$qemu_exit" >&2
+    echo "  expected substring: $SUCCESS_GREP" >&2
+else
+    echo "rescue-tui output not detected; qemu exit=$qemu_exit" >&2
+fi
 exit 1
