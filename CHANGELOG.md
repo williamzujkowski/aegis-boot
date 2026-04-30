@@ -4,6 +4,20 @@ All notable changes to aegis-boot are recorded here. Format: [Keep a Changelog](
 
 ## [Unreleased]
 
+### `MKUSB_TEST_MODE` env var bakes `aegis.test=<NAME>` into grub.cfg (closes #694)
+
+Aegis-hwsim's E5.3 / E5.4 / E6 scenarios depend on the rescue-tui test modes shipped in PRs #680 / #681 / (forthcoming for #695). The harness side grep-pins the serial landmarks correctly, but a default-flashed stick doesn't carry `aegis.test=<NAME>` on the kernel cmdline — so the test mode never fires and the harness reports Skip.
+
+This release adds `MKUSB_TEST_MODE=<NAME>` (env var honored by both `scripts/mkusb.sh` and `aegis-boot flash --direct-install`'s `render_grub_cfg`). Set to one of `kexec-unsigned`, `mok-enroll`, or `manifest-roundtrip` and the cmdline marker is baked onto every menuentry in the resulting grub.cfg. Unknown slugs are rejected with an operator-readable error before any disk write happens.
+
+```bash
+MKUSB_TEST_MODE=kexec-unsigned ./scripts/mkusb.sh
+# or
+MKUSB_TEST_MODE=mok-enroll aegis-boot flash --direct-install /dev/sdX
+```
+
+The byte-parity invariant between `mkusb.sh` and `direct_install::build_grub_cfg_body` (asserted by `e2e-suite.yml::direct-install-shared`) is preserved — both paths produce identical bytes when no test mode is set, and identical bytes when the same test mode is set.
+
 ### CI feedback-loop speedup — paths-ignore + shared-artifact pattern (#580 Phases 1+2)
 
 The CI matrix was burning ~45 CPU minutes per PR; ~25 of those were 6 QEMU E2E jobs each rebuilding rescue-tui + initramfs from scratch on top of full reproducible-build + CodeQL. Phases 1 and 2 of [#580](https://github.com/aegis-boot/aegis-boot/issues/580) close that gap; Phases 3 (nextest) and 4 (CodeQL scope) are explicitly deferred — Phase 3 has marginal payoff for our test-runtime profile, and Phase 4 needs a separate security review.

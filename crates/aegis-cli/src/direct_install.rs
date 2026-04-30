@@ -161,6 +161,34 @@ pub(crate) fn resolve_grub_default_entry() -> u32 {
     resolve_grub_default_entry_from(std::env::var("MKUSB_GRUB_DEFAULT").ok().as_deref())
 }
 
+/// Resolve the `MKUSB_TEST_MODE` env var (#694) into the cmdline
+/// suffix that gets appended to every menuentry's `linux` line, or
+/// the empty string when no test mode is set. Mirrors mkusb.sh's
+/// validation: only the closed set of known dispatch slugs is
+/// accepted, so a typo doesn't silently produce a stick that boots
+/// without the test marker.
+///
+/// # Errors
+///
+/// Returns the unknown slug back to the caller (so flash.rs can
+/// surface a usage error before any disk write happens).
+pub(crate) fn resolve_test_mode() -> Result<String, String> {
+    resolve_test_mode_from(std::env::var("MKUSB_TEST_MODE").ok().as_deref())
+}
+
+/// Pure variant of [`resolve_test_mode`] for unit testing.
+pub(crate) fn resolve_test_mode_from(value: Option<&str>) -> Result<String, String> {
+    let Some(slug) = value.filter(|s| !s.is_empty()) else {
+        return Ok(String::new());
+    };
+    match slug {
+        "kexec-unsigned" | "mok-enroll" | "manifest-roundtrip" => Ok(format!(" aegis.test={slug}")),
+        other => Err(format!(
+            "unknown MKUSB_TEST_MODE '{other}'; valid: kexec-unsigned, mok-enroll, manifest-roundtrip"
+        )),
+    }
+}
+
 /// Pure form for unit testing. The crate is `forbid(unsafe_code)`, so
 /// tests can't use `env::set_var` (unsafe in edition 2024) — passing
 /// the env value as an argument keeps the predicate testable without
@@ -181,7 +209,8 @@ pub(crate) fn resolve_grub_default_entry_from(env_value: Option<&str>) -> u32 {
 /// direct-install stays buildable without an asset directory and the
 /// output is unit-testable on content invariants without file fs.
 pub(crate) fn render_grub_cfg(out: &Path) -> Result<(), String> {
-    let body = build_grub_cfg_body(GRUB_TIMEOUT_SECS, resolve_grub_default_entry());
+    let test_mode = resolve_test_mode()?;
+    let body = build_grub_cfg_body(GRUB_TIMEOUT_SECS, resolve_grub_default_entry(), &test_mode);
     fs::write(out, body).map_err(|e| format!("grub.cfg write {}: {e}", out.display()))
 }
 
@@ -196,7 +225,11 @@ pub(crate) fn render_grub_cfg(out: &Path) -> Result<(), String> {
 /// between the two paths' ESPs; a one-character drift in a comment
 /// fails the gate. If you need to change a comment, change mkusb.sh
 /// and this function in the same commit.
-pub(crate) fn build_grub_cfg_body(timeout_secs: u32, default_entry: u32) -> String {
+pub(crate) fn build_grub_cfg_body(
+    timeout_secs: u32,
+    default_entry: u32,
+    test_mode_cmdline: &str,
+) -> String {
     format!(
         "set timeout={timeout_secs}
 set default={default_entry}
@@ -208,7 +241,7 @@ set default={default_entry}
 # so a serial operator gets dmesg + can edit grub to flip the order.
 # (#112)
 menuentry \"aegis-boot rescue\" {{
-    linux /vmlinuz console=ttyS0,115200 console=tty0 panic=5 loglevel=4
+    linux /vmlinuz console=ttyS0,115200 console=tty0 panic=5 loglevel=4{test_mode_cmdline}
     initrd /initrd.img
 }}
 
@@ -216,7 +249,7 @@ menuentry \"aegis-boot rescue\" {{
 # KVM IP console with no local monitor. rescue-tui's alt-screen
 # renders on ttyS0.
 menuentry \"aegis-boot rescue (serial-primary)\" {{
-    linux /vmlinuz console=tty0 console=ttyS0,115200 panic=5 loglevel=4
+    linux /vmlinuz console=tty0 console=ttyS0,115200 panic=5 loglevel=4{test_mode_cmdline}
     initrd /initrd.img
 }}
 
@@ -225,7 +258,7 @@ menuentry \"aegis-boot rescue (serial-primary)\" {{
 # the operator can read the pre-rescue-tui state on screen. Also tees
 # the /init log to /run/media/aegis-isos/aegis-boot-<ts>.log.
 menuentry \"aegis-boot rescue (verbose — first-boot debug)\" {{
-    linux /vmlinuz console=ttyS0,115200 console=tty0 panic=30 loglevel=7 earlyprintk=efi ignore_loglevel aegis.verbose=1
+    linux /vmlinuz console=ttyS0,115200 console=tty0 panic=30 loglevel=7 earlyprintk=efi ignore_loglevel aegis.verbose=1{test_mode_cmdline}
     initrd /initrd.img
 }}
 "
@@ -608,16 +641,76 @@ mod tests {
 
     #[test]
     fn build_grub_cfg_body_contains_three_menuentries() {
-        let body = build_grub_cfg_body(GRUB_TIMEOUT_SECS, GRUB_DEFAULT_ENTRY);
+        let body = build_grub_cfg_body(GRUB_TIMEOUT_SECS, GRUB_DEFAULT_ENTRY, "");
         let count = body.matches("menuentry ").count();
         assert_eq!(count, 3, "expected exactly 3 menuentries in grub.cfg");
     }
 
     #[test]
     fn build_grub_cfg_body_sets_timeout_and_default() {
-        let body = build_grub_cfg_body(7, 2);
+        let body = build_grub_cfg_body(7, 2, "");
         assert!(body.starts_with("set timeout=7\n"), "body: {body}");
         assert!(body.contains("\nset default=2\n"), "body: {body}");
+    }
+
+    #[test]
+    fn build_grub_cfg_body_bakes_test_mode_cmdline_into_every_entry() {
+        // #694: when MKUSB_TEST_MODE is set, every menuentry's
+        // `linux` line carries the `aegis.test=<NAME>` marker. The
+        // initramfs /init's grep-and-export hook (PR #680) reads it
+        // and dispatches the named test mode in rescue-tui without
+        // operator interaction.
+        let body = build_grub_cfg_body(
+            GRUB_TIMEOUT_SECS,
+            GRUB_DEFAULT_ENTRY,
+            " aegis.test=kexec-unsigned",
+        );
+        let count = body.matches("aegis.test=kexec-unsigned").count();
+        assert_eq!(
+            count, 3,
+            "expected aegis.test marker on all 3 menuentries: {body}"
+        );
+    }
+
+    #[test]
+    fn build_grub_cfg_body_no_test_mode_leaves_cmdlines_clean() {
+        // The empty-string variant must produce the same bytes
+        // mkusb.sh emits when MKUSB_TEST_MODE is unset — preserves
+        // the byte-parity invariant the direct-install canary asserts
+        // against mkusb.sh.
+        let body = build_grub_cfg_body(GRUB_TIMEOUT_SECS, GRUB_DEFAULT_ENTRY, "");
+        assert!(
+            !body.contains("aegis.test="),
+            "test-mode marker leaked into clean build: {body}"
+        );
+    }
+
+    #[test]
+    fn resolve_test_mode_from_handles_unset_empty_and_known_slugs() {
+        assert_eq!(resolve_test_mode_from(None).expect("ok"), "");
+        assert_eq!(resolve_test_mode_from(Some("")).expect("ok"), "");
+        assert_eq!(
+            resolve_test_mode_from(Some("kexec-unsigned")).expect("ok"),
+            " aegis.test=kexec-unsigned"
+        );
+        assert_eq!(
+            resolve_test_mode_from(Some("mok-enroll")).expect("ok"),
+            " aegis.test=mok-enroll"
+        );
+        assert_eq!(
+            resolve_test_mode_from(Some("manifest-roundtrip")).expect("ok"),
+            " aegis.test=manifest-roundtrip"
+        );
+    }
+
+    #[test]
+    fn resolve_test_mode_from_rejects_unknown_slug() {
+        let err = resolve_test_mode_from(Some("nope")).expect_err("rejected");
+        assert!(err.contains("unknown MKUSB_TEST_MODE 'nope'"), "{err}");
+        assert!(
+            err.contains("kexec-unsigned, mok-enroll, manifest-roundtrip"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -626,7 +719,7 @@ mod tests {
         // `::/initrd.img` — grub sees them as `/vmlinuz` + `/initrd.img`.
         // Drift between these paths and the mcopy destinations
         // (ESP_DEST_KERNEL / ESP_DEST_INITRD) would silently break boot.
-        let body = build_grub_cfg_body(GRUB_TIMEOUT_SECS, GRUB_DEFAULT_ENTRY);
+        let body = build_grub_cfg_body(GRUB_TIMEOUT_SECS, GRUB_DEFAULT_ENTRY, "");
         assert!(body.contains("linux /vmlinuz"), "body: {body}");
         assert!(body.contains("initrd /initrd.img"), "body: {body}");
     }
@@ -637,7 +730,7 @@ mod tests {
         // are bootable so operators on a serial-only KVM can flip
         // into the serial-primary entry. The verbose entry is #109's
         // first-boot debug path. Missing either is a UX regression.
-        let body = build_grub_cfg_body(GRUB_TIMEOUT_SECS, GRUB_DEFAULT_ENTRY);
+        let body = build_grub_cfg_body(GRUB_TIMEOUT_SECS, GRUB_DEFAULT_ENTRY, "");
         assert!(
             body.contains("serial-primary"),
             "missing serial-primary menuentry: {body}"
@@ -669,7 +762,7 @@ mod tests {
         let path = tmp.path().join("grub.cfg");
         render_grub_cfg(&path).expect("render_grub_cfg");
         let written = std::fs::read_to_string(&path).expect("read back grub.cfg");
-        let expected = build_grub_cfg_body(GRUB_TIMEOUT_SECS, resolve_grub_default_entry());
+        let expected = build_grub_cfg_body(GRUB_TIMEOUT_SECS, resolve_grub_default_entry(), "");
         assert_eq!(written, expected);
     }
 
@@ -714,7 +807,7 @@ menuentry \"aegis-boot rescue (verbose — first-boot debug)\" {
     initrd /initrd.img
 }
 ";
-        let got = build_grub_cfg_body(3, 1);
+        let got = build_grub_cfg_body(3, 1, "");
         assert_eq!(
             got, expected,
             "grub.cfg drift from mkusb.sh — byte-parity E2E will fail. \

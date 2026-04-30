@@ -143,11 +143,38 @@ log "  combined: $(stat -c '%s' "$WORK/combined-initrd.img") bytes"
 # The CI smoke test sets it to 1 because it has no local monitor.
 GRUB_DEFAULT_ENTRY="${MKUSB_GRUB_DEFAULT:-0}"
 
+# MKUSB_TEST_MODE bakes `aegis.test=<NAME>` onto every menuentry's
+# kernel cmdline (#694). When unset, no test-mode marker is written
+# and the stick boots normally. When set, the booted kernel + initramfs
+# (#680/#681) detect the marker and dispatch the named test mode in
+# rescue-tui without operator interaction. Used by aegis-hwsim
+# scenarios (E5.3 kexec-refuses-unsigned, E5.4 mok-enroll-alpine,
+# future E6 manifest-roundtrip) to convert Skip → Pass on flashed
+# sticks without needing operators to hand-edit grub.cfg or type at
+# the GRUB `e` prompt.
+#
+# Validate cautiously — only known test-mode slugs are allowed so a
+# typo doesn't silently produce a stick that boots without the marker.
+TEST_MODE="${MKUSB_TEST_MODE:-}"
+TEST_MODE_CMDLINE=""
+if [[ -n "$TEST_MODE" ]]; then
+    case "$TEST_MODE" in
+        kexec-unsigned|mok-enroll|manifest-roundtrip)
+            TEST_MODE_CMDLINE=" aegis.test=${TEST_MODE}"
+            log "MKUSB_TEST_MODE=${TEST_MODE} — baking 'aegis.test=${TEST_MODE}' into every menuentry's cmdline"
+            ;;
+        *)
+            echo "mkusb: ERROR — unknown MKUSB_TEST_MODE '$TEST_MODE'." >&2
+            echo "  Valid: kexec-unsigned, mok-enroll, manifest-roundtrip." >&2
+            echo "  See docs/rescue-tui-serial-format.md for the dispatch list." >&2
+            exit 2
+            ;;
+    esac
+fi
+
 cat > "$WORK/grub.cfg" <<EOF
 set timeout=3
 set default=${GRUB_DEFAULT_ENTRY}
-EOF
-cat >> "$WORK/grub.cfg" <<'EOF'
 
 # Normal boot — concise kernel logs.
 # console= order MATTERS: last one wins as /dev/console for userspace.
@@ -156,7 +183,7 @@ cat >> "$WORK/grub.cfg" <<'EOF'
 # so a serial operator gets dmesg + can edit grub to flip the order.
 # (#112)
 menuentry "aegis-boot rescue" {
-    linux /vmlinuz console=ttyS0,115200 console=tty0 panic=5 loglevel=4
+    linux /vmlinuz console=ttyS0,115200 console=tty0 panic=5 loglevel=4${TEST_MODE_CMDLINE}
     initrd /initrd.img
 }
 
@@ -164,7 +191,7 @@ menuentry "aegis-boot rescue" {
 # KVM IP console with no local monitor. rescue-tui's alt-screen
 # renders on ttyS0.
 menuentry "aegis-boot rescue (serial-primary)" {
-    linux /vmlinuz console=tty0 console=ttyS0,115200 panic=5 loglevel=4
+    linux /vmlinuz console=tty0 console=ttyS0,115200 panic=5 loglevel=4${TEST_MODE_CMDLINE}
     initrd /initrd.img
 }
 
@@ -173,7 +200,7 @@ menuentry "aegis-boot rescue (serial-primary)" {
 # the operator can read the pre-rescue-tui state on screen. Also tees
 # the /init log to /run/media/aegis-isos/aegis-boot-<ts>.log.
 menuentry "aegis-boot rescue (verbose — first-boot debug)" {
-    linux /vmlinuz console=ttyS0,115200 console=tty0 panic=30 loglevel=7 earlyprintk=efi ignore_loglevel aegis.verbose=1
+    linux /vmlinuz console=ttyS0,115200 console=tty0 panic=30 loglevel=7 earlyprintk=efi ignore_loglevel aegis.verbose=1${TEST_MODE_CMDLINE}
     initrd /initrd.img
 }
 EOF
