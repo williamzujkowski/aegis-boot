@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/aegis-catalog",
+    "crates/aegis-catalog-data",
     "crates/aegis-core",
     "crates/aegis-fetch",
     "crates/iso-parser",

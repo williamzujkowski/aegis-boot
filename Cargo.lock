@@ -44,6 +44,13 @@ dependencies = [
 name = "aegis-catalog"
 version = "0.17.0"
 dependencies = [
+ "aegis-catalog-data",
+]
+
+[[package]]
+name = "aegis-catalog-data"
+version = "0.17.0"
+dependencies = [
  "thiserror",
 ]
 

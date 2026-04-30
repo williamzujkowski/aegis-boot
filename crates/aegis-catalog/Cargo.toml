@@ -5,15 +5,20 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Curated ISO catalog + URL resolvers for aegis-boot. Shared by the host CLI and the rescue-tui in-rescue fetch path (#655 Phase 2)."
+description = "Aegis-boot catalog API surface — re-export shim over `aegis-catalog-data`. Consumers import types + helpers + the curated ISO entry list from here as before; the actual data lives in the sibling crate so Phase 2 of #701 can extract it to its own git repo without touching consumer call sites."
 readme = "README.md"
 
-include = ["src/**/*", "keyring/**/*", "README.md", "Cargo.toml"]
+include = ["src/**/*", "README.md", "Cargo.toml"]
 
 [lib]
 
 [dependencies]
-thiserror = { workspace = true }
+# Phase 1 of #701: this crate is now a thin façade. All public items
+# are re-exported from `aegis-catalog-data`. Bumping the data crate
+# (e.g. via Phase 2's `git` dep when the data crate moves to its own
+# repo) is the only change needed for catalog refreshes — no consumer
+# call site updates required.
+aegis-catalog-data = { path = "../aegis-catalog-data", version = "0.17" }
 
 [lints]
 workspace = true
