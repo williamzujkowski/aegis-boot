@@ -81,7 +81,7 @@ extend-exclude = [
     # subtree keeps the typo gate accurate without false-positives.
     # Reviewer scrutiny of key rotations happens at PR-diff time,
     # not via the typo checker.
-    "crates/aegis-catalog/keyring/",
+    "crates/aegis-catalog-data/keyring/",
     # Cargo lockfiles carry package names upstream decides; our typo
     # gate shouldn't second-guess them.
     "Cargo.lock",
