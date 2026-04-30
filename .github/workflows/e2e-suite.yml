@@ -694,3 +694,59 @@ jobs:
         env:
           TIMEOUT_SECONDS: "120"
         run: ./scripts/ovmf-secboot-e2e.sh
+
+  # Test-mode dispatcher verification (#698 follow-up).
+  # Boots QEMU once per harness test mode (kexec-unsigned, mok-enroll,
+  # manifest-roundtrip) with `aegis.test=<NAME>` injected via
+  # QEMU_SMOKE_TEST_MODE. Asserts the per-mode start landmark fires —
+  # catches dispatcher / landmark drift in aegis-boot's own CI instead
+  # of waiting for aegis-hwsim's next sweep.
+  #
+  # This proves the test mode ENTERS — not the full assertion path
+  # (real EKEYREJECTED on kexec, MOK walkthrough text, PCR roundtrip).
+  # Those stay in aegis-hwsim's QEMU+OVMF+swtpm harness which boots
+  # under enforcing SB + lockdown.
+  test-mode-dispatcher-shared:
+    name: Test-mode dispatcher smoke (shared-build)
+    needs: build-shared
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [kexec-unsigned, mok-enroll, manifest-roundtrip]
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
+
+      - name: Install QEMU + kernel runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 \
+            linux-image-generic \
+            busybox-static \
+            cpio
+          sudo chmod 0644 /boot/vmlinuz-* 2>/dev/null || true
+
+      - name: Download shared artifacts
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5
+        with:
+          name: e2e-shared-build
+          path: shared/
+
+      - name: Reposition artifacts to expected paths
+        run: |
+          mkdir -p target/release out
+          mv shared/rescue-tui                  target/release/rescue-tui
+          mv shared/initramfs.cpio.gz           out/initramfs.cpio.gz
+          mv shared/initramfs.cpio.gz.sha256    out/initramfs.cpio.gz.sha256
+          chmod +x target/release/rescue-tui
+
+      - name: Smoke ${{ matrix.mode }} dispatcher
+        env:
+          QEMU_SMOKE_TEST_MODE: ${{ matrix.mode }}
+          TIMEOUT_SECONDS: "60"
+        run: ./scripts/qemu-smoke.sh
