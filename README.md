@@ -166,6 +166,8 @@ Full developer loop: [docs/LOCAL_TESTING.md](./docs/LOCAL_TESTING.md).
 - [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — one-page mental model
 - [BUILDING.md](./BUILDING.md) — reproducible build setup (Docker + Nix)
 - [docs/LOCAL_TESTING.md](./docs/LOCAL_TESTING.md) — 8-stage local CI equivalent
+- [docs/rescue-tui-serial-format.md](./docs/rescue-tui-serial-format.md) — serial-output contract + the `aegis.test=<NAME>` harness modes that [aegis-hwsim](https://github.com/aegis-boot/aegis-hwsim) drives
+- [docs/attestation-manifest.md](./docs/attestation-manifest.md) — on-ESP attestation-manifest wire format
 - [docs/adr/](./docs/adr/) — Architecture Decision Records
 - [docs/compatibility/iso-matrix.md](./docs/compatibility/iso-matrix.md) — per-distro kexec compatibility
 
