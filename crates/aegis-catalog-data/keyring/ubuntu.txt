@@ -1,4 +1,0 @@
-pub   rsa4096/D94AA3F0EFE21092 2012-05-11 [SC]
-      Key fingerprint = 8439 38DF 228D 22F7 B374  2BC0 D94A A3F0 EFE2 1092
-uid                            Ubuntu CD Image Automatic Signing Key (2012) <cdimage@ubuntu.com>
-

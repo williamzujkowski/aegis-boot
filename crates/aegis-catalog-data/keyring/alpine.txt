@@ -1,5 +1,0 @@
-pub   rsa4096/293ACD0907D9495A 2014-12-10 [SC]
-      Key fingerprint = 0482 D840 22F5 2DF1 C4E7  CD43 293A CD09 07D9 495A
-uid                            Natanael Copa <ncopa@alpinelinux.org>
-sub   rsa4096/9E2CE29C63FE7A06 2014-12-10 [E]
-

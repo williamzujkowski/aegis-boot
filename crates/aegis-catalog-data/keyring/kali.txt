@@ -1,4 +1,0 @@
-pub   rsa4096/ED65462EC8D5E4C5 2025-04-17 [SC] [expires: 2028-04-17]
-      Key fingerprint = 827C 8569 F251 8CC6 77FE  CA1A ED65 462E C8D5 E4C5
-uid                            Kali Linux Archive Automatic Signing Key (2025) <devel@kali.org>
-

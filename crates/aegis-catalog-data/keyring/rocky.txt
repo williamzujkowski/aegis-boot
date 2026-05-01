@@ -1,4 +1,0 @@
-pub   rsa4096/15AF5DAC6D745A60 2021-02-14 [SCE]
-      Key fingerprint = 7051 C470 A929 F454 CEBE  37B7 15AF 5DAC 6D74 5A60
-uid                            Release Engineering <infrastructure@rockylinux.org>
-

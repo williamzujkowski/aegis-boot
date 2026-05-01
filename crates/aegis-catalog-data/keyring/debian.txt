@@ -1,5 +1,0 @@
-pub   rsa4096/225629DF75B188BD 2025-03-30 [SC] [expires: 2035-03-28]
-      Key fingerprint = 04B5 4C3C DCA7 9751 B16B  C6B5 2256 29DF 75B1 88BD
-uid                            Debian Archive Automatic Signing Key (13/trixie) <ftpmaster@debian.org>
-sub   rsa4096/78DBA3BC47EF2265 2025-03-30 [S] [expires: 2035-03-28]
-

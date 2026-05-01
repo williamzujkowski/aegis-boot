@@ -1,4 +1,0 @@
-pub   rsa4096/300F846BA25BAE09 2016-06-07 [SC]
-      Key fingerprint = 27DE B156 44C6 B3CF 3BD7  D291 300F 846B A25B AE09
-uid                            Linux Mint ISO Signing Key <root@linuxmint.com>
-

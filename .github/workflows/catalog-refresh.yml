@@ -13,10 +13,14 @@ name: Catalog refresh (auto-PR on drift)
 # against the project's known release-signing key.
 
 on:
-  schedule:
-    # Monday 06:00 UTC weekly. Cheap (one curl + one PR per week)
-    # and catches most distro release cadences.
-    - cron: '0 6 * * 1'
+  # PAUSED — #701 Phase 2 (PR landing this comment) extracted
+  # `aegis-catalog-data` to its own repo (aegis-boot/aegis-catalog-data).
+  # The catalog source-of-truth no longer lives in this repo, so the
+  # weekly cron's `git diff -- crates/aegis-catalog-data/src/lib.rs`
+  # would always be empty here. Long-term plan (#701 Phase 3): port
+  # the resolver tool to the new repo + restore the cron there.
+  # Until then this workflow is workflow_dispatch-only so a maintainer
+  # can still trigger manually if needed during the transition.
   workflow_dispatch:
 
 # Top-level permissions: read-only by default, with the bot job

@@ -81,7 +81,10 @@ extend-exclude = [
     # subtree keeps the typo gate accurate without false-positives.
     # Reviewer scrutiny of key rotations happens at PR-diff time,
     # not via the typo checker.
-    "crates/aegis-catalog-data/keyring/",
+    # NOTE: the vendor keyring directory used to live at
+    # `crates/aegis-catalog-data/keyring/` but was extracted to its
+    # own repo (aegis-boot/aegis-catalog-data) in #701 Phase 2.
+    # Typos config in that repo carries the equivalent exclusion.
     # Cargo lockfiles carry package names upstream decides; our typo
     # gate shouldn't second-guess them.
     "Cargo.lock",

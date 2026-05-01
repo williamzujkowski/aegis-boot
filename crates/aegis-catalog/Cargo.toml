@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Aegis-boot catalog API surface — re-export shim over `aegis-catalog-data`. Consumers import types + helpers + the curated ISO entry list from here as before; the actual data lives in the sibling crate so Phase 2 of #701 can extract it to its own git repo without touching consumer call sites."
+description = "Aegis-boot catalog API surface — re-export shim over `aegis-catalog-data`. Consumers import types + helpers + the curated ISO entry list from here as before; the actual data lives in a sibling git repo (aegis-boot/aegis-catalog-data) per #701 Phase 2 — bumping the tag below is the only change needed for a catalog refresh."
 readme = "README.md"
 
 include = ["src/**/*", "README.md", "Cargo.toml"]
@@ -13,12 +13,17 @@ include = ["src/**/*", "README.md", "Cargo.toml"]
 [lib]
 
 [dependencies]
-# Phase 1 of #701: this crate is now a thin façade. All public items
-# are re-exported from `aegis-catalog-data`. Bumping the data crate
-# (e.g. via Phase 2's `git` dep when the data crate moves to its own
-# repo) is the only change needed for catalog refreshes — no consumer
-# call site updates required.
-aegis-catalog-data = { path = "../aegis-catalog-data", version = "0.17" }
+# Phase 2 of #701: aegis-catalog-data now lives in its own repo.
+# Bumping the `tag` below is the only change needed for a catalog
+# refresh — no consumer call sites change because everything still
+# imports from `aegis_catalog::*` (which re-exports the data crate's
+# items unchanged).
+#
+# Why git+tag, not crates.io: the data crate is internal-by-design
+# (no external consumers, vendored PGP keys not appropriate for
+# crates.io's deduplicated registry). Pinning by tag prevents
+# `cargo update` from silently advancing to an unreviewed catalog.
+aegis-catalog-data = { git = "https://github.com/aegis-boot/aegis-catalog-data", tag = "v0.17.0" }
 
 [lints]
 workspace = true

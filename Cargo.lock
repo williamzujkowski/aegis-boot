@@ -50,6 +50,7 @@ dependencies = [
 [[package]]
 name = "aegis-catalog-data"
 version = "0.17.0"
+source = "git+https://github.com/aegis-boot/aegis-catalog-data?tag=v0.17.0#1981c91f9fb49ebdb0cbfcd383d8b0eb0a30753e"
 dependencies = [
  "thiserror",
 ]

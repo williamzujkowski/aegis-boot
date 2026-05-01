@@ -1,7 +1,0 @@
-pub   rsa4096/7091115F8320B897 2021-07-04 [SC] [expires: 2039-12-31]
-      Key fingerprint = 0FF1 1AF0 81E9 8345 5948  1203 7091 115F 8320 B897
-uid                            Francois Dupoux 20210704 (Generated on 20210704)
-sub   rsa4096/6895AE8266B25198 2021-07-04 [A] [expires: 2039-12-31]
-sub   rsa4096/7BB4BAF4AEF3E4B3 2021-07-04 [E] [expires: 2039-12-31]
-sub   rsa4096/3B0FEA9BE13CA3C9 2021-07-04 [S] [expires: 2039-12-31]
-

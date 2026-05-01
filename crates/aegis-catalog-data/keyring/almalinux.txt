@@ -1,5 +1,0 @@
-pub   rsa4096/D36CB86CB86B3716 2022-01-18 [SC]
-      Key fingerprint = BF18 AC28 7617 8908 D6E7  1267 D36C B86C B86B 3716
-uid                            AlmaLinux OS 9 <packager@almalinux.org>
-sub   rsa4096/B7BB94F0C9BA6CAA 2022-01-18 [E]
-
